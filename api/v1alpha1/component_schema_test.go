@@ -213,6 +213,15 @@ func TestComponentProfileRules(t *testing.T) {
 		{"a service on the perimeter", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: none, backend: {service: x, port: 80}}\n", "a service exposes on the gateway only"},
 		{"a service tile asking about an app", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==\", relation: can_use, object: app}}\n", "a service's tile asks on the cluster"},
 		{"a service given to every tenant", "  classes: [service]\n  launch: none\n  trustTier: platform\n  defaultForTenants: true\n", "defaultForTenants is for class app"},
+		// An egress request names hosts, leaves them to the approver, or states
+		// a rule: one of the three.
+		{"egress by hosts", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        hosts: [erp.example.org]\n", ""},
+		{"egress named at approval", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        hostsAtApproval: true\n", ""},
+		{"egress by rule", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        rule: {ports: [{port: 25, protocol: TCP}]}\n", ""},
+		{"egress by hosts and named at approval", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        hosts: [erp.example.org]\n        hostsAtApproval: true\n", "one of the three"},
+		{"egress by rule and named at approval", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        rule: {ports: [{port: 25, protocol: TCP}]}\n        hostsAtApproval: true\n", "one of the three"},
+		{"egress with nothing to reach", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n", "one of the three"},
+		{"egress named at approval set false", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        hostsAtApproval: false\n", "one of the three"},
 
 		// Launch: a person must be able to reach what they installed.
 		{"launch is not optional", "  classes: [app]\n  trustTier: certified" + gateway, "launch"},
@@ -431,7 +440,10 @@ func TestComponentRules(t *testing.T) {
 		{"taken over by someone else", component(enabled("u-mallory", "2027-03-01T00:00:00Z")), component(enabled("u-pat", "2026-12-01T00:00:00Z")), "owner is immutable"},
 		{"a grant rewritten to another approver", component(granted("u-mallory")), component(granted("u-sam")), "approver and approvedAt are immutable"},
 		{"a grant for something that is not a privilege", component("  class: app\n  privileges:\n  - {privilege: root, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: \"because it was asked for\"}\n"), "", "privilege"},
-		{"a grant without the approver's reason", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: ok}\n"), "", "reason"},
+		{"a grant without a comment of the approver", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\"}\n"), "", ""},
+		{"a grant with a short comment", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: ok}\n"), "", ""},
+		{"a grant naming hosts", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", hosts: [erp.example.org, \"files.example.org:8443\"]}\n"), "", ""},
+		{"a grant naming what is not a host", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", hosts: [\"https://erp.example.org\"]}\n"), "", "should match"},
 
 		{"class changed in place", component("  class: shared-app\n"), component("  class: app\n"), "class is immutable"},
 		// The one carve-out, and it is not a loosening: a Component with no
@@ -450,59 +462,154 @@ func TestComponentRules(t *testing.T) {
 	}
 }
 
-// An adapter is a class of its own, reached by nothing but the component that
-// speaks as a person. These are the rules the class carries at admission.
-func TestAdapterProfileRules(t *testing.T) {
+// A bridge is a class of its own, reached or reaching out only as its ways
+// say. These are the rules the class and its ways carry at admission.
+func TestBridgeProfileRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
-	adapter := `
-  adapter:
-    adapts: {profile: openproject, versions: ["15.4.0"]}
-`
-	head := "  classes: [adapter]\n  launch: none\n  trustTier: certified"
-	cases := []struct{ name, spec, want string }{
-		{"an adapter", head + adapter, ""},
-
-		{"an adapter that is also an app", "  classes: [adapter, app]\n  launch: none\n  trustTier: certified" + adapter, "adapter is exclusive"},
-		{"an adapter without its block", head + "\n", "spec.adapter is for class adapter"},
-		{"an app with an adapter block", "  classes: [app]\n  launch: none\n  trustTier: certified" + adapter, "spec.adapter is for class adapter"},
-		{"an adapter someone opens", "  classes: [adapter]\n  launch: from\n  trustTier: certified" + adapter, "an adapter has launch none"},
-		{"an adapter on the gateway", head + adapter + "  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n", "an adapter exposes nothing"},
-		{"an adapter that provides a contract", head + adapter + "  provides:\n  - {name: tools}\n", "an adapter provides no contract"},
-		{"an adapter that integrates", head + adapter + "  integrations:\n  - {contract: webdav, capabilities: [webdav:read]}\n", "an adapter declares no integrations"},
-		{"an adapter that vouches", "  classes: [adapter]\n  launch: none\n  trustTier: platform" + adapter + "  requires:\n    services:\n      vouching: {}\n", "an adapter does not vouch for people"},
-		{"an adapter placed on every tenant", head + adapter + "  defaultForTenants: true\n", "never placed by default"},
-		{"an adapter that adapts nothing", head + "\n  adapter: {}\n", "spec.adapter.adapts names the app"},
-	}
-	for _, c := range cases {
-		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
-	}
-
-	// An adapter can be an API: a tool server outside the cluster, which it
-	// reaches for agents as an API entry does for people. It adapts no app of
-	// the tenant, and it is still never an addon.
-	apiHead := `
+	head := `
 apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata: {name: x}
 spec:
   version: "1.0.0"
-  classes: [adapter]
+  trustTier: certified
+`
+	class := "  classes: [bridge]\n  launch: none\n"
+	bridge := `  bridge:
+    app: {profile: nextcloud-base-ce, versions: ["33.0.10"]}
+    ways:
+    - {name: files, caller: device, callee: app, protocol: webdav, speaksAs: person, paths: [/remote.php/dav/files/]}
+    - {name: calendars, caller: device, callee: app, protocol: caldav, speaksAs: person, paths: [/remote.php/dav/calendars/, /remote.php/dav/principals/]}
+`
+	api := "  package: {api: {backend: {service: nextcloud, port: 8080}}}\n"
+	chart := "  package: {chart: {repository: \"oci://charts.example\", name: carddav, version: \"1.0.0\"}}\n"
+	ways := func(w string) string {
+		return "  bridge:\n    app: {profile: nextcloud-base-ce}\n    ways:\n" + w
+	}
+	// way is a way from a device to the app in webdav, with these fields
+	// put in place of the ones it has.
+	way := func(fields string) string {
+		base := map[string]string{"name": "files", "caller": "device", "callee": "app", "protocol": "webdav", "speaksAs": "person", "paths": "[/dav/]", "root": "-"}
+		for _, kv := range strings.Split(fields, ";") {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				base[k] = v
+			}
+		}
+		out := []string{}
+		for _, k := range []string{"name", "caller", "callee", "protocol", "speaksAs", "paths", "root"} {
+			if v := base[k]; v != "-" {
+				out = append(out, k+": "+v)
+			}
+		}
+		return "    - {" + strings.Join(out, ", ") + "}\n"
+	}
+	cases := []struct{ name, spec, want string }{
+		{"a bridge routed to the app's own Service", class + bridge + api, ""},
+		{"a bridge that runs a translator", class + bridge + chart, ""},
+
+		{"a bridge that is also an app", "  classes: [bridge, app]\n  launch: none\n" + bridge + api, "bridge is exclusive"},
+		{"a bridge without its block", class + api, "spec.bridge is for class bridge"},
+		{"an app with a bridge block", "  classes: [app]\n  launch: none\n" + bridge + chart, "spec.bridge is for class bridge"},
+		{"a bridge someone opens", "  classes: [bridge]\n  launch: from\n" + bridge + api, "a bridge has launch none"},
+		{"a bridge on the gateway", class + bridge + api + "  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}\n", "a bridge exposes, provides and integrates nothing"},
+		{"a bridge on the perimeter", class + bridge + api + "  expose:\n  - {name: dav, surface: perimeter, authMode: app, paths: [/dav/], backend: {service: x, port: 80}}\n", "a bridge exposes, provides and integrates nothing"},
+		{"a bridge that provides a contract", class + bridge + api + "  provides:\n  - {name: files}\n", "a bridge exposes, provides and integrates nothing"},
+		{"a bridge that integrates", class + bridge + api + "  integrations:\n  - {contract: webdav, capabilities: [webdav:read]}\n", "a bridge exposes, provides and integrates nothing"},
+		{"a bridge that vouches", "  classes: [bridge]\n  launch: none\n" + bridge + api + "  requires:\n    services:\n      vouching: {}\n", "a bridge does not vouch for people"},
+		{"a bridge placed on every tenant", class + bridge + api + "  defaultForTenants: true\n", "never placed by default"},
+		{"a bridge that is an addon", class + bridge + "  package: {addon: {id: dav, of: nextcloud-base-ce}}\n", "a bridge is deployed or routed to"},
+
+		{"a bridge pointed outside the cluster", class + bridge + "  package: {api: {baseUrl: \"https://dav.example\"}}\n", "names the Service of the app it connects"},
+		{"a bridge with a tile", class + bridge + "  package: {api: {backend: {service: nextcloud, port: 8080}, tile: {displayName: Files, logo: \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==\", relation: can_launch}}}\n", "carries no tile"},
+		{"an api that names both", class + bridge + "  package: {api: {baseUrl: \"https://dav.example\", backend: {service: nextcloud, port: 8080}}}\n", "names where it is answered once"},
+		{"an app routed to a Service by an api", "  classes: [app]\n  launch: none\n  package: {api: {backend: {service: nextcloud, port: 8080}}}\n", "package.api.backend is for a bridge"},
+		{"an api that names neither", "  classes: [app]\n  launch: none\n  package: {api: {}}\n", "names where it is answered once"},
+
+		{"a bridge in both directions", class + ways(way("")+way("name=tools;caller=agents;callee=app;protocol=mcp;paths=-")) + api, ""},
+		{"a service bridge, which connects no app", class + "  bridge:\n    ways:\n" + way("caller=agents;callee=outside;protocol=mcp;paths=-") + api, ""},
+		{"a way for the tenant", class + ways(way("name=tools;caller=agents;callee=app;protocol=mcp;speaksAs=tenant;paths=-")) + api, ""},
+
+		{"a bridge with no way", class + ways("") + api, "ways"},
+		{"a way to the app that names none", class + "  bridge:\n    ways:\n" + way("") + api, "spec.bridge.app names the app"},
+		{"an app no way uses", class + ways(way("caller=agents;callee=outside;protocol=mcp;paths=-")) + api, "spec.bridge.app names the app"},
+		{"two ways of one name", class + ways(way("")+way("protocol=caldav")) + api, "a way's name is its own"},
+		{"a way to itself", class + ways(way("caller=app;paths=-")) + api, "its caller and its callee differ"},
+		{"a device that speaks for the tenant", class + ways(way("speaksAs=tenant")) + api, "speaks as that person"},
+
+		{"a calendar way with a root under its paths", class + ways(way("name=calendars;protocol=caldav;paths=[/dav/calendars/, /dav/principals/];root=/dav/principals/")) + api, ""},
+		{"a root that is one of the paths without its slash", class + ways(way("name=contacts;protocol=carddav;paths=[/dav/principals];root=/dav/principals")) + api, ""},
+		{"a root outside the way's paths", class + ways(way("name=calendars;protocol=caldav;paths=[/dav/calendars/];root=/dav/")) + api, "under one of its paths"},
+		{"a root that only shares a prefix", class + ways(way("name=calendars;protocol=caldav;paths=[/dav/cal];root=/dav/calendars/")) + api, "under one of its paths"},
+		{"a root for files", class + ways(way("root=/dav/")) + api, "only for a way in caldav or carddav"},
+		{"two calendar ways that name a root", class + ways(way("name=a;protocol=caldav;root=/dav/x")+way("name=b;protocol=caldav;root=/dav/y")) + api, "one discovery address"},
+		{"a way from a device with no path", class + ways(way("paths=-")) + api, "paths are where a caller from outside the platform reaches the app"},
+		{"paths on a way between agents and the app", class + ways(way("caller=agents;protocol=mcp")) + api, "paths are where a caller from outside the platform reaches the app"},
+		{"a caller that is not one", class + ways(way("caller=browser")) + api, "Unsupported value"},
+		{"a callee that is not one", class + ways(way("callee=cloud;paths=-")) + api, "Unsupported value"},
+		{"a protocol that is not one", class + ways(way("protocol=imap")) + api, "Unsupported value"},
+		{"a speaker that is not one", class + ways(way("speaksAs=admin")) + api, "Unsupported value"},
+		{"a way with an empty path list", class + ways(way("paths=[]")) + api, "paths"},
+		{"the app's root", class + ways(way("paths=[/]")) + api, "paths"},
+		{"a path that climbs", class + ways(way("paths=[/dav/../admin/]")) + api, "paths"},
+		{"a path with a query", class + ways(way(`paths=["/dav?x=1"]`)) + api, "paths"},
+		{"a path that does not begin at the root", class + ways(way("paths=[dav/]")) + api, "paths"},
+		{"a way name that is not a label", class + ways(way("name=Files")) + api, "name"},
+	}
+	for _, c := range cases {
+		expect(t, c.name, v.check(t, head+c.spec, ""), c.want)
+	}
+}
+
+// An agent bridge is a bridge with a way from the tenant's agents, reached by
+// nothing but the component that speaks as a person. These are the rules it
+// carries at admission beyond every bridge's.
+func TestAgentBridgeProfileRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	head := `
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata: {name: x}
+spec:
+  version: "1.0.0"
+  classes: [bridge]
   launch: none
   trustTier: certified
-  adapter: {}
 `
+	chart := "  package: {chart: {repository: \"oci://charts.example\", name: tools, version: \"1.0.0\"}}\n"
+	api := "  package: {api: {baseUrl: \"https://tools.example\"}}\n"
+	toApp := "  bridge:\n    app: {profile: openproject, versions: [\"15.4.0\"]}\n    ways:\n" +
+		"    - {name: tools, caller: agents, callee: app, protocol: mcp, speaksAs: person, endpoint: {service: tools, port: 8765, path: /mcp}}\n"
+	toOutside := "  bridge:\n    ways:\n    - {name: tools, caller: agents, callee: outside, protocol: mcp, speaksAs: person}\n"
+	toPartner := "  bridge:\n    ways:\n    - {name: tools, caller: agents, callee: partner, protocol: mcp, speaksAs: person, endpoint: {service: tools, port: 8765, path: /mcp}}\n"
+	partners := "  requires:\n    services:\n      partners: {call: [store]}\n"
 	for _, c := range []struct{ name, spec, want string }{
-		{"an adapter that is an API", "  package: {api: {baseUrl: \"https://tools.example\"}}\n", ""},
-		{"an adapter that is an addon", "  package: {addon: {id: tools, of: nextcloud-base-ce}}\n", "an adapter is deployed or reached"},
+		{"an agent bridge to an app of the tenant", toApp + chart, ""},
+		{"an agent bridge told the app's add-ons", toApp + "    addonsValuesPath: tools.active\n" + chart, ""},
+		{"an agent bridge to an outside tool server, reached where it is", toOutside + api, ""},
+		{"an agent bridge to a partner", toPartner + chart + partners, ""},
+
+		{"an agent bridge to an app reached at a baseUrl", toApp + api, "names the Service of the app it connects"},
+		{"an agent bridge to a partner it does not name", toPartner + chart, "requires.services.partners.call"},
+		{"an agent bridge to a partner with an empty list", toPartner + chart + "  requires:\n    services:\n      partners: {call: []}\n", "requires.services.partners.call"},
+		{"an agent bridge that is an addon", toApp + "  package: {addon: {id: tools, of: nextcloud-base-ce}}\n", "a bridge is deployed or routed to"},
+		{"two ways from the agents", "  bridge:\n    app: {profile: openproject}\n    ways:\n" +
+			"    - {name: tools, caller: agents, callee: app, protocol: mcp, speaksAs: person}\n" +
+			"    - {name: more, caller: agents, callee: app, protocol: mcp, speaksAs: person}\n" + chart, "one way from the tenant's agents"},
+		{"an endpoint on a way from a device", "  bridge:\n    app: {profile: nextcloud}\n    ways:\n" +
+			"    - {name: files, caller: device, callee: app, protocol: webdav, speaksAs: person, paths: [/dav/], endpoint: {service: x, port: 80, path: /}}\n" + chart, "only for a way whose caller is agents"},
+		{"add-ons told without an app", toOutside + "    addonsValuesPath: tools.active\n" + api, "it needs spec.bridge.app"},
 	} {
-		expect(t, c.name, v.check(t, apiHead+c.spec, ""), c.want)
+		expect(t, c.name, v.check(t, head+c.spec, ""), c.want)
 	}
 
-	// A Component of the class: the class is the profile's, and is immutable.
+	// The class adapter is gone: a profile or an instance that names it is
+	// refused, and a bridge's instance keeps its class.
+	expect(t, "a profile of class adapter", v.check(t, strings.Replace(head, "[bridge]", "[adapter]", 1)+chart, ""), "Unsupported value")
 	cv := loadCRD(t, "gentianos.io_components.yaml")
 	comp := "apiVersion: gentianos.io/v1alpha1\nkind: Component\nmetadata: {name: x, namespace: tenant-a}\nspec:\n  profileRef: {name: x}\n  class: %s\n"
-	expect(t, "an adapter instance", cv.check(t, strings.ReplaceAll(comp, "%s", "adapter"), ""), "")
-	expect(t, "an adapter instance made an app", cv.check(t, strings.ReplaceAll(comp, "%s", "app"), strings.ReplaceAll(comp, "%s", "adapter")), "class is immutable")
+	expect(t, "an adapter instance", cv.check(t, strings.ReplaceAll(comp, "%s", "adapter"), ""), "Unsupported value")
+	expect(t, "a bridge instance", cv.check(t, strings.ReplaceAll(comp, "%s", "bridge"), ""), "")
+	expect(t, "a bridge instance made an app", cv.check(t, strings.ReplaceAll(comp, "%s", "app"), strings.ReplaceAll(comp, "%s", "bridge")), "class is immutable")
 }
 
 // An action is one pinned image a component runs through the dispatcher.
@@ -524,7 +631,7 @@ func TestActionProfileRules(t *testing.T) {
 		{"an action", profile(one, head+action), ""},
 		{"an action with everything said", profile(one, head+
 			"  action:\n    command: [\"/ocr\", \"--fast\"]\n    runtime: container\n    deadlineSeconds: 120\n"+
-			"    adapters: [nextcloud-files]\n    resources: {cpu: 500m, memory: 256Mi}\n"+
+			"    agentBridges: [nextcloud-files]\n    resources: {cpu: 500m, memory: 256Mi}\n"+
 			"    inputs: {type: object, properties: {file: {type: string}}}\n    outputs: {type: object}\n"+
 			"  requires:\n    privileges:\n      egress:\n      - name: ocr-service\n        reason: the recognition service\n"+
 			"        rule: {ports: [{port: 443}]}\n"), ""},
@@ -551,5 +658,124 @@ func TestActionProfileRules(t *testing.T) {
 		{"an app with images and nothing to deploy", profile(one, "  classes: [app]\n  launch: none\n  trustTier: certified\n"), "a package is a chart"},
 	} {
 		expect(t, c.name, v.check(t, c.obj, ""), c.want)
+	}
+}
+
+// A component that calls a home as the person (integrations[].asPerson)
+// may do so below the platform's trust: a certified component's client is
+// given only the scopes of the homes granted to it. It signs the statements
+// a person's token is asked with, or names no keys and exchanges the token
+// of a person who is present.
+func TestHomesAsPersonRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	keys := "  requires:\n    services:\n      vouching: {keys: {service: odoo-keys, port: 8069}}\n"
+	consumer := func(tier, integrations string) string {
+		return "  classes: [app]\n  launch: none\n  trustTier: " + tier + "\n" + integrations
+	}
+	asPerson := "  integrations:\n  - {contract: calendar-store, asPerson: true}\n"
+	// The lighter way, for an app that acts only while the person is
+	// present: no keys, and the token the edge hands it to exchange.
+	present := "  requires:\n    services:\n      vouching: {exchange: true}\n"
+	handed := "  expose:\n  - {name: web, surface: gateway, authMode: oidc, exchangeToken: true, backend: {service: x, port: 80}}\n"
+	for _, c := range []struct{ name, spec, want string }{
+		{"a certified app that calls its calendar home as the person", consumer("certified", asPerson) + keys, ""},
+		{"a platform component that does", consumer("platform", asPerson) + keys, ""},
+		{"a certified app that vouches with no home", consumer("certified", "") + keys, "requires.services.vouching requires trustTier platform"},
+		{"a community app that calls a home as the person", consumer("community", asPerson) + keys, "requires.services.vouching requires trustTier platform"},
+		{"a home called as the person with no vouching", consumer("certified", asPerson), "asPerson needs requires.services.vouching"},
+		{"a certified app that also exchanges", consumer("certified", asPerson) + "  requires:\n    services:\n      vouching: {exchange: true, keys: {service: odoo-keys, port: 8069}}\n", "requires.services.vouching requires trustTier platform"},
+		{"a certified app that acts only while the person is present", consumer("certified", asPerson) + present + handed, ""},
+		{"one that is handed no token to exchange", consumer("certified", asPerson) + present, "requires.services.vouching requires trustTier platform"},
+		{"one with no home", consumer("certified", "") + present + handed, "requires.services.vouching requires trustTier platform"},
+		{"a community app that does", consumer("community", asPerson) + present + handed, "requires.services.vouching requires trustTier platform"},
+		{"a platform component that acts only while the person is present", consumer("platform", asPerson) + present + handed, ""},
+		{"a platform component with no keys that is handed no token to exchange", consumer("platform", asPerson) + present, "asPerson needs requires.services.vouching"},
+		{"a certified app that asks for the director", consumer("certified", asPerson) + "  requires:\n    services:\n      vouching: {director: [plans-read], keys: {service: odoo-keys, port: 8069}}\n", "requires.services.vouching requires trustTier platform"},
+		{"asPerson on a contract that is no home's", consumer("certified", "  integrations:\n  - {contract: project-management, asPerson: true}\n") + keys, "asPerson is for a home's contract"},
+	} {
+		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
+	}
+
+	tv := loadCRD(t, "gentianos.io_tenants.yaml")
+	tenant := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata: {name: acme}\nspec:\n  displayName: Acme\n  homes: %s\n"
+	expect(t, "a tenant that names its homes", tv.check(t, strings.Replace(tenant, "%s", "{calendar-store: nextcloud-base-ce, contacts-store: nextcloud-base-ce}", 1), ""), "")
+	expect(t, "a home for a contract that is no home's", tv.check(t, strings.Replace(tenant, "%s", "{project-management: openproject}", 1), ""), "homes names file-store, calendar-store or contacts-store")
+}
+
+// A file home says where a person's files are, which property holds a file's
+// id and the address that opens a file by it; an app says what it asks the
+// platform's file dialog for. Both are the file store's alone.
+func TestFileDialogRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	app := "  classes: [app]\n  launch: none\n  trustTier: certified\n"
+	facts := "{root: \"/files/{principal}/\", idProperty: \"{http://owncloud.org/ns}fileid\", open: {entry: web, path: \"/f/{id}\"}}"
+	home := func(contract, files string) string {
+		return app + "  provides:\n  - name: " + contract + "\n    endpoint: {service: cloud, port: 8080, path: /dav/}\n    files: " + files + "\n"
+	}
+	asks := func(contract, uses string) string {
+		return app + "  integrations:\n  - {contract: " + contract + ", dialog: " + uses + "}\n"
+	}
+	for _, c := range []struct{ name, spec, want string }{
+		{"a file home that says where a person's files are", home("file-store", facts), ""},
+		{"a root with no principal in it", home("file-store", strings.Replace(facts, "/files/{principal}/", "/", 1)), ""},
+		{"files on a contract that is not the file store", home("calendar-store", facts), "files is for the contract file-store"},
+		{"an id property not written {namespace}name", home("file-store", strings.Replace(facts, "{http://owncloud.org/ns}fileid", "fileid", 1)), "idProperty"},
+		{"an open address with no id in it", home("file-store", strings.Replace(facts, "/f/{id}", "/f/", 1)), "path"},
+		{"an open address that is not a path", home("file-store", strings.Replace(facts, "/f/{id}", "https://elsewhere.example/{id}", 1)), "path"},
+
+		{"an app that picks files", asks("file-store", "[pick]"), ""},
+		{"an editor that opens and saves", asks("file-store", "[open, save]"), ""},
+		{"a use the dialog does not know", asks("file-store", "[delete]"), "Unsupported value"},
+		{"the dialog asked for another contract", asks("calendar-store", "[pick]"), "dialog is for the contract file-store"},
+	} {
+		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
+	}
+}
+
+// An app declares homeSync with its API's address and at least one kind, each
+// with a known driver and parts that are parts of an entry; vouching.homes is
+// the platform's home sync's, and needs keys.
+func TestHomeSyncRules(t *testing.T) {
+	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	app := "  classes: [app]\n  launch: none\n  trustTier: certified\n"
+	calendar := "    calendar: {driver: odoo, model: calendar.event, fields: {summary: name, start: start}, filter: [[partner_ids, in, [\"$partner\"]]], defaults: {user_id: \"$user\"}}\n"
+	for _, c := range []struct{ name, spec, want string }{
+		{"an app that keeps a calendar", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n" + calendar, ""},
+		{"homeSync that keeps nothing", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n", "homeSync keeps calendar, contacts or both"},
+		{"homeSync without the app's address", app + "  homeSync:\n" + calendar, "endpoint"},
+		{"a driver nobody wrote", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n    contacts: {driver: espo, model: Contact, fields: {name: name}}\n", "Unsupported value"},
+		{"a part that is no part of an entry", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n    contacts: {driver: odoo, model: res.partner, fields: {shoeSize: x}}\n", "a field is one of the parts"},
+		{"a mapping of no field", app + "  homeSync:\n    endpoint: {service: odoo, port: 8069}\n    contacts: {driver: odoo, model: res.partner, fields: {}}\n", "a mapping names at least one field"},
+
+		{"the home sync's vouching", "  classes: [app]\n  launch: none\n  trustTier: platform\n  requires:\n    services:\n      vouching: {homes: true, keys: {service: homesync, port: 8080}}\n", ""},
+		{"homes without keys", "  classes: [app]\n  launch: none\n  trustTier: platform\n  requires:\n    services:\n      vouching: {homes: true, exchange: true}\n", "vouching.homes needs vouching.keys"},
+		{"homes below the platform's trust", app + "  integrations:\n  - {contract: calendar-store, asPerson: true}\n  requires:\n    services:\n      vouching: {homes: true, keys: {service: x, port: 8080}}\n", "requires.services.vouching requires trustTier platform"},
+	} {
+		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
+	}
+	tv := loadCRD(t, "gentianos.io_tenants.yaml")
+	tenant := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata: {name: acme}\nspec:\n  displayName: Acme\n  contactsBook: %s\n"
+	expect(t, "a shared address book", tv.check(t, strings.Replace(tenant, "%s", "shared", 1), ""), "")
+	expect(t, "an address book that is neither", tv.check(t, strings.Replace(tenant, "%s", "everyone", 1), ""), "Unsupported value")
+}
+
+// A trusted domain is a name of lower-case labels, at least two: the
+// tenant's list and the cluster's take one, and refuse what is none.
+func TestTrustedDomainRules(t *testing.T) {
+	tv := loadCRD(t, "gentianos.io_tenants.yaml")
+	tenant := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata: {name: acme}\nspec:\n  displayName: Acme\n  trustedDomains: {delegated: true, domains: [%s]}\n"
+	pv := loadCRD(t, "gentianos.io_platformsecuritypolicies.yaml")
+	policy := "apiVersion: gentianos.io/v1alpha1\nkind: PlatformSecurityPolicy\nmetadata: {name: default}\nspec:\n  trustedDomains: [%s]\n"
+	for _, c := range []struct{ name, domain, want string }{
+		{"a domain", "github.com", ""},
+		{"a name under a domain", "api.eu-1.example.org", ""},
+		{"a bare word", "com", "should match"},
+		{"upper case", "Example.org", "should match"},
+		{"a name with a port", "\"example.org:443\"", "should match"},
+		{"an address", "10.0.0.1", "should match"},
+		{"labels joined by anything but a dot", "examplexorg", "should match"},
+	} {
+		expect(t, "the tenant's list: "+c.name, tv.check(t, strings.Replace(tenant, "%s", c.domain, 1), ""), c.want)
+		expect(t, "the cluster's list: "+c.name, pv.check(t, strings.Replace(policy, "%s", c.domain, 1), ""), c.want)
 	}
 }

@@ -228,6 +228,14 @@ spec:
                       type: string
                     type: array
                 type: object
+              tenantCore:
+                description: |-
+                  TenantCore says whether the tenant's own is captured beside the apps:
+                  its realm, its desktop's database and its mailboxes. Unset or true, it
+                  is. False captures the apps in spec.apps and nothing else, and holds
+                  only those apps: it runs beside another export that also captures
+                  only apps, other ones. False needs spec.apps.
+                type: boolean
               ttlSeconds:
                 description: |-
                   TTLSeconds is how long the bundle should be kept before it may be
@@ -237,6 +245,10 @@ spec:
                 minimum: 0
                 type: integer
             type: object
+            x-kubernetes-validations:
+            - message: 'tenantCore: false needs spec.apps'
+              rule: '!has(self.tenantCore) || self.tenantCore || (has(self.apps) &&
+                size(self.apps) > 0)'
           status:
             description: |-
               TenantExportStatus reports progress, and carries the state needed to undo a

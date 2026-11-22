@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -33,6 +34,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/envvar"
+	"github.com/gentian-org/gentian-os/internal/membership"
 	"github.com/gentian-org/gentian-os/internal/usher"
 )
 
@@ -71,7 +73,7 @@ func run(log *slog.Logger) error {
 	}
 
 	cfg := usher.Config{
-		Authn: verifier, Authz: store, Viewer: store, Log: log,
+		Authn: verifier, Authz: store, Viewer: store, Access: store, Log: log,
 		TilesPath: envvar.Or("USHER_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Cluster:   os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 		// Whether the cluster reports what it runs, as the chart rendered it
@@ -106,8 +108,41 @@ func run(log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	done := make(chan error, 1)
+	done := make(chan error, 2)
 	go func() { done <- srv.ListenAndServe() }()
+
+	// The identity provider's question at a sign-in, on a listener of its
+	// own. Answered only to a request signed with a listener key; without
+	// one it is not served, and a sign-in to an app whose token carries
+	// roles then fails rather than carrying none.
+	if raw := os.Getenv("GENTIAN_LISTENER_KEYS"); raw == "" {
+		log.Warn("no listener key: the sign-in question is not served here", "setting", "GENTIAN_LISTENER_KEYS")
+	} else {
+		keys, err := membership.ParseKeys(raw)
+		if err != nil {
+			return fmt.Errorf("GENTIAN_LISTENER_KEYS: %w", err)
+		}
+		handler, err := usher.SignInRolesHandler(usher.SignInRolesConfig{
+			Keys: keys, Roles: store, Checker: store, Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"), Log: log,
+		})
+		if err != nil {
+			return err
+		}
+		rolesSrv := &http.Server{
+			Addr:              envvar.Or("USHER_SIGN_IN_ROLES_LISTEN", ":8083"),
+			Handler:           handler,
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       10 * time.Second,
+			WriteTimeout:      15 * time.Second,
+		}
+		go func() { done <- rolesSrv.ListenAndServe() }()
+		defer func() {
+			shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = rolesSrv.Shutdown(shutdown)
+		}()
+		log.Info("sign-in question served", "addr", rolesSrv.Addr, "keys", len(keys))
+	}
 	log.Info("usher listening", "addr", srv.Addr, "issuer", issuerBase, "store", store.StoreID())
 	select {
 	case err := <-done:

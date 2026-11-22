@@ -69,8 +69,9 @@ func (r *valuesRender) sensitiveValues() *valuesSensitive {
 	}
 	// The model gateway's record is written for a profile that declares
 	// requires.services.llm and for no other; an entry naming a path that is
-	// never written fails on every refresh.
-	llm := vm.LLM != nil && r.services().LLM != nil && !r.in.Placed
+	// never written fails on every refresh, which is why an optional
+	// requirement that is not met reads nothing either.
+	llm := vm.LLM != nil && r.services().LLM != nil && !r.in.Placed && !r.in.ModelAccessWithheld
 	// A placed component's database is the operator's to provide, and so is
 	// its way to the model gateway: neither is read from the tenant's store.
 	database := vm.Database != nil && !r.in.Placed

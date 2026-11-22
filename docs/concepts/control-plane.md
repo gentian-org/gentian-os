@@ -40,22 +40,23 @@ them.
 A *namespace* is a separate compartment of the cluster. The full list of
 namespaces is in [kernel/namespaces.yaml](../../kernel/namespaces.yaml).
 
-### The nine programs
+### The ten programs
 
 | Program | Its job in one sentence | Runs in | Who may call it | What it holds | What it can change |
 | --- | --- | --- | --- | --- | --- |
 | **Director** | Turns a permitted request for a change into a signed commit in the deployment repository, and passes one-off commands to the operator. | `kernel-control` | The consoles' backends and the command line tool, each with the signed-in person's token. | The credential that pushes to the deployment repository, the key that signs its commits, and a vault role that reads repository credentials. | The deployment repository. Nothing in the cluster directly. |
 | **Operator** | Makes the cluster match what git declares, and carries out one-off commands. That includes rendering each app from its profile, and what stands beside an app or in front of it: the publishing proxy for an entry published to the internet, the sign-in sidecar for an app with no single sign-on of its own, what the mail servers read about each tenant, and the Job that archives or deletes a removed person's mailbox. | `kernel-control` | Argo CD (by applying objects), the director and the usher (on its listener), Keycloak (membership events), the Kubernetes API server (admission checks). | Wide rights in the cluster, Keycloak's administrator credential, a vault role that reads and writes every platform secret. | Everything in the cluster, Keycloak, the vault and the kernel's OpenFGA. |
 | **Custodian** | Takes a secret from the person entitled to set it and puts it in the vault; never gives one back. | `kernel-control` | The admin console's and the App Store app's backends, with the person's token. | A vault role that can write a secret and cannot read one. | Secrets in the vault (write only). |
-| **Registrar** | Keeps the list of people: invites them, puts them in groups, removes them. | `kernel-control` | The admin console's backend and the command line tool, with the person's token. | One Keycloak client secret per realm, and the login of its own database. | People and groups in Keycloak. In the cluster, one kind and no other: the record of what was decided about a removed person's mailbox (`MailboxRemoval`). |
+| **Registrar** | Keeps the list of people: invites them, removes them, and asks the operator to give or take what they hold. | `kernel-control` | The admin console's backend and the command line tool, with the person's token. | One Keycloak client secret per realm, and the login of its own database. | People in Keycloak. In the cluster, one kind and no other: the record of what was decided about a removed person's mailbox (`MailboxRemoval`). |
 | **Usher** | Tells a signed-in person what is here, what they may open, and what the cluster currently holds of a tenant. | `kernel-control` | The consoles' backends and the command line tool, with the person's token. | An identity the operator admits to reads only. | Nothing. |
 | **Bouncer** | Checks, for every request at the front door, whether this signed-in person may enter this address. Answers the same question, about one tenant, for a component that was given a key for it. | `kernel-edge` | The Gateway; and, on a second listener, a component whose profile declares the rights check. | Each realm's token-exchange client secret. | Nothing. It lets a request through or refuses it. |
 | **Arbiter** | The one way into the app instance of OpenFGA: answers each component that declares an authorization store, from that component's store and no other. | `system-authorization` | A component with a key for its store; the operator, on a path of its own. | The app instance's key. | The components' stores: it creates, mirrors into, exports, restores and purges them. |
 | **Dispatcher** | Does what is asked for once and follows nothing declared. Starts a run for a component that asks: one pod of an installed action, or of an image of the component's own, in the tenant's namespace for runs. Carries out an act for the director: a backup taken or deleted. | `kernel-control` | A component whose profile declares `requires.services.runs`, with the key the operator gave it; and, on a listener of its own, the director with its workload token. | Nothing: no credential, and no data of a run. | Pods in the tenants' namespaces for runs, and the record a backup is taken from. |
+| **Confidant** | Keeps secrets that belong to one person each, for the component that acts for that person, and gives one back to that component alone. | `kernel-control` | A component whose profile declares `requires.services.personSecrets`, with the key the operator gave it. | A vault role that reads and writes what is under a tenant's `people/` and nothing else. | Those secrets in the vault. |
 | **Concierge** | Shows the page on the cluster's bare domain and sends a visitor to the sign-in of their workspace. | `tenant-platform`, published through the platform tenant's DMZ | Anybody on the internet; no sign-in. | Nothing. | Nothing. |
 
-Six of the nine hold the key that opens the kernel's OpenFGA (all but the
-arbiter, the dispatcher and the concierge). That is a known weakness, described in §6.
+Six of the ten hold the key that opens the kernel's OpenFGA (all but the
+arbiter, the dispatcher, the confidant and the concierge). That is a known weakness, described in §6.
 
 ### What they stand between
 
@@ -66,7 +67,7 @@ arbiter, the dispatcher and the concierge). That is a known weakness, described 
 | **App Store app** | The pages where a tenant admin finds and installs apps. Its backend calls the store outside the cluster, and the director, the usher and the custodian. | `tenant-<name>`, on every tenant but the platform tenant, while the cluster sends usage statistics and names a store |
 | **Gateway** | The front door: it terminates TLS, keeps the sign-in session in a cookie, and asks the bouncer before it forwards a request. It is Envoy Gateway. | `kernel-edge` |
 | **Argo CD** | Reads the deployment repository and applies its files to the cluster. It refuses a commit that is not signed by a trusted key. | `kernel-gitops` |
-| **Keycloak** | The identity provider: it holds the people, their passwords and their groups, and issues the tokens that prove who somebody is. People are kept in *realms*: the kernel realm for platform admins, one realm per tenant for everybody else. | `kernel-authentication` |
+| **Keycloak** | The identity provider: it holds the people and their passwords, and issues the tokens that prove who somebody is. People are kept in *realms*: the kernel realm for platform admins, one realm per tenant for everybody else. | `kernel-authentication` |
 | **Publishing proxy** | Answers what a tenant published to the internet with no sign-in: one small proxy per published entry, written by the operator. It forwards the declared paths to the app and nothing else. | `tenant-<name>-dmz` |
 | **Sign-in sidecar** | Signs a person in to an app that supports neither OIDC nor SAML: one small service per such app, written by the operator, which makes the app's own session for a person the tenant's realm vouches for. | `tenant-<name>`, beside the app |
 | **Mail proxy** | The one thing of mail that faces the internet, on a cluster that runs its own mail: it passes connections on to the mail servers and keeps nothing. | `system-mail-dmz` |
@@ -139,10 +140,10 @@ flowchart TB
   AR -->|"applies objects"| OP
   OP -->|"reconciles"| APP
   OP -->|"writes relations"| FGA
-  OP -->|"memberships, stores"| ARB
+  OP -->|"stores"| ARB
   APP -->|"its own store, with a key"| ARB
   ARB --> AFGA
-  KC -->|"membership events"| OP
+  KC -->|"arrivals and removals"| OP
   BO -.->|"asks"| FGA
   DI -.->|"asks"| FGA
   US -.->|"asks"| FGA
@@ -281,7 +282,7 @@ How to read it:
   so declaring it is a commit made by the director. Its password is a secret,
   so setting it is the custodian's.
 
-### 3.5 A person: inviting a user, and how a group becomes access
+### 3.5 A person: inviting a user, and how a position becomes access
 
 ```mermaid
 sequenceDiagram
@@ -293,30 +294,29 @@ sequenceDiagram
   participant O as operator
   participant B as bouncer and usher
 
-  P->>C: Invite a person into group G
+  P->>C: Invite a person with position G
   C->>R: POST /v1/tenants/t/actions/invite-person with the person's token
   R->>R: Verify the token
   R->>F: May this person manage users of tenant t
   F-->>R: Yes
-  R->>R: Refuse if G is a platform role group
-  R->>K: Create the account and the membership, in the tenant's realm
+  R->>K: Create the account, in the tenant's realm
+  R->>O: Give this account the positions user and G
+  O->>F: Write who holds them
   R-->>C: Done
-  K->>O: Signed event: this user's groups are now these
-  O->>F: Write the user's memberships
   B->>F: Later: may this user open app X
-  F-->>B: Yes, through group G
+  F-->>B: Yes, through position G
 ```
 
 How to read it:
 
-- Keycloak is where a membership is changed. OpenFGA holds a copy of it,
-  written by the operator from Keycloak's signed events.
-- A right follows from a group. Which group gives which right is declared in
-  git and written to OpenFGA by the operator.
-- The bouncer and the usher never read a group from a token. They ask
+- Keycloak holds the account and nothing about rights. Who holds what is in
+  OpenFGA alone, written by the operator when the registrar asks.
+- A right follows from a role, held directly or through a position. What a
+  position holds is declared in git and written to OpenFGA by the operator.
+- The bouncer and the usher never read a right from a token. They ask
   OpenFGA.
-- The registrar refuses any change to a group that carries a platform role,
-  whoever asks (§4.4).
+- The registrar refuses any change to the account of a platform-tenant
+  person who holds a cluster role, whoever asks (§4.4).
 
 ### 3.6 A request at the front door
 
@@ -475,6 +475,11 @@ How to read it:
 - Before a commit, asks the operator whether the cluster's resource
   definitions know every field the commit sets, and refuses the commit if a
   field would be silently dropped.
+- Before a commit that adds or changes a tenant's manifest, asks the operator
+  whether the cluster would take that manifest, and refuses the change with
+  the cluster's reason if it would not. A manifest the cluster refuses is one
+  Argo CD applies nothing of, so every later change to that tenant would wait
+  behind it. An operator that cannot be asked holds nothing back.
 - Passes one-off commands to the operator (§4.2), after the same token and
   permission check.
 - After each push, tells the operator that the deployment repository has a
@@ -491,7 +496,7 @@ commit unless marked as a command.
 
 | Family | What a caller can do |
 | --- | --- |
-| Tenants | List tenants; create one; retire one (remove it and keep its data); purge one (remove it with its data, in two commits, resumed after a restart); set or clear a tenant's custom domain and its mail mode; import a tenant from a backup bundle; set a tenant's organization, country and languages; declare a tenant's own groups and who signs in to it from another tenant ([identity-brokering.md](../guides/identity-brokering.md)); set the tenant's own switch for the cluster's administrators (`platformAccess`); accept the store's terms. |
+| Tenants | List tenants; create one; retire one (remove it and keep its data); purge one (remove it with its data, in two commits, resumed after a restart); set or clear a tenant's custom domain and its mail mode; import a tenant from a backup bundle; set a tenant's organization, country and languages; declare who signs in to a tenant from another tenant ([identity-brokering.md](../guides/identity-brokering.md)); set the tenant's own switch for the cluster's administrators (`platformAccess`); accept the store's terms. |
 | Apps and add-ons | Read what git says a tenant has installed; install an app, or move it to another build; uninstall it; choose its add-ons; ask for or decline a privilege an app declares; set an app's update mode for a tenant; read the update report and move every outdated app. |
 | Catalogs | List the catalogs a tenant or the cluster installs from and their entries; add, rename or remove a catalog for the whole cluster or for one tenant; allow or forbid a tenant's own admins to add theirs. |
 | Repositories | Declare or remove a repository (its address) for a tenant or for the cluster. The password is the custodian's. |
@@ -632,23 +637,24 @@ A *projection* is a copy of facts kept in a second place, always rebuilt from
 the original and never edited there. The operator creates the kernel's
 OpenFGA store and its model, and writes four things into it:
 
-- **Platform roles**: which Keycloak group holds `admin` and `break_glass`
-  over the cluster, from `spec.platformRoles` on the Cluster claim, and each
-  role holder of `spec.platformAccess.roleHolders` as the account of its
-  realm, on the cluster or, for a tenant's perimeter approver, on that
-  tenant; an entry past its `expiresAt` is not written.
-- **Tenants**: each tenant attached to the cluster, with its admins' and
-  members' groups.
-- **Apps**: each installed app attached to its tenant, with the group whose
-  members may use it.
-- **Memberships**: which person is in which group, from Keycloak's signed
-  events ([membership_listener.go](../../internal/controller/membership_listener.go)).
-  Nothing re-reads them: a membership the store lacks returns as each
-  person's groups next change.
+- **Cluster roles**: each role holder of `spec.platformAccess.roleHolders`
+  on the Cluster claim as the account of its realm, on the cluster or, for a
+  tenant's perimeter approver, on that tenant; an entry past its `expiresAt`
+  is not written. While the claim names no administrator, the account the
+  install made holds that role.
+- **Tenants**: each tenant attached to the cluster, with its positions: the
+  three every tenant has and the ones it declares, each with the roles it
+  holds.
+- **Apps**: each installed app and add-on attached to its tenant, with the
+  roles its profile declares.
+- **Who holds what**: a person's positions and roles, when the registrar
+  asks on the listener; a person who arrives from another realm is given
+  what the tenant declares for them, and a removed person loses what they
+  held, on Keycloak's signed events
+  ([membership_listener.go](../../internal/controller/membership_listener.go)).
 
-A role whose group is removed from the claim loses its relation, so a right
-is taken away by editing git. The same events are passed to the arbiter, for
-the components' stores that mirror the realm's groups.
+A role holder removed from the claim loses the relation, so a cluster right
+is taken away by editing git.
 
 **What it does: the listener**
 
@@ -663,8 +669,7 @@ two kinds of route ([internal/applifecycle](../../internal/applifecycle/)).
 | `bundle-fetches`, `bundle-sources/…/retire` | Fetches a bundle from storage outside the cluster that the cluster declared as a source; retires a source. |
 | `restore` | Creates the request to restore a tenant from a bundle. |
 | `notify` | Publishes one notice to a tenant's people. |
-| `purge-app` | Destroys what an uninstalled app left behind: database, object storage, cache user, files, stored credentials, access group. |
-| `provision-app` | Puts the tenant's current members into an app's group. |
+| `purge-app` | Destroys what an uninstalled app left behind: database, object storage, cache user, files, stored credentials, and what the rights store still holds on it. |
 | `request-privilege`, `decline-privilege` | Records, on the Component that waits, that the tenant's administrator asked the security officer for a pod-security waiver or a cluster role an app declares, or declined it. A request decides nothing; the grant is a commit. |
 | `remove-orphan` | Deletes a Tenant object that git no longer describes and no Argo CD Application owns; asked when a retire finds nothing in git. |
 | `remove-catalogue-residue` | Deletes one named object that the catalog left behind, and only if it is on the list below when the command arrives. Given a tenant and a profile, it deletes less: only an object a newer build of that profile left behind, only if the tenant has the profile, and only on a cluster whose one user tenant this is. |
@@ -733,7 +738,9 @@ every request. A positive answer is remembered for thirty seconds.
   ([schemacheck](../../internal/schemacheck/)).
 - *Admission.* It refuses a Tenant object that breaks the rules (for example
   a second user tenant on a single-tenancy cluster) when the object is
-  applied.
+  applied. For the director it applies a tenant's manifest as a dry run and
+  answers what the cluster said (`/v1/tenants/{tenant}/actions/admit`):
+  nothing is stored, and the answer is the one Argo CD would get.
 - *The address check.* It installs nothing for a component whose profile
   asks for an address name the platform keeps, and says so on the component.
 - *The store's address.* A store address whose host is the one this cluster
@@ -759,8 +766,8 @@ sent, for a platform admin to read
   checkout; what git declares reaches it as objects Argo CD applied.
 - Decide whether a person may do something. That was decided before a
   request reached it.
-- Offer a command that changes who may do what. No command writes a relation,
-  a group that carries a right, or a policy.
+- Offer the director or the usher a command that changes who may do what.
+  Giving and taking a position or a role is the registrar's alone to ask.
 
 **What it holds**
 
@@ -779,7 +786,7 @@ sent, for a platform admin to read
 **Who calls it, and whom it calls**
 
 - Called by: Argo CD, by applying objects; the director and the usher, on the
-  listener; Keycloak, with membership events; the Kubernetes API server, for
+  listener; the registrar, to give and take what a person holds; Keycloak, with realm events; the Kubernetes API server, for
   admission.
 - Calls: the Kubernetes API, Keycloak, the vault, OpenFGA, the arbiter, the
   platform's release index, and the usage statistics address when reporting
@@ -849,7 +856,7 @@ keep working.
 
 **What it does**
 
-- Lists a tenant's people, one person, its groups, a group's members, the
+- Lists a tenant's people, one person and what they hold, the
   domain a login is composed under and the templates an invitation may apply.
 - Invites a person, updates one, removes one. Where the person has a mailbox
   on the cluster's own mail server, the removal carries the answer of whoever
@@ -857,8 +864,9 @@ keep working.
   `MailboxRemoval` before it removes the person. It does nothing to the
   mailbox itself: the operator carries the answer out and reports on the same
   object, which the registrar reads back for the console.
-- Puts a person into a group or takes them out; creates, renames and deletes
-  groups.
+- Gives a person a position or a role and takes it, by asking the operator,
+  which writes the rights store. A tenant that shares a realm sees and
+  changes only the holders of its own position User.
 - Sends a password reset; requires or removes a second factor.
 - Issues the link that hands a new tenant's admin account to its holder.
   Keeps a request to invite a new tenant's admin, with the address to mail,
@@ -875,12 +883,10 @@ cluster, the `MailboxRemoval` above.
 
 **What it must never do**
 
-- Change who holds a platform role. It refuses, whoever asks and whatever
-  OpenFGA answers, every change to a group the Cluster claim names under
-  `spec.platformRoles`: adding to it, removing from it, renaming, deleting or
-  re-creating it. It also refuses any change to a person who is in such a
-  group, or who is a person of the platform tenant the claim names a role
-  holder, because changing a role holder's address and mailing a password
+- Change the account of a person who holds a cluster role. It refuses,
+  whoever asks and whatever OpenFGA answers, every change to a person of the
+  platform tenant the claim names a role holder, because changing a role
+  holder's address and mailing a password
   link replaces them. The rule is applied in the one place every write leaves
   for Keycloak ([guard.go](../../internal/registrar/identity/guard.go)), and a
   write it does not recognize is refused. If the claim cannot be read, the
@@ -938,10 +944,17 @@ and asks OpenFGA before it answers.
 | Every domain the cluster serves, the DNS records it needs and whether the internet has them | `can_audit` on the cluster |
 | Who holds which role on a tenant, and what each role carries (`…/authorization`) | `can_view` on the tenant |
 | Who holds which role on the cluster | `can_audit` on the cluster |
+| What one person holds on a tenant and on each of its apps, through which position, and which permissions are in effect for them (`…/access/people/{id}`); what one of the tenant's positions holds (`…/access/positions/{name}`); who holds which role on one app (`…/access/apps/{p}`) | `can_manage_users` on the tenant |
 | What the catalog left behind: objects no profile's file holds any more, and profiles nobody uses | `can_audit` on the cluster |
 
 The tiles come from a file the operator writes. Which permissions a caller
-holds, and who holds which role, are OpenFGA's answers. All other answers are the
+holds, who holds which role, and what a person or a position holds are OpenFGA's
+answers. What a person holds is read from both ends: the roles they hold with
+the position each is held through, and the store's own answer to every
+permission, so that a permission a held role carries and the model withholds,
+and one in effect that follows from the cluster, are both said. The state of a
+tenant's apps carries, for each app, its profile's trust tier and what the
+profile has the component hold on people's behalf (`holds`). All other answers are the
 operator's, fetched over its listener. The usher does not read the cluster
 itself: each answer is worked out inside the operator, and reading the
 objects behind it would mean giving the usher access to every tenant's
@@ -1074,12 +1087,8 @@ policies the operator writes say so explicitly (`failOpen: false`).
   every five seconds, and a key opens one store and no other. A table that
   does not parse leaves the last good one in force.
 - Keeps the model a profile declares, and the starting tuples it lists,
-  within what the model admits. Where a profile asks for the realm's groups
-  to be mirrored into its store, the arbiter writes them from the memberships
-  the operator passes on; no component's key may write a tuple of the group
-  type, because which people are in which group is the realm's to say.
-- On its platform path, for the operator alone: creates a store, states a
-  person's groups, drops a deleted group, exports a store for a backup,
+  within what the model admits.
+- On its platform path, for the operator alone: creates a store, exports a store for a backup,
   restores one from a bundle, purges one or every store of a tenant. The
   operator presents a token for its service account; the arbiter asks the
   Kubernetes API server whose token it is and admits that one account.
@@ -1090,7 +1099,6 @@ policies the operator writes say so explicitly (`failOpen: false`).
 - Answer a platform question. The platform's own rights live in the kernel's
   OpenFGA, which the arbiter never reaches.
 - Let one component's key read or write another component's store.
-- Let a component write a group or a membership.
 
 **What it holds**
 
@@ -1125,11 +1133,13 @@ programs ask the kernel's OpenFGA, which the arbiter does not stand before.
   once (Secret `runs-<component>`) and writes its hash into a table
   (ConfigMap `dispatcher-runs`) with what may run in each tenant: the
   installed actions that are Ready, and each caller's own runs, every one an
-  image at its pinned build. The dispatcher re-reads the table every five
+  image at its pinned build. An action that waits for a credential a person
+  sets is not Ready; one that has them is named with the Secret its runs
+  mount. The dispatcher re-reads the table every five
   seconds. The tenant and the component are the table's for that key, never
   anything a request says.
 - Carries nothing of a run. Inputs, outputs, progress, a question to a
-  person and a call to an adapter go between the run's pod and the component
+  person and a call to a bridge go between the run's pod and the component
   that started it, with a credential the component made for that run. The
   dispatcher passes that credential into the pod and keeps neither it nor
   anything else: a restarted dispatcher answers from the pods it finds.
@@ -1190,19 +1200,106 @@ Nothing: no credential, and no session passes through it.
 The bare domain shows no page and pages lose the cluster's branding. Anybody
 who knows their desktop's address can still sign in there.
 
+### 4.10 Confidant
+
+**What it does**
+
+- Keeps a secret of one person for one component: the lasting credential of
+  a sign-in the person gave that component at a service outside the cluster,
+  for example. An entry is at
+  `gentian-os/tenants/<tenant>/people/<person>/<component>/<name>` in the
+  vault, and one version of it is kept.
+- Knows a component by the key it presents. The tenant and the component of
+  an entry come from the key, never from the request, so a component reaches
+  its own entries of its own tenant's people and no others.
+- Asks for the person at the first entry: the first secret a component keeps
+  for a person needs that person's token as well, the one the front door
+  hands the component's page for them (an exposure with `exchangeToken`).
+  Once there is an entry, the component replaces it with its key alone,
+  because a renewed credential arrives while the person is away. When the
+  component removes every entry of a person, the next one needs the person
+  again.
+- Writes every request it decides to its log: the action, the tenant, the
+  component, the person, the entry's name and how it ended, refusals
+  included. Never a value.
+
+An entry ends with its owner. The component removes one, or everything it
+keeps for a person. The operator removes the rest, with its own vault role:
+a person's entries when the realm says the person no longer exists, an
+app's when the app is purged, and a tenant's with the tenant.
+
+Its routes: `PUT`, `GET` and `DELETE /v1/people/{person}/secrets/{name}`,
+`DELETE /v1/people/{person}`. The component key is the bearer credential; the
+person's token is in the header `Gentian-Person-Token`.
+
+**What it must never do**
+
+- Give a secret to anybody but the component that keeps it: not to a person,
+  not to a console, not to another component.
+- Take the tenant, the component or the realm from a request.
+- Reach any other path of the vault.
+
+**What it holds**
+
+- A vault role, bound to its own service account and to a token issued for
+  the vault alone, that creates, reads, replaces and deletes what is under
+  `gentian-os/tenants/+/people/`
+  ([cluster-default.yaml](../../crossplane/compositions/cluster-default.yaml),
+  policy `confidant-people`). The policies a tenant's administrator signs in
+  to the vault with deny those paths.
+- Nothing in the cluster: its service account is granted nothing and its
+  API-server token is not mounted. The components it serves are in a list
+  the operator writes (`confidant-keys`), by the digests of their keys.
+
+**Who calls it, and whom it calls**
+
+- Called by: a component of a tenant whose profile declares
+  `requires.services.personSecrets` at `trustTier: platform`. The tenant's
+  network policy opens the confidant's one port to that component alone.
+- Calls: Keycloak's public keys and the vault.
+
+**The liaison**
+
+The platform ships one such component, the liaison (`internal/liaison`,
+[componentprofile-liaison.yaml](../../charts/gentian-os/templates/componentprofile-liaison.yaml)).
+It keeps a person's sign-ins at services outside the cluster:
+
+- A person signs in at a service on the liaison's page,
+  `liaison.<tenant's domain>/connections/`, behind the tenant's sign-in. The
+  liaison registers as a public client at the service (RFC 7591), runs the
+  authorization code flow with PKCE, and keeps what the service hands back
+  with the confidant.
+- A component that was granted the contract `connections` tells the liaison
+  which services there are and asks it for a short credential for one call.
+  The lasting credential never leaves the liaison.
+- It reaches outside services over https. The platform answers that request
+  itself, as it does for every profile it ships. What a tenant's approver
+  answers is each bridge to an outside service: the bridge names the
+  service, and the liaison is told of a bridge only once the bridge's own
+  request was answered.
+
+The platform places it in no tenant. A tenant has a liaison while an app it
+installed names it in `spec.comesWith`.
+
+**If it is unavailable**
+
+A component cannot read or renew what it keeps for a person, so what it does
+for people at outside services stops until the confidant answers again.
+Nothing stored is lost.
+
 ## 5. Who decides what
 
 OpenFGA is the one authority on rights. A *relation* is a named link between
 a person and a thing, for example "may install apps in this tenant". The
 relations that are permissions all start with `can_`. Every program that
 takes a person's request verifies the person's token itself and then asks
-OpenFGA one such question. No program decides from a group in a token, and no
+OpenFGA one such question. No program decides from a right in a token, and no
 program takes another program's word for what a person may do, with the one
 exception in §6 (the operator and the director).
 
-The rights themselves are held by groups in Keycloak: a tenant's admins, its
-members, the holders of each platform role. §3.5 and §4.2 say how a group
-becomes a relation.
+The rights themselves are roles and positions in the store, and cluster
+roles held by name on the Cluster claim ([iam.md §1.2](iam.md)). §3.5 and
+§4.2 say how each is written.
 
 | Who asks | About | Relation | For what |
 | --- | --- | --- | --- |
@@ -1226,7 +1323,7 @@ becomes a relation.
 | Director | the cluster | `can_audit` | reading the cluster's settings, tenants, catalogs, changes, the update report |
 | Director, custodian | a tenant or the cluster | `can_write_credential` | declaring a repository (director); setting a secret (custodian) |
 | Custodian | a tenant or the cluster | `can_read_credential` | seeing that a secret is required and whether it is set |
-| Registrar | a tenant | `can_manage_users` | people and groups |
+| Registrar | a tenant | `can_manage_users` | people and what they hold |
 | Registrar | the cluster | `can_configure`, `can_audit` | handing over a tenant's admin account; counting accounts |
 
 Reads are never guarded by the relation of the matching write: somebody who
@@ -1246,7 +1343,7 @@ list of relations and the rules behind them are in
 | **Director** | Push credential and signing key for the deployment repository; identity at the operator's listener; the vault role for repository credentials | Commit anything to the deployment repository in anybody's name, including a change to who administers the platform and where software comes from. Issue every command for any tenant and name anybody as the one who asked; two commands destroy data, and one deletes objects the catalog left behind (never one a profile on the cluster still brings: the operator checks that itself). Read every repository credential. | Every commit stays in git, signed, where it can be seen and reverted. It cannot read any other secret and cannot reach Keycloak. Its token for the operator lasts ten minutes and stops working when the pod is gone. |
 | **Operator** | Wide cluster rights, Keycloak's administrator credential, the vault role for everything | Everything. It can read every Secret, and with that it can also do what each of the others can. | Nothing inside the cluster. It is the part the platform trusts. What protects it is that no person's request reaches it directly: only Argo CD, the director and the usher on the listener, Keycloak's signed events and the API server's admission calls. |
 | **Custodian** | Vault role that writes and cannot read | Overwrite any secret the platform stores. | It cannot read or delete a secret, so the damage is loud: things stop working. No git, no Keycloak, and it cannot change any object that decides configuration. |
-| **Registrar** | One Keycloak client secret per realm | In every realm, the kernel realm included: create, disable or delete any account, set any password, remove any second factor, change any group. That includes the groups behind the platform roles, so it can make somebody a platform admin. It can also rewrite its own record. And it can write a `MailboxRemoval` for any address and either answer: together with deleting the account, which it can do too, that has the operator archive or delete that person's mailbox. | No git, no vault. In the cluster it can write one kind, `MailboxRemoval`, and no other object. The operator does not act on such a record because it says so: the address must be in the tenant's mail domain, no person of the realm may still hold it, and the mail server must hold no password for it. No client in Keycloak's master realm; its client holds `view-users`, `query-users`, `query-groups` and `manage-users`, so it cannot change a realm's settings (the password policy among them), cannot manage clients or identity providers and cannot impersonate. Keycloak records each change it makes. |
+| **Registrar** | One Keycloak client secret per realm | In every realm, the kernel realm included: create, disable or delete any account, set any password, remove any second factor. It can ask the operator to give any position of a tenant to any account. It can also rewrite its own record. And it can write a `MailboxRemoval` for any address and either answer: together with deleting the account, which it can do too, that has the operator archive or delete that person's mailbox. | No git, no vault. In the cluster it can write one kind, `MailboxRemoval`, and no other object. The operator does not act on such a record because it says so: the address must be in the tenant's mail domain, no person of the realm may still hold it, and the mail server must hold no password for it. No client in Keycloak's master realm; its client holds `view-users`, `query-users`, `query-groups` and `manage-users`, so it cannot change a realm's settings (the password policy among them), cannot manage clients or identity providers and cannot impersonate. Keycloak records each change it makes. |
 | **Usher** | Identity for reads at the operator's listener | Read every tenant's live state and show it to anybody; show or hide tiles. | It cannot issue a command, download a backup, read a secret, or change anything. A tile is not access: the bouncer decides each request. |
 | **Bouncer** | Each realm's token-exchange client secret | Let any signed-in person into any address behind it, or refuse everybody. It sees the token of every session that passes and can use each one, while it is valid, at the director, the custodian, the registrar and the usher; with the exchange secret it can also obtain, for any session it sees, a token valid at any app of that realm. | A token it sees is good for five minutes (the lifetime Keycloak gives it in a tenant realm). The exchange client can sign nobody in and gets no token of its own. |
 | **Arbiter** | The app instance's key | Read and rewrite every component's authorization store, so it can grant anybody anything inside an app that keeps its rights there. | Nothing of the platform's: the kernel's OpenFGA is another instance with another key, and the arbiter holds no token, no git credential and no vault role. The front door still decides who reaches an app at all. |
@@ -1284,12 +1381,12 @@ gives.
    data from another's is the usher's own permission check and nothing at the
    operator.
 
-5. **The registrar's rule about platform role groups is its own code.** Its
+5. **The registrar's rule about cluster role holders is its own code.** Its
    Keycloak client may manage users in the kernel realm, and Keycloak would
-   carry out a change to a platform role group for it. The rule stops every
-   caller and every mistake in a route; it does not stop somebody who has
-   taken the program over. It covers the groups the Cluster claim names and
-   no others.
+   carry out a change to a role holder's account for it. The rule stops
+   every caller and every mistake in a route; it does not stop somebody who
+   has taken the program over. It covers the platform-tenant people the
+   Cluster claim names and no others.
 
 6. **The kernel's network rules can be switched off, and restrict incoming
    connections only.** With the rules on, which is the default
@@ -1349,9 +1446,10 @@ gives.
 
 12. **A person can sign in to the vault's own pages.** Besides the custodian,
     the vault accepts a sign-in through Keycloak to its own user interface,
-    with one role for platform admins and one for tenant admins. That path
-    can read values, and it is decided by a group in the token, not by
-    OpenFGA.
+    with one role, for the cluster's administrators. That path can read
+    values, and it is decided by the cluster roles claim in the token,
+    written from OpenFGA when the token is issued, not by a question to
+    OpenFGA at the time.
 
 13. **What tells an app who the person is, is not signed.** The bouncer sets
     headers that name the person, and an app or a sign-in sidecar believes
@@ -1467,7 +1565,7 @@ separates tenants.
 
 | Term | Meaning |
 | --- | --- |
-| Director, operator, custodian, registrar, usher, bouncer, arbiter, dispatcher, concierge | The nine programs; §2. |
+| Director, operator, custodian, registrar, usher, bouncer, arbiter, dispatcher, confidant, concierge | The ten programs; §2. |
 | Platform admin | A person who administers the cluster. Lives in the kernel realm. |
 | Tenant admin, user admin | A person who administers one tenant. Called tenant admin on a multi-tenancy cluster and user admin on a single-tenancy one. |
 | Tenant | One organization's separate part of the cluster: its own people, namespaces, data and addresses. |

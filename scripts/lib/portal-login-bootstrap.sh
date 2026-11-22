@@ -226,7 +226,7 @@ ensure_headlamp_oidc_secret() {
         --from-literal=OIDC_CLIENT_ID="headlamp" \
         --from-file=OIDC_CLIENT_SECRET=<(printf '%s' "${secret}") \
         --from-literal=OIDC_ISSUER_URL="https://id.${kernel_domain}/auth/realms/${kernel_realm}" \
-        --from-literal=OIDC_SCOPES="openid,profile,email,groups" \
+        --from-literal=OIDC_SCOPES="openid,profile,email" \
         --dry-run=client -o yaml | kubectl apply -f - >&2
     echo "${secret}"
 }
@@ -1018,10 +1018,6 @@ run_keycloak_portal_bootstrap_job() {
     # password into another one to save a namespace is not a trade worth making.
     local ns
     ns="$(_pl_identity_ns)"
-    # The group model v1 names for the platform administrator role; the
-    # claim binds it to cluster#admin and every console derives from that.
-    local platform_admin_group="gentian:platform:admin"
-
     export PORTAL_LOGIN_USERNAME="${username}"
     local require_mfa
     require_mfa="$(platform_admin_requires_mfa)"
@@ -1068,7 +1064,6 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=username="${username}"
         --from-literal=email="${email}"
         --from-literal=require_mfa="${require_mfa}"
-        --from-literal=platform_admin_group="${platform_admin_group}"
         --from-literal=legacy_username="${legacy_username}"
         --from-literal=llm_support="${llm_support}"
     )
@@ -1264,12 +1259,16 @@ ${admin_clients_shell}
               # mapper -- which is why both are on.
               # Kept thirty days in the database, as tenant realms are: the
               # record is what the realm writes to stdout as it happens.
+              # gentian-device-passwords ends a person's device passwords
+              # with their password, as in every tenant realm.
+              # gentian-home-links links a person who signs in to an app that
+              # calls a home as the person, as in every tenant realm.
               REALM_EVENTS=\$(jq -n '{
                 eventsEnabled: true,
                 eventsExpiration: 2592000,
                 adminEventsEnabled: true,
                 adminEventsDetailsEnabled: false,
-                eventsListeners: ["jboss-logging", "gentian-director"]
+                eventsListeners: ["jboss-logging", "gentian-director", "gentian-device-passwords", "gentian-home-links"]
               }')
               if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/events/config" -d "\${REALM_EVENTS}" >/dev/null 2>&1; then
@@ -1299,7 +1298,7 @@ ${admin_clients_shell}
                   "\${FLOWS}/\$1/executions" -d @/tmp/exec.json >/dev/null
                 [ -z "\${4:-}" ] && return 0
                 kc_post "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/authentication/executions/\$(jq -r .id /tmp/exec.json)/config" \\
-                  "\$(jq -n --arg a "\$1-\$4" --arg n "\$4" '{alias:\$a,config:{attribute_name:"gentianRequiresMFA",attribute_expected_value:"true",include_group_attributes:"true",not:\$n}}')"
+                  "\$(jq -n --arg a "\$1-\$4" --arg n "\$4" '{alias:\$a,config:{attribute_name:"gentianRequiresMFA",attribute_expected_value:"true",include_group_attributes:"false",not:\$n}}')"
               }
               kc_step() { kc_post "\${FLOWS}/\$1/executions/execution" "{\"provider\":\"\$2\"}"; kc_set "\$@"; }
               kc_sub() {
@@ -1334,6 +1333,18 @@ ${admin_clients_shell}
                 echo "user profile gentian.inviteEmail already present for realm \${REALM}"
               fi
 
+              # The mark the sign-in flow reads, declared so that the realm
+              # keeps it on an account and so that only an administrator of the
+              # realm sees or changes it: a person cannot take the rule off
+              # their own account.
+              PROFILE=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile")
+              if ! echo "\${PROFILE}" | jq -e '.attributes[] | select(.name=="gentianRequiresMFA")' >/dev/null 2>&1; then
+                UPDATED=\$(echo "\${PROFILE}" | jq '.attributes += [{"name":"gentianRequiresMFA","displayName":"Second factor required","validations":{"options":{"options":["true"]}},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false}]')
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile" -d "\${UPDATED}"
+                echo "user profile gentianRequiresMFA ensured for realm \${REALM}"
+              fi
+
               for ACTION in VERIFY_PROFILE UPDATE_PROFILE; do
                 RA=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/authentication/required-actions/\${ACTION}" 2>/dev/null || true)
                 if [ -n "\${RA}" ]; then
@@ -1349,59 +1360,31 @@ ${admin_clients_shell}
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/profile" -d "\${RELAXED}" >/dev/null
               echo "user profile firstName/lastName optional for realm \${REALM}"
 
-              # The groups scope: what Argo CD and Headlamp read a person's
-              # platform role from. The edge client does not carry it (the
-              # bouncer asks the store, never the token).
+              # The cluster-roles scope: what Argo CD, Headlamp's proxy, Grafana
+              # and the command line read a person's cluster roles from. Its one
+              # mapper is the platform's (gentian-cluster-roles): it asks the
+              # rights store which cluster roles the person holds and writes
+              # them into gentian_cluster_roles. The edge client does not carry
+              # it (the bouncer asks the store, never the token).
               SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
-              GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
-
-              # Create the scope when the realm has none.
-              #
-              # Keycloak ships a groups scope in some distributions and not others,
-              # and this realm had none — so the attach below found nothing, did
-              # nothing, and said nothing. The portal's tokens then carried no groups
-              # claim, OpenBao refused every one, and it surfaced three layers away as
-              # a 401 from the custodian.
-              #
-              # full.path is what OpenBao matches: its roles bind /group-name with a
-              # leading slash, and the bare name matches nothing.
+              GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="cluster-roles") | .id' | head -1)
               if [ -z "\${GROUPS_SCOPE_ID}" ] || [ "\${GROUPS_SCOPE_ID}" = "null" ]; then
-                echo "No groups client scope in realm \${REALM}; creating one."
+                echo "No cluster-roles client scope in realm \${REALM}; creating one."
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
-                  -d '{"name":"groups","protocol":"openid-connect","attributes":{"include.in.token.scope":"true","display.on.consent.screen":"false"}}' \\
-                  >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not create the groups client scope." >&2; exit 1; }
+                  -d '{"name":"cluster-roles","protocol":"openid-connect","attributes":{"include.in.token.scope":"false","display.on.consent.screen":"false"}}' \\
+                  >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not create the cluster-roles client scope." >&2; exit 1; }
                 GROUPS_SCOPE_ID=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
-                  | jq -r '.[] | select(.name=="groups") | .id' | head -1)
+                  | jq -r '.[] | select(.name=="cluster-roles") | .id' | head -1)
                 if [ -z "\${GROUPS_SCOPE_ID}" ] || [ "\${GROUPS_SCOPE_ID}" = "null" ]; then
-                  printf '\033[0;31m[ERROR]\033[0m %s\n' "created the groups scope but cannot find it." >&2
+                  printf '\033[0;31m[ERROR]\033[0m %s\n' "created the cluster-roles scope but cannot find it." >&2
                   exit 1
                 fi
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
-                  -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}' \\
-                  >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not add the group-membership mapper." >&2; exit 1; }
-                echo "Created groups client scope with full.path=true"
-              fi
-              if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
-                # Emit the FULL path. OpenBao's roles bind /group-name with a
-                # leading slash; the bare name matches nothing and fails as a
-                # denied login rather than as a misconfigured claim.
-                GM_ID=\$(curl -sf -H "\${AUTH}" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
-                  | jq -r '.[] | select(.protocolMapper=="oidc-group-membership-mapper") | .id' | head -1)
-                if [ -n "\${GM_ID}" ] && [ "\${GM_ID}" != "null" ]; then
-                  GM=\$(curl -sf -H "\${AUTH}" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models/\${GM_ID}")
-                  GM_NEW=\$(printf '%s' "\${GM}" | jq '.config["full.path"]="true" | .config["access.token.claim"]="true"')
-                  if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models/\${GM_ID}" \\
-                    -d "\${GM_NEW}" >/dev/null 2>&1; then
-                    echo "groups mapper: full.path=true"
-                  else
-                    printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set full.path on the groups mapper" >&2
-                  fi
-                fi
+                  -d '{"name":"cluster-roles","protocol":"openid-connect","protocolMapper":"gentian-cluster-roles","config":{"claim.name":"gentian_cluster_roles","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","introspection.token.claim":"false"}}' \\
+                  >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not add the cluster-roles mapper." >&2; exit 1; }
+                echo "Created cluster-roles client scope"
               fi
 
               USER_ID=\$(curl -sf -H "\${AUTH}" \\
@@ -1438,28 +1421,17 @@ ${admin_clients_shell}
                 echo "Updated user \${PORTAL_USERNAME} (second factor required: \${REQUIRE_MFA:-true})"
               fi
 
-              ADMIN_GROUP="\${PLATFORM_ADMIN_GROUP}"
-              GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${ADMIN_GROUP}&exact=true")
-              GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${ADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
-              if [ -z "\${GROUP_ID}" ] || [ "\${GROUP_ID}" = "null" ]; then
-                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups" \\
-                  -d "{\"name\":\"\${ADMIN_GROUP}\"}"
-                GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${ADMIN_GROUP}&exact=true")
-                GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${ADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
-                echo "Created group \${ADMIN_GROUP}"
-              else
-                echo "Group \${ADMIN_GROUP} already exists"
-              fi
-              curl -sf -X PUT -H "\${AUTH}" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
-              echo "User \${PORTAL_USERNAME} joined \${ADMIN_GROUP}"
-              curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}" |
-                jq -c '.attributes.gentianRequiresMFA = ["true"]' > /tmp/group.json
+              # The install's administrator administers the cluster: the
+              # operator gives the account the cluster's admin role while the
+              # Cluster claim names nobody for it, by this account's name. Who
+              # administers gives a second factor; the mark the sign-in flow
+              # reads is on the account, where the operator keeps it from then
+              # on, and the person cannot change it.
+              curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}" |
+                jq -c '.attributes.gentianRequiresMFA = ["true"]' > /tmp/admin-user.json
               curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}" -d @/tmp/group.json >/dev/null
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}" -d @/tmp/admin-user.json >/dev/null
+              echo "User \${PORTAL_USERNAME} marked: second factor required"
 
               # The account this one replaces. Removed rather than left
               # disabled: two administrators, one of whom cannot be reached by
@@ -1480,9 +1452,9 @@ ${admin_clients_shell}
                 fi
               fi
 
-              # The realm's own administration, granted to the group rather than
-              # to the person: whoever the cluster's platform administrators are,
-              # they are the ones who manage users, groups and clients here.
+              # The realm's own administration, for the install's
+              # administrator: the account that manages users and clients here
+              # until it names others.
               #
               # Without it the identity console answers 403 to the very account
               # the install says to sign in as -- a refusal that reads like a
@@ -1495,11 +1467,11 @@ ${admin_clients_shell}
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${RM_CLIENT_ID}/roles/realm-admin")
                 if [ -n "\${RM_ROLE}" ]; then
                   if curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}/role-mappings/clients/\${RM_CLIENT_ID}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/role-mappings/clients/\${RM_CLIENT_ID}" \\
                     -d "[\${RM_ROLE}]" >/dev/null 2>&1; then
-                    echo "Group \${ADMIN_GROUP} granted realm-management:realm-admin"
+                    echo "User \${PORTAL_USERNAME} granted realm-management:realm-admin"
                   else
-                    echo "Group \${ADMIN_GROUP} already holds realm-management:realm-admin"
+                    echo "User \${PORTAL_USERNAME} already holds realm-management:realm-admin"
                   fi
                 fi
               fi
@@ -1516,8 +1488,8 @@ ${admin_clients_shell}
               # the console never finishes loading and sits on its spinner.
               #
               # Proved on the cluster rather than guessed: the same person, in
-              # the same realm, holding realm-admin through
-              # gentian:platform:admin, is answered 200 by that same endpoint
+              # the same realm, holding realm-admin, is answered 200 by that
+              # same endpoint
               # when the token comes from admin-cli, which issues a full one.
               # The only difference is what the token carries.
               #
@@ -1581,7 +1553,7 @@ ${admin_clients_shell}
               if [ -n "\${ARGOCD_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
                 curl -sf -X PUT -H "\${AUTH}" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${ARGOCD_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
-                echo "gentian-argocd default scope: groups"
+                echo "gentian-argocd default scope: cluster-roles"
               fi
 
               # Headlamp. Confidential, because the token it receives is what
@@ -1617,20 +1589,20 @@ ${admin_clients_shell}
                   | jq -r '.[0].id')
                 echo "Created client headlamp"
               fi
-              # Without the groups claim the proxy impersonates a person with
+              # Without the roles claim the proxy impersonates a person with
               # no groups, and every API call is refused by RBAC.
               if [ -n "\${HEADLAMP_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
                 curl -sf -X PUT -H "\${AUTH}" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${HEADLAMP_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
-                echo "headlamp default scope: groups"
+                echo "headlamp default scope: cluster-roles"
               fi
 
               # Grafana, the platform's metrics dashboards. Made on every
               # cluster, as monitoring is switched on by a setting; nothing
               # answers at its address until then. Confidential, like Headlamp;
-              # it reads a person's role from the groups claim (the platform administrator
+              # it reads a person's role from the cluster roles claim (the administrator
               # is Grafana's Admin, everyone else who reaches it a Viewer), so
-              # it gets the groups scope too. The edge already decided who may
+              # it gets the cluster-roles scope too. The edge already decided who may
               # reach it at all: can_audit on the cluster.
               GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
@@ -1666,7 +1638,7 @@ ${admin_clients_shell}
               if [ -n "\${GRAFANA_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
                 curl -sf -X PUT -H "\${AUTH}" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${GRAFANA_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
-                echo "grafana default scope: groups"
+                echo "grafana default scope: cluster-roles"
               fi
 
               # The CLI. kubectl gentian is a client of the director, as the
@@ -1675,7 +1647,7 @@ ${admin_clients_shell}
               # carries their own token, which the director checks like any
               # other. Public, because a CLI on a workstation cannot keep a
               # secret; device grant only, so it cannot be used to collect a
-              # password; the director's audience and the groups claim, so the
+              # password; the director's audience and the cluster roles claim, so the
               # token is one the director accepts and decides on.
               CLI_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-cli" \\
@@ -1728,7 +1700,7 @@ ${admin_clients_shell}
                   curl -sf -X PUT -H "\${AUTH}" \\
                     "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLI_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
                 fi
-                echo "gentian-cli: device grant, director audience, groups"
+                echo "gentian-cli: device grant, director audience, cluster-roles"
               fi
 
 ${refresh_shell}
@@ -1931,11 +1903,6 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: require_mfa
-            - name: PLATFORM_ADMIN_GROUP
-              valueFrom:
-                secretKeyRef:
-                  name: portal-bootstrap-credentials
-                  key: platform_admin_group
             - name: LEGACY_USERNAME
               valueFrom:
                 secretKeyRef:

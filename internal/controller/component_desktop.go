@@ -745,7 +745,7 @@ func activePins(app gentianov1alpha1.TenantApp) []gentianov1alpha1.AddonPin {
 // when the profile says otherwise is replaced (ensureComponent).
 const componentClassAssumedAnnotation = "gentianos.io/class-assumed"
 
-// installClass is the class a tenant's install runs under: adapter or action
+// installClass is the class a tenant's install runs under: action or bridge
 // for a profile certified as one, app otherwise -- including while the profile is
 // not on the cluster yet, which is how an install usually begins.
 func (r *TenantReconciler) installClass(ctx context.Context, profileName string) (gentianov1alpha1.ComponentClass, bool, error) {
@@ -757,7 +757,7 @@ func (r *TenantReconciler) installClass(ctx context.Context, profileName string)
 		return "", false, err
 	}
 	for _, exclusive := range []gentianov1alpha1.ComponentClass{
-		gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction,
+		gentianov1alpha1.ComponentClassAction, gentianov1alpha1.ComponentClassBridge,
 	} {
 		if classIncludes(profile, exclusive) {
 			return exclusive, true, nil

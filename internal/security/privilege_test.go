@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package security_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -38,11 +39,11 @@ func profileAsking() *gentianov1alpha1.ComponentProfile {
 					}},
 					Egress: []gentianov1alpha1.EgressRequest{
 						{Name: "smtp-relay", Reason: "sends invitations through the relay",
-							Rule: networkingv1.NetworkPolicyEgressRule{
+							Rule: &networkingv1.NetworkPolicyEgressRule{
 								Ports: []networkingv1.NetworkPolicyPort{{Port: &port}},
 							}},
 						{Name: "webhooks", Reason: "posts to the customer's endpoint",
-							Rule: networkingv1.NetworkPolicyEgressRule{}},
+							Rule: &networkingv1.NetworkPolicyEgressRule{}},
 					},
 					ClusterRoles: []gentianov1alpha1.ClusterRoleRequest{{
 						Name: "read-nodes", Reason: "renders a capacity view",
@@ -199,5 +200,184 @@ func TestPrivilegeReasonIsTheProfilesOwn(t *testing.T) {
 	}
 	if got := security.PrivilegeReason(profile, "egress/nothing"); got != "" {
 		t.Fatalf("a ref the profile does not ask for had reason %q", got)
+	}
+}
+
+// A catalog the cluster's policy lists has its apps' egress answered without
+// an approver: every egress request, and nothing else.
+func TestAListedCatalogsEgressIsAnsweredByThePolicy(t *testing.T) {
+	profile := profileAsking()
+	profile.Annotations = map[string]string{security.OriginAnnotation: "cluster/acme"}
+
+	policy := security.PreApprovedEgress(profile, []string{"cluster/acme"})
+	got := security.PendingPrivilegesUnder(profile, componentGranting(), time.Now(), policy)
+	want := []string{"clusterRoles/read-nodes", "podSecurity/run-as-root"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("pending = %v, want %v: egress only, and all of it", got, want)
+	}
+	if rules := security.GrantedEgressRulesUnder(profile, componentGranting(), time.Now(), policy); len(rules) != 2 {
+		t.Fatalf("the policy opened %d egress rules, want both the profile asks for", len(rules))
+	}
+
+	// Another catalog, a tenant's catalog of the same name, no origin, or no
+	// list: nothing is answered.
+	for _, c := range []struct {
+		origin string
+		list   []string
+	}{
+		{"cluster/other", []string{"cluster/acme"}},
+		{"tenant/t1/acme", []string{"cluster/acme"}},
+		{"", []string{"cluster/acme"}},
+		{"cluster/acme", nil},
+	} {
+		profile.Annotations = map[string]string{}
+		if c.origin != "" {
+			profile.Annotations[security.OriginAnnotation] = c.origin
+		}
+		if p := security.PreApprovedEgress(profile, c.list); p != nil {
+			t.Fatalf("origin %q, list %v answered %v", c.origin, c.list, p)
+		}
+	}
+}
+
+// A request by host opens no rule by address, and its hosts are the
+// component's only once the request was granted or the cluster's policy
+// answers it.
+func TestGrantedHostsAreThoseOfAGrantedRequest(t *testing.T) {
+	profile := profileAsking()
+	profile.Spec.Requires.Privileges.Egress = append(profile.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "outside", Reason: "reads the calendars people connected",
+		Hosts: []string{"graph.microsoft.com", "login.microsoftonline.com"},
+	})
+	now := time.Now()
+	if got := security.GrantedEgressHostsUnder(profile, componentGranting("egress/smtp-relay"), now, nil); len(got) != 0 {
+		t.Errorf("hosts without their grant: %v", got)
+	}
+	got := security.GrantedEgressHostsUnder(profile, componentGranting("egress/outside"), now, nil)
+	if strings.Join(got, ",") != "graph.microsoft.com,login.microsoftonline.com" {
+		t.Errorf("granted hosts = %v", got)
+	}
+	if rules := security.GrantedEgressRulesUnder(profile, componentGranting("egress/outside"), now, nil); len(rules) != 0 {
+		t.Errorf("a request by host opened rules by address: %v", rules)
+	}
+	answered := map[string]struct{}{"egress/outside": {}}
+	if got := security.GrantedEgressHostsUnder(profile, componentGranting(), now, answered); len(got) != 2 {
+		t.Errorf("hosts the cluster's policy answers = %v", got)
+	}
+	if got := security.GrantedEgressHostsUnder(nil, nil, now, answered); got != nil {
+		t.Errorf("hosts of no profile = %v", got)
+	}
+}
+
+// A request whose hosts are named at approval is answered only by a grant
+// that names hosts, opens those hosts and no others, and is answered by no
+// policy and no trusted domain: nothing is known to open before somebody
+// names it.
+func TestHostsNamedAtApprovalAreTheGrantsOwn(t *testing.T) {
+	profile := profileAsking()
+	profile.Spec.Requires.Privileges.Egress = append(profile.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "backends", Reason: "sends the plans to the ERP its owner runs", HostsAtApproval: true,
+	})
+	now := time.Now()
+	named := componentGranting("egress/backends")
+	named.Spec.Privileges[0].Hosts = []string{"erp.example.org", "files.example.org:8443"}
+	if got := security.GrantedEgressHostsUnder(profile, named, now, nil); strings.Join(got, ",") != "erp.example.org,files.example.org:8443" {
+		t.Errorf("hosts named at approval = %v", got)
+	}
+	if pending := security.PendingPrivileges(profile, named, now); slices.Contains(pending, "egress/backends") {
+		t.Errorf("a grant naming hosts left the request pending: %v", pending)
+	}
+	if rules := security.GrantedEgressRulesUnder(profile, named, now, nil); len(rules) != 0 {
+		t.Errorf("hosts named at approval opened rules by address: %v", rules)
+	}
+
+	empty := componentGranting("egress/backends")
+	if got := security.GrantedEgressHostsUnder(profile, empty, now, nil); len(got) != 0 {
+		t.Errorf("a grant naming no host opened %v", got)
+	}
+	if pending := security.PendingPrivileges(profile, empty, now); !slices.Contains(pending, "egress/backends") {
+		t.Errorf("a grant naming no host answered the request: %v", pending)
+	}
+
+	expired := componentGranting("egress/backends")
+	expired.Spec.Privileges[0].Hosts = []string{"erp.example.org"}
+	past := metav1.NewTime(now.Add(-time.Hour))
+	expired.Spec.Privileges[0].ExpiresAt = &past
+	if got := security.GrantedEgressHostsUnder(profile, expired, now, nil); len(got) != 0 {
+		t.Errorf("an expired grant opened %v", got)
+	}
+
+	profile.Annotations = map[string]string{security.OriginAnnotation: "cluster/acme"}
+	if _, ok := security.PreApprovedEgress(profile, []string{"cluster/acme"})["egress/backends"]; ok {
+		t.Error("the catalog's pre-approval answered a request whose hosts are named at approval")
+	}
+	if _, ok := security.TrustedEgress(profile, []string{"org", "example.org"})["egress/backends"]; ok {
+		t.Error("a trusted domain answered a request whose hosts are named at approval")
+	}
+
+	// Hosts on the grant of a request that names its own are not opened.
+	fixed := profileAsking()
+	fixed.Spec.Requires.Privileges.Egress = append(fixed.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "outside", Reason: "reads the calendars people connected", Hosts: []string{"graph.microsoft.com"},
+	})
+	extra := componentGranting("egress/outside")
+	extra.Spec.Privileges[0].Hosts = []string{"evil.example.net"}
+	if got := security.GrantedEgressHostsUnder(fixed, extra, now, nil); strings.Join(got, ",") != "graph.microsoft.com" {
+		t.Errorf("a grant's hosts widened a request that names its own: %v", got)
+	}
+}
+
+// A request by host is answered by trusted domains when every one of its
+// hosts is in one, or under one. A domain covers whole labels, a request
+// with one host outside is a person's to answer, and a request by address
+// is in no domain.
+func TestTrustedDomainsAnswerARequestWhoseHostsAreAllInThem(t *testing.T) {
+	profile := profileAsking()
+	profile.Spec.Requires.Privileges.Egress = append(profile.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
+		Name: "outside", Reason: "reads the calendars people connected",
+		Hosts: []string{"graph.microsoft.com", "login.microsoftonline.com:8443"},
+	})
+	for name, c := range map[string]struct {
+		domains  []string
+		answered bool
+	}{
+		"both domains":             {[]string{"microsoft.com", "microsoftonline.com"}, true},
+		"the hosts themselves":     {[]string{"graph.microsoft.com", "login.microsoftonline.com"}, true},
+		"one host outside":         {[]string{"microsoft.com"}, false},
+		"no domain":                {nil, false},
+		"a name that only ends so": {[]string{"soft.com", "online.com"}, false},
+		"a top-level name":         {[]string{"com"}, true},
+		"an empty entry":           {[]string{""}, false},
+	} {
+		got := security.TrustedEgress(profile, c.domains)
+		if _, ok := got["egress/outside"]; ok != c.answered {
+			t.Errorf("%s: answered = %v, want %v", name, ok, c.answered)
+		}
+		for ref := range got {
+			if ref != "egress/outside" {
+				t.Errorf("%s: a request by address was answered: %s", name, ref)
+			}
+		}
+	}
+	for host, want := range map[string]bool{
+		"example.org": true, "api.example.org": true, "api.example.org:8443": true,
+		"notexample.org": false, "example.org.evil.net": false, "org": false,
+	} {
+		if got := security.InTrustedDomain(host, []string{"example.org"}); got != want {
+			t.Errorf("%s in example.org = %v", host, got)
+		}
+	}
+
+	// A tenant's own list counts only while the cluster delegated one.
+	tenant := &gentianov1alpha1.Tenant{Spec: gentianov1alpha1.TenantSpec{TrustedDomains: &gentianov1alpha1.TenantTrustedDomains{Domains: []string{"example.org"}}}}
+	if got := security.TenantTrustedDomains(tenant); got != nil {
+		t.Errorf("a tenant's list without the delegation: %v", got)
+	}
+	tenant.Spec.TrustedDomains.Delegated = true
+	if got := security.TenantTrustedDomains(tenant); len(got) != 1 || got[0] != "example.org" {
+		t.Errorf("a delegated tenant's list: %v", got)
+	}
+	if got := security.TenantTrustedDomains(nil); got != nil {
+		t.Errorf("no tenant: %v", got)
 	}
 }

@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -22,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 )
 
@@ -128,13 +130,21 @@ func (r *TenantReconciler) deleteIntegrationBindings(ctx context.Context, tenant
 // findProviderInTenant scans the tenant's app list for an app whose ComponentProfile
 // declares the given contract in its Provides list. Returns the provider app name
 // or an empty string if none is found. The consumer app is excluded from the search.
+// The apps are asked in the order of their names, so that two providers of one
+// contract give the same answer on every pass; the tenant names the one it means
+// in spec.homes.
 func (r *TenantReconciler) findProviderInTenant(
 	ctx context.Context,
 	contract string,
 	presentApps map[string]struct{},
 	consumerApp string,
 ) string {
+	names := make([]string, 0, len(presentApps))
 	for appName := range presentApps {
+		names = append(names, appName)
+	}
+	sort.Strings(names)
+	for _, appName := range names {
 		if appName == consumerApp {
 			continue
 		}
@@ -206,13 +216,24 @@ func buildIntegrationBinding(
 				App:       consumerApp,
 				Namespace: nsName,
 			},
-			Capabilities: integration.Capabilities,
+			Capabilities: bindingCapabilities(integration),
 			Auth: &gentianov1alpha1.BindingAuth{
 				VaultPath: secrets.ContractPath(tenantName, integration.Contract),
 			},
 			Endpoint: endpoint,
 		},
 	}
+}
+
+// bindingCapabilities are what a binding asks for: the integration's
+// capabilities, and one dialog:<use> for each use of the file dialog it
+// declares, which the tenant's administrator grants like the others.
+func bindingCapabilities(integration gentianov1alpha1.IntegrationRef) []string {
+	out := append([]string(nil), integration.Capabilities...)
+	for _, use := range integration.Dialog {
+		out = append(out, netpolicy.DialogCapability(string(use)))
+	}
+	return out
 }
 
 // --- Name helpers -----------------------------------------------------------

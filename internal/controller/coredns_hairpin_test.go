@@ -302,3 +302,20 @@ func TestTheHairpinListsAppHostsWhereTheirRoutesAnswer(t *testing.T) {
 		t.Fatalf("hairpin hosts = %v, want %v", got, want)
 	}
 }
+
+// A CoreDNS that reloads its Corefile is not restarted for a hairpin change:
+// with one replica, a restart is a window with no name resolution at all.
+func TestACoreDNSThatReloadsIsNotRestarted(t *testing.T) {
+	for corefile, want := range map[string]bool{
+		".:53 {\n    errors\n    reload\n    kubernetes cluster.local\n}\n":     true,
+		".:53 {\n    errors\n    reload 10s\n    kubernetes cluster.local\n}\n": true,
+		".:53 {\n\treload\n}\n":                                            true,
+		".:53 {\n    errors\n    kubernetes cluster.local\n}\n":            false,
+		".:53 {\n    # reload\n    kubernetes cluster.local\n}\n":          false,
+		".:53 {\n    hosts {\n        10.0.0.1 reload.example\n    }\n}\n": false,
+	} {
+		if got := corefileReloads(corefile); got != want {
+			t.Errorf("corefileReloads(%q) = %v, want %v", corefile, got, want)
+		}
+	}
+}

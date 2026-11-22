@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -226,6 +227,17 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		}
 	}
 	in.Profile.SessionMaxAge = nil
+	// The tenant's extension, as the operator settled it, sets the entry's
+	// cap; a profile's shorter one still holds.
+	in.TokenEntry.SessionMaxAge = 12 * time.Hour
+	if got, _, _ := unstructured.NestedString(render()[client].Object, "spec", "forProvider", "clientSessionMaxLifespan"); got != "12h0m0s" {
+		t.Errorf("an entry extended to 12h: the sessions last %s", got)
+	}
+	in.Profile.SessionMaxAge = &metav1.Duration{Duration: time.Hour}
+	if got, _, _ := unstructured.NestedString(render()[client].Object, "spec", "forProvider", "clientSessionMaxLifespan"); got != "1h0m0s" {
+		t.Errorf("an extended entry of a profile capped at 1h: the sessions last %s", got)
+	}
+	in.Profile.SessionMaxAge, in.TokenEntry.SessionMaxAge = nil, 0
 	// The component's own client is not named: it exchanges nothing.
 	for name, o := range objs {
 		if aud, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "config", "included.custom.audience"); aud == "agent-door" {
@@ -233,12 +245,165 @@ func TestATokenEntrysClientIsRenderedOnlyWhileTheEntryIsServed(t *testing.T) {
 		}
 	}
 	scopes, _, _ := unstructured.NestedStringSlice(objs["demo-agent-door-token-entry-optional-scopes"].Object, "spec", "forProvider", "optionalScopes")
-	for _, s := range scopes {
-		if s == "offline_access" {
-			t.Fatal("the client may ask for a token that outlives the session")
+	// A connector asks for offline_access, and the realm refuses the whole
+	// sign-in when the client may not have it.
+	if !slices.Contains(scopes, "offline_access") {
+		t.Fatalf("optional scopes = %v: a client asking for offline_access is refused", scopes)
+	}
+}
+
+// A bridge installs nothing and is still signed in to: its render is the
+// client of its entry and no other object, and nothing while the entry is not
+// served.
+func TestABridgesRenderIsTheClientOfItsEntryAlone(t *testing.T) {
+	in := &Input{
+		App: "nextcloud-dav", Namespace: "tenant-demo", TenantName: "demo", ProfileName: "nextcloud-dav",
+		Profile:  &gentianov1alpha1.ComponentProfileSpec{},
+		Observed: map[string]*unstructured.Unstructured{},
+	}
+	out, err := RenderTokenEntryClient(in)
+	if err != nil || len(out.Objects) != 0 {
+		t.Fatalf("not served: %v %d objects", err, len(out.Objects))
+	}
+	in.TokenEntry = &TokenEntry{
+		Host: "sync.demo.example.org", RedirectURIs: []string{"http://127.0.0.1/", "http://localhost/"},
+		Exchangers: []string{"gentian-edge-exchange"},
+	}
+	out, err = RenderTokenEntryClient(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	audiences := map[string]bool{}
+	clients := 0
+	for _, o := range out.Objects {
+		switch o.GetKind() {
+		case "Client":
+			clients++
+			fp, _, _ := unstructured.NestedMap(o.Object, "spec", "forProvider")
+			if fp["clientId"] != "token-entry-nextcloud-dav" || fp["accessType"] != "PUBLIC" || fp["directAccessGrantsEnabled"] != false || fp["serviceAccountsEnabled"] != false {
+				t.Errorf("the client: %v", fp)
+			}
+		case "ProtocolMapper":
+			aud, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "config", "included.custom.audience")
+			audiences[aud] = true
+		case "ClientOptionalScopes":
+		default:
+			t.Errorf("a bridge's render carries a %s", o.GetKind())
 		}
 	}
-	if len(scopes) == 0 {
-		t.Fatal("no optional scopes are declared, which leaves the realm's, offline_access among them")
+	// Made out to the door, and to the one client that may exchange it.
+	if clients != 1 || len(audiences) != 2 || !audiences["https://sync.demo.example.org"] || !audiences["gentian-edge-exchange"] {
+		t.Fatalf("%d clients, audiences %v", clients, audiences)
+	}
+	if _, err := RenderTokenEntryClient(&Input{App: "x"}); err == nil {
+		t.Fatal("rendered with no profile")
+	}
+}
+
+// A person who signs in to an app is linked to the vouching entries its own
+// client names: the app's where it calls a home as the person, the home
+// sync's where it declares homeSync, and none for any other app.
+func TestAnAppsClientNamesTheEntriesItsPeopleAreLinkedTo(t *testing.T) {
+	linkTo := func(in *Input) map[string]string {
+		t.Helper()
+		got, err := Render(in)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		out := map[string]string{}
+		for _, o := range got.Objects {
+			if o.GetKind() != "Client" || o.GroupVersionKind().Group != "openidclient.keycloak.crossplane.io" {
+				continue
+			}
+			v, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "extraConfig", "gentianos.io/link-to")
+			out[o.GetName()] = v
+		}
+		return out
+	}
+	for name, v := range linkTo(fixtureInput(t, "testdata/render/app-build")) {
+		if v != "" {
+			t.Errorf("%s links to %q and neither calls a home nor keeps a copy", name, v)
+		}
+	}
+	in := fixtureInput(t, "testdata/render/app-build")
+	in.Profile.Integrations = append(in.Profile.Integrations, gentianov1alpha1.IntegrationRef{Contract: "calendar-store", AsPerson: true})
+	in.Profile.HomeSync = &gentianov1alpha1.HomeSyncSpec{}
+	if in.Profile.Requires == nil {
+		in.Profile.Requires = &gentianov1alpha1.RequirementSpec{}
+	}
+	if in.Profile.Requires.Services == nil {
+		in.Profile.Requires.Services = &gentianov1alpha1.ServiceRequirements{}
+	}
+	in.Profile.Requires.Services.Vouching = &gentianov1alpha1.VouchingRequirement{
+		Keys: &gentianov1alpha1.VouchingKeys{Service: "keys", Port: 8080},
+	}
+	want := "vouch-" + in.ProfileName + ",vouch-homesync"
+	found := false
+	for name, v := range linkTo(in) {
+		if v != "" && v != want {
+			t.Errorf("%s links to %q, want %q", name, v, want)
+		}
+		found = found || v == want
+	}
+	if !found {
+		t.Fatal("no client of the app names the entries")
+	}
+
+	// An app that names no keys calls its home only while the person is
+	// present: it has no entry, and nobody is linked to it.
+	in.Profile.Requires.Services.Vouching = &gentianov1alpha1.VouchingRequirement{Exchange: true}
+	for name, v := range linkTo(in) {
+		if v != "" && v != "vouch-homesync" {
+			t.Errorf("%s links to %q for an app with no keys", name, v)
+		}
+	}
+}
+
+// An app whose profile, or an add-on's, names a role inside the app gets
+// the platform's roles mapper on its sign-in client, with the tenant, the
+// app and the names; an app that names none gets no mapper.
+func TestAnAppsClientCarriesItsRolesMapper(t *testing.T) {
+	mapper := func(in *Input) map[string]interface{} {
+		t.Helper()
+		got, err := Render(in)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		for _, o := range got.Objects {
+			if o.GetKind() != "ProtocolMapper" {
+				continue
+			}
+			if kind, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "protocolMapper"); kind == "gentian-app-roles" {
+				cfg, _, _ := unstructured.NestedMap(o.Object, "spec", "forProvider", "config")
+				return cfg
+			}
+		}
+		return nil
+	}
+	in := fixtureInput(t, "testdata/render/app-build")
+	if cfg := mapper(in); cfg != nil {
+		t.Fatalf("an app that names no role carries the mapper: %v", cfg)
+	}
+	in = fixtureInput(t, "testdata/render/app-build")
+	in.Roles = &TokenRoles{Claim: "gentian_app_roles", InApp: map[string]map[string][]string{
+		in.ProfileName: {"user": {"base.group_user"}, "admin": {"base.group_system"}},
+		"shop-sales":   {"user": {"sales.salesman"}},
+	}}
+	cfg := mapper(in)
+	if cfg == nil {
+		t.Fatal("no roles mapper on the client")
+	}
+	if cfg["claim.name"] != "gentian_app_roles" || cfg["gentian.tenant"] != in.TenantName || cfg["gentian.app"] != in.ProfileName {
+		t.Errorf("mapper config = %v", cfg)
+	}
+	want := `{"` + in.ProfileName + `":{"admin":["base.group_system"],"user":["base.group_user"]},"shop-sales":{"user":["sales.salesman"]}}`
+	if in.ProfileName > "shop-sales" {
+		t.Skip("fixture name sorts after the add-on's")
+	}
+	if cfg["gentian.roles"] != want {
+		t.Errorf("gentian.roles = %v, want %s", cfg["gentian.roles"], want)
+	}
+	if cfg["userinfo.token.claim"] != "true" || cfg["access.token.claim"] != "true" || cfg["id.token.claim"] != "true" {
+		t.Errorf("the roles are not in every token the app may read: %v", cfg)
 	}
 }

@@ -23,6 +23,11 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
+// challengeBody is the body of a 401 that carries a challenge: what RFC 6750
+// has a program read is in the header, so this says only that a token is
+// called for.
+const challengeBody = `{"error":"unauthorized"}`
+
 // deniedPage is what a browser gets instead of the word "Forbidden": the
 // refusal, and the one link that can change it. Inline and tiny, because this
 // service serves no assets and must answer without reaching anything. Its
@@ -37,13 +42,16 @@ func deniedPage(brandingBase string, status int) string {
 	if strings.HasPrefix(brandingBase, "https://") {
 		brand = `<link rel="stylesheet" href="` + html.EscapeString(brandingBase+"brand.css") + `">`
 	}
-	title, heading, text, link := "Not available to you", "This is not available to you",
+	title, heading, text, href, link := "Not available to you", "This is not available to you",
 		"Your session does not carry the access this page needs. If you have "+
 			"just been given it, or you are signed in as someone else, sign out and "+
-			"sign in again.", "Sign out"
+			"sign in again.", LogoutPath, "Sign out"
+	// A session that could not be read here may well be alive at the realm:
+	// a reload has the Gateway renew it, or sign in again where it has
+	// ended. Signing out would end the realm's session too.
 	if status == http.StatusUnauthorized {
-		title, heading, text, link = "Signed out", "Your sign-in has ended",
-			"This page could not renew your session. Sign in again to continue.", "Sign in again"
+		title, heading, text, href, link = "Session not renewed", "Your session could not be renewed",
+			"This page could not renew your session. Reload the page to continue.", "", "Reload"
 	}
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width,initial-scale=1">` +
@@ -55,7 +63,7 @@ func deniedPage(brandingBase string, status int) string {
 		`p{margin:0 0 1rem;color:var(--brand-color-ink-3,#45486b);line-height:1.5}` +
 		`a{display:inline-block;background:var(--brand-color-brand-500,#262696);color:#fff;text-decoration:none;` +
 		`padding:.55rem 1rem;border-radius:var(--brand-radius-1,.5rem)}</style></head><body><main>` +
-		`<h1>` + heading + `</h1><p>` + text + `</p><a href="` + LogoutPath + `">` + link + `</a></main></body></html>`
+		`<h1>` + heading + `</h1><p>` + text + `</p><a href="` + href + `">` + link + `</a></main></body></html>`
 }
 
 // BrandingBase is where the cluster's brand is published, from the issuer
@@ -94,6 +102,7 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 		Cookie:        headers[HeaderCookie],
 		Method:        httpReq.GetMethod(),
 		FetchMode:     headers[HeaderFetchMode],
+		Source:        req.GetAttributes().GetSource().GetAddress().GetSocketAddress().GetAddress(),
 	}
 	if r.Host == "" {
 		r.Host = httpReq.GetHost()
@@ -144,11 +153,28 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			}}
 		}
+		// A refusal a program can act on: the challenge says what is called
+		// for and where the entry's metadata is. The answer is JSON and not
+		// plain text, because the Gateway replaces a plain-text 401 with the
+		// page that restarts a browser's sign-in (edgeSignInRestart), and
+		// the challenge would go with it.
 		if dec.Challenge != "" {
+			denied.Body = challengeBody
 			denied.Headers = append(denied.Headers, &corev3.HeaderValueOption{
+				Header:       &corev3.HeaderValue{Key: "content-type", Value: "application/json"},
+				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			}, &corev3.HeaderValueOption{
 				Header:       &corev3.HeaderValue{Key: "www-authenticate", Value: dec.Challenge},
 				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
 			})
+			// A second challenge, as a header of its own: a calendar or
+			// contact program reads the one it knows.
+			if dec.PasswordChallenge != "" {
+				denied.Headers = append(denied.Headers, &corev3.HeaderValueOption{
+					Header:       &corev3.HeaderValue{Key: "www-authenticate", Value: dec.PasswordChallenge},
+					AppendAction: corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD,
+				})
+			}
 		}
 		return &authv3.CheckResponse{
 			Status:       &rpcstatus.Status{Code: int32(grpcCode(dec.Status)), Message: dec.Reason},

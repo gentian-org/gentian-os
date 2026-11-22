@@ -55,10 +55,12 @@ type Authenticator interface {
 // Repository is the git backend.
 type Repository interface {
 	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
+	InstallFor(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, positions *[]string, meta gitops.Meta) (gitops.Result, error)
 	RetryMove(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	InstallWith(ctx context.Context, tenant, with string, apps []gitops.CameWith, defaultGrant *bool, meta gitops.Meta) (gitops.Result, []string, error)
 	UninstallWith(ctx context.Context, tenant, profile string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
+	LetGo(ctx context.Context, tenant, with string, gone []string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
 	Place(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant bool, meta gitops.Meta) (gitops.Result, error)
 	Unplace(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, grants map[string]bool, meta gitops.Meta) (gitops.Result, error)
@@ -83,10 +85,11 @@ type Repository interface {
 	SetTenantStoreTerms(ctx context.Context, tenant, version string, now time.Time, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
 	TenantPartners(ctx context.Context, tenant string) ([]gitops.Partner, error)
-	TenantGroups(ctx context.Context, tenant string) ([]string, error)
-	SetTenantGroups(ctx context.Context, tenant string, groups []string, meta gitops.Meta) (gitops.Result, error)
+	TenantPositions(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantPosition, error)
+	SetTenantPosition(ctx context.Context, tenant string, position gentianov1alpha1.TenantPosition, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantPosition(ctx context.Context, tenant, name string, meta gitops.Meta) (gitops.Result, error)
 	TenantSignIn(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantSignInFrom, []string, error)
-	SetTenantSignIn(ctx context.Context, target, source string, groups []string, remove bool, meta gitops.Meta) (gitops.Result, error)
+	SetTenantSignIn(ctx context.Context, target, source string, positions []string, remove bool, meta gitops.Meta) (gitops.Result, error)
 	SetTenantPartner(ctx context.Context, tenant string, entry gitops.Partner, commissioned bool, meta gitops.Meta) (gitops.Result, error)
 	RemoveTenantPartner(ctx context.Context, tenant, name string, commissioned bool, meta gitops.Meta) (gitops.Result, error)
 	SetExposureAlias(ctx context.Context, tenant, install, exposure, host string, meta gitops.Meta) (gitops.Result, error)
@@ -96,6 +99,8 @@ type Repository interface {
 	ClusterModels(ctx context.Context) (gitops.ModelSettings, error)
 	SetClusterModels(ctx context.Context, want gitops.ModelSettings, meta gitops.Meta) (gitops.Result, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
+	SetPlanRequest(ctx context.Context, tenant string, req gitops.PlanRequest, meta gitops.Meta) (gitops.Result, error)
+	ClearPlanRequest(ctx context.Context, tenant, message string, meta gitops.Meta) (gitops.Result, error)
 	PlanDefinitions(ctx context.Context) ([]gitops.PlanDefinition, error)
 	WritePlans(ctx context.Context, message string, meta gitops.Meta, writes ...gitops.PlanWrite) (gitops.Result, error)
 	PlanOrdering(ctx context.Context) (*gentianov1alpha1.PlanOrderingSpec, bool, error)
@@ -118,6 +123,8 @@ type Repository interface {
 	ProfileDefinition(ctx context.Context, name string) (*gentianov1alpha1.ComponentProfile, error)
 	CatalogueDeclares(ctx context.Context, kind, name string) (string, error)
 	RetireProfile(ctx context.Context, name string, meta gitops.Meta) (gitops.Result, error)
+	TakeOutRefused(ctx context.Context, refused gitops.Refuser, meta gitops.Meta) (gitops.Result, map[string][]string, error)
+	TakeOutUndeclared(ctx context.Context, undeclared gitops.Undeclared, meta gitops.Meta) (res gitops.Result, taken, left map[string][]string, err error)
 	Catalogue(ctx context.Context) (gitops.CatalogueSettings, error)
 	TenantCatalogue(ctx context.Context, tenant string) (gitops.TenantCatalogue, error)
 	TenantCatalogues(ctx context.Context) (map[string]gitops.TenantCatalogue, error)
@@ -132,6 +139,10 @@ type Repository interface {
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	RenameCatalogueSource(ctx context.Context, tenant, old, new string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
+	TenantTrustedDomains(ctx context.Context, tenant string) (gitops.TenantTrustedDomains, error)
+	AddTenantTrustedDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantTrustedDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	SetTenantTrustedDomainsDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	RoleHolders(ctx context.Context) ([]gitops.RoleHolder, error)
 	SetRoleHolder(ctx context.Context, h gitops.RoleHolder, meta gitops.Meta) (gitops.Result, error)
 	LastAccessReview(ctx context.Context) (*gitops.AccessReview, error)
@@ -157,9 +168,10 @@ type Repository interface {
 	TenantExposureChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
 	SetAppGrant(ctx context.Context, tenant, app string, grant gitops.AppGrant, meta gitops.Meta) (gitops.Result, error)
-	PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, meta gitops.Meta) (gitops.Result, error)
+	PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, reason string, meta gitops.Meta) (gitops.Result, error)
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
+	EgressPolicy(ctx context.Context) (catalogs, trustedDomains []string, err error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	AllowMacWaiver(ctx context.Context, waiver gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	PlatformClusterRoles(ctx context.Context) ([]gitops.ClusterRoleAllowance, error)
@@ -211,9 +223,14 @@ type Config struct {
 	// It keeps the placement of the platform's apps (platform_apps.go) from
 	// running on its own too; PlacePlatformApps still places.
 	UpdaterOff bool
-	Authn      Authenticator
-	Authz      authz.Checker
-	Repo       Repository
+	// TakeOutRefused has the director take out of the catalog directory
+	// what this release's schema refuses, at start and every so often
+	// (catalogue_refused.go). Off unless the program turns it on, so that a
+	// test's catalog of minimal profiles is left as it wrote it.
+	TakeOutRefused bool
+	Authn          Authenticator
+	Authz          authz.Checker
+	Repo           Repository
 	// Catalogue fetches a profile when a tenant installs it (AD-3), and a
 	// catalogue's index when one is listed. Which catalogs there are is
 	// not its to know: they are read from git when they are needed, per
@@ -295,6 +312,7 @@ func New(cfg Config) (*Server, error) {
 	s.routes()
 	s.startUpdater()
 	s.startPlatformApps()
+	s.startTakeOutRefused()
 	return s, nil
 }
 
@@ -398,6 +416,15 @@ func (s *Server) clusterObject(r *http.Request) (string, error) {
 	return authz.Cluster(s.cfg.Cluster), nil
 }
 
+// tenantOfThisCluster is tenantObject on a route under /v1/clusters/{c}: the
+// relation is the tenant's, and another cluster's id does not exist here.
+func (s *Server) tenantOfThisCluster(r *http.Request) (string, error) {
+	if c := r.PathValue("c"); c != s.cfg.Cluster || c == "" {
+		return "", gitops.ErrInvalidName
+	}
+	return tenantObject(r)
+}
+
 func tenantObject(r *http.Request) (string, error) {
 	t := r.PathValue("t")
 	if !gentianov1alpha1.ValidTenantName(t) {
@@ -498,6 +525,11 @@ func (s *Server) routes() {
 	// may see a tenant may see what it has installed, whether or not they may
 	// change it.
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
+	// A tenant's own positions, declared by whoever manages its people
+	// (positions.go).
+	s.guarded("GET /v1/tenants/{t}/positions", "can_manage_users", tenantObject, s.tenantPositions)
+	s.guarded("PUT /v1/tenants/{t}/positions/{name}", "can_manage_users", tenantObject, s.setTenantPosition)
+	s.guarded("DELETE /v1/tenants/{t}/positions/{name}", "can_manage_users", tenantObject, s.removeTenantPosition)
 	// The same report for one tenant: what of its apps is behind, and why.
 	s.guarded("GET /v1/tenants/{t}/updates", "can_view", tenantObject, s.updatesForTenant)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
@@ -507,6 +539,9 @@ func (s *Server) routes() {
 	// may see what it could install.
 	s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
 	s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries", "can_view", tenantObject, s.listCatalogueEntries)
+	// What one build of an entry asks for, before it is installed
+	// (install_asks.go).
+	s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries/{p}/asks", "can_view", tenantObject, s.catalogueEntryAsks)
 	// A tenant's administrator adding a catalog for their own tenant.
 	// can_install_app, the relation an install asks: a catalog decides
 	// what the tenant can install, and nobody who may not install should be
@@ -605,8 +640,6 @@ func (s *Server) routes() {
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
 		// A tenant's own groups, and who signs in to it from another tenant
 		// (tenant_sign_in.go).
-		s.guarded("GET /v1/clusters/{c}/tenants/{t}/groups", "can_audit", s.clusterObject, s.tenantGroups)
-		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/groups", "can_configure", s.clusterObject, s.setTenantGroups)
 		s.guarded("GET /v1/clusters/{c}/tenants/{t}/sign-in", "can_audit", s.clusterObject, s.tenantSignIn)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.setTenantSignIn)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/sign-in/{source}", "can_configure", s.clusterObject, s.removeTenantSignIn)
@@ -651,6 +684,10 @@ func (s *Server) routes() {
 		s.action("POST /v1/clusters/{c}/tenants/{t}/catalogues/{s}/actions/rename", "can_configure", s.clusterObject, s.renameTenantCatalogue)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
+		// Whether a tenant may keep its own trusted domains
+		// (trusted_domains.go): the cluster administrator's to say.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/trusted-domains-delegation", "can_configure", s.clusterObject, s.delegateTrustedDomains)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/trusted-domains-delegation", "can_configure", s.clusterObject, s.undelegateTrustedDomains)
 		if s.cfg.Lifecycle != nil {
 			// Import: a bundle in, a tenant out (data-lifecycle.md §4).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
@@ -771,6 +808,13 @@ func (s *Server) routes() {
 	s.guarded("PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.grantPrivilege)
 	s.guarded("DELETE /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.revokePrivilege)
 
+	// The tenant's own trusted domains (trusted_domains.go). A domain on the
+	// list answers egress requests, so adding one is whose answer such a
+	// request is: can_approve_privilege, the perimeter approver's.
+	s.guarded("GET /v1/tenants/{t}/trusted-domains", "can_view", tenantObject, s.tenantTrustedDomains)
+	s.guarded("PUT /v1/tenants/{t}/trusted-domains/{domain}", "can_approve_privilege", tenantObject, s.addTrustedDomain)
+	s.guarded("DELETE /v1/tenants/{t}/trusted-domains/{domain}", "can_approve_privilege", tenantObject, s.removeTrustedDomain)
+
 	// No reads of live state here. What the cluster made of a tenant -- the
 	// state of its apps, its ceiling and usage, the plans it may move to, its
 	// backups and their schedules, the policy in force, its integrations and
@@ -787,7 +831,6 @@ func (s *Server) routes() {
 		// whoever may install's to do, as uninstalling is; provisioning hands
 		// an app to people, which is can_grant's.
 		s.guarded("POST /v1/tenants/{t}/actions/purge-app", "can_install_app", tenantObject, s.purgeApp)
-		s.guarded("POST /v1/tenants/{t}/actions/provision-app", "can_grant", tenantObject, s.provisionApp)
 		// Removing one piece a newer build of an app left on the cluster,
 		// for the administrator of a tenant that has the app. Whoever may
 		// install's, as uninstalling and purging are -- and not that alone:
@@ -813,6 +856,16 @@ func (s *Server) routes() {
 		// commit, like everything else the operator learns from git.
 		if s.cfg.Cluster != "" {
 			s.guarded("PUT /v1/clusters/{c}/tenants/{t}/resources", "can_configure", s.clusterObject, s.setResourcePlan)
+			// What a tenant's administrator may do instead: ask for a plan,
+			// and take the request back. The cluster's administrator
+			// answers it by moving the tenant (above, which clears it) or
+			// by declining it (the same DELETE).
+			s.guardedAny("PUT /v1/clusters/{c}/tenants/{t}/resources/request",
+				[]guard.Ask{{Relation: "can_administer", Object: s.tenantOfThisCluster}},
+				s.requestResourcePlan)
+			s.guardedAny("DELETE /v1/clusters/{c}/tenants/{t}/resources/request",
+				[]guard.Ask{{Relation: "can_configure", Object: s.clusterObject}, {Relation: "can_administer", Object: s.tenantOfThisCluster}},
+				s.clearResourcePlanRequest)
 		}
 
 		// The bundle as one file, through the director and never a signed
@@ -1082,6 +1135,50 @@ type installRequest struct {
 	// Absent leaves an installed app's entry as it is; false states that
 	// access is given per person.
 	DefaultGrant *bool `json:"defaultGrant,omitempty"`
+	// Positions are the positions of the tenant the app is given to: the
+	// holders of each use it. A name is one of the three every tenant has
+	// or one the tenant declares. "user" among them is every person of the
+	// tenant, the same as defaultGrant, and is written as that. Absent
+	// leaves an installed app's entry as it is; a list, empty or not,
+	// replaces what the entry said, defaultGrant included.
+	Positions *[]string `json:"positions,omitempty"`
+	// Approve names egress requests of this build, or of the apps it comes
+	// with, that the caller approves with the install (install_asks.go):
+	// each is recorded as a grant by the caller once the app is installed.
+	// It needs can_approve_privilege on the tenant, and a request the build
+	// does not state refuses the install.
+	Approve []approvedRequest `json:"approve,omitempty"`
+}
+
+// givenTo reads the positions an install names: whether user is among them,
+// and the others, each once. It refuses a name that is no position of the
+// tenant, with the sentence to answer with.
+func (s *Server) givenTo(ctx context.Context, tenant string, names []string) (everyone bool, others []string, refusal string, err error) {
+	own, err := s.cfg.Repo.TenantPositions(ctx, tenant)
+	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+		return false, nil, "", err
+	}
+	known := map[string]bool{}
+	for _, p := range own {
+		known[p.Name] = true
+	}
+	seen := map[string]bool{}
+	others = []string{}
+	for _, name := range names {
+		if !authz.Shipped(name) && !known[name] {
+			return false, nil, fmt.Sprintf("%q is not a position of the tenant", name), nil
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if name == authz.PositionUser {
+			everyone = true
+			continue
+		}
+		others = append(others, name)
+	}
+	return everyone, others, "", nil
 }
 
 // install commits an app to a tenant's manifest.
@@ -1164,7 +1261,19 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusBadRequest, "the coordinate names a different app than the one being installed")
 		return
 	}
-	if body.DefaultGrant != nil && *body.DefaultGrant {
+	if body.Positions != nil {
+		everyone, others, refusal, err := s.givenTo(ctx, tenant, *body.Positions)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if refusal != "" {
+			s.fail(w, r, http.StatusBadRequest, refusal)
+			return
+		}
+		body.DefaultGrant, body.Positions = &everyone, &others
+	}
+	if (body.DefaultGrant != nil && *body.DefaultGrant) || (body.Positions != nil && len(*body.Positions) > 0) {
 		target := authz.Tenant(tenant)
 		ok, err := s.can(ctx, c, "can_grant", target)
 		if err != nil {
@@ -1173,11 +1282,17 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		if !ok {
 			s.fail(w, r, http.StatusForbidden,
-				"installing an app for everyone gives people access to it, which needs can_grant on the tenant; "+
-					"install it without defaultGrant, or ask somebody who may grant")
+				"installing an app for everyone or for a position gives people access to it, which needs can_grant on the tenant; "+
+					"install it without defaultGrant and positions, or ask somebody who may grant")
 			return
 		}
 		c.meta.Decision += " and can_grant " + target
+	}
+	// Approvals given with the install are the perimeter approver's to
+	// give, asked like the rest before anything is fetched or written.
+	approving, ok := s.mayApproveWithInstall(w, r, c, tenant, body.Approve)
+	if !ok {
+		return
 	}
 	// The profile itself (AD-3).
 	//
@@ -1248,6 +1363,26 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 
+	// What the build asks for, read before the apps it comes with are
+	// written: an approval of something it does not state is refused with
+	// nothing of the tenant's changed.
+	var asks []askedEgress
+	if len(body.Approve) > 0 {
+		origin := ""
+		if source != nil {
+			origin = source.origin(tenant)
+		}
+		if asks, err = s.installAsks(ctx, tenant, profile, definition, origin, catalogueName); err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if missing := notAsked(body.Approve, asks); missing != "" {
+			s.fail(w, r, http.StatusUnprocessableEntity, "the install approves "+approveSummary(body.Approve)+
+				", and this build and the apps it comes with do not ask for "+missing+". Nothing was installed")
+			return
+		}
+	}
+
 	// The apps it comes with, before its own entry: an app is not installed
 	// without them, and one that cannot be had refuses the install with
 	// nothing of the tenant's changed.
@@ -1264,10 +1399,23 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	if !ok {
 		return
 	}
-	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
+	res, err := s.cfg.Repo.InstallFor(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, body.Positions, c.meta)
+	if err == nil && definition != nil && len(definition.Spec.ComesWith) > 0 {
+		s.approveAmong(ctx, tenant)
+	}
+	var approved []approvedRequest
+	if err == nil && len(body.Approve) > 0 {
+		approved = s.grantWithInstall(ctx, c, tenant, approving, body.Approve, asks)
+	}
 	if err != nil || retry == nil {
-		if err == nil && len(came) > 0 {
-			out := map[string]any{"status": res.Status, "installedWith": came}
+		if err == nil && (len(came) > 0 || len(body.Approve) > 0) {
+			out := map[string]any{"status": res.Status}
+			if len(came) > 0 {
+				out["installedWith"] = came
+			}
+			if len(body.Approve) > 0 {
+				out["approved"] = approved
+			}
 			if res.Changed {
 				out["commit"] = res.Commit
 			}
@@ -2264,7 +2412,13 @@ func (s *Server) started(w http.ResponseWriter, r *http.Request, status int, bod
 
 func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 	var refusal *schemacheck.Refusal
+	var refused *gitops.TenantRefused
 	switch {
+	case errors.As(err, &refused):
+		// 422: the cluster's own reason, which holds nothing of git's.
+		s.cfg.Log.InfoContext(r.Context(), "write refused: the cluster would not take the tenant",
+			"request_id", guard.ID(r.Context()), "tenant", refused.Tenant, "reason", refused.Reason)
+		s.fail(w, r, http.StatusUnprocessableEntity, refused.Error())
 	case errors.As(err, &refusal):
 		// 503: the request was fine and nothing was written. The cluster's
 		// resource definitions are older than this software and would drop

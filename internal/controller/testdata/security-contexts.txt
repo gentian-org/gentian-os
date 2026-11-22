@@ -13,7 +13,7 @@ keycloak: 18579414cbbd90f9
   .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
 mariadb: 8f0a65c37ac12be6
   .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
-perimeter: 090ca6d0b79d2ff6
+perimeter: 37d5d8f6ebfd446d
   .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true,"runAsNonRoot":true}
   .spec.template.spec.securityContext {"runAsNonRoot":true,"runAsUser":101,"seccompProfile":{"type":"RuntimeDefault"}}
 psql: bda87b1359fe9ade

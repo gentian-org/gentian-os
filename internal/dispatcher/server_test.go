@@ -99,6 +99,7 @@ func twoTenants() *Table {
 	t := table()
 	t.Callers[0].KeyHash = componentkeys.Hash(flowKey)
 	t.Tenants[0].Actions[0].PullSecrets = []string{"repository-vendor-pull"}
+	t.Tenants[0].Actions[0].Credentials = "run-credentials-ocr"
 	other := Caller{Callback: Callback{Service: "flow", Namespace: "tenant-other", Port: 80}, Concurrency: 2}
 	other.Tenant, other.Component, other.KeyHash = "other", "flow", componentkeys.Hash(otherKey)
 	t.Callers = append(t.Callers, other)
@@ -202,6 +203,27 @@ func TestARunIsOnePodOfThePinnedImage(t *testing.T) {
 		t.Fatalf("pull Secrets = %v", spec.ImagePullSecrets)
 	}
 
+	// The credentials a person set for the action are files the pod reads
+	// and cannot write, in its one container for the action's command.
+	var held *corev1.Volume
+	for i := range spec.Volumes {
+		if spec.Volumes[i].Secret != nil {
+			held = &spec.Volumes[i]
+		}
+	}
+	if held == nil || held.Secret.SecretName != "run-credentials-ocr" || *held.Secret.DefaultMode != 0o440 {
+		t.Fatalf("volumes = %+v", spec.Volumes)
+	}
+	mounted := false
+	for _, m := range main.VolumeMounts {
+		if m.Name == held.Name {
+			mounted = m.MountPath == CredentialsPath && m.ReadOnly
+		}
+	}
+	if !mounted || len(init.VolumeMounts) != 1 {
+		t.Fatalf("mounts = %+v / %+v", main.VolumeMounts, init.VolumeMounts)
+	}
+
 	// Asking again starts nothing, and a run of the caller's own carries no
 	// action's label: it is given no action's egress.
 	if status, again := h.run(flowKey, "invoice 7", "ocr"); status != http.StatusOK || again.ID != "invoice 7" || len(h.cluster.pods) != 1 {
@@ -216,6 +238,9 @@ func TestARunIsOnePodOfThePinnedImage(t *testing.T) {
 	}
 	if len(own.Spec.ImagePullSecrets) != 0 {
 		t.Fatalf("own run's pull Secrets = %v", own.Spec.ImagePullSecrets)
+	}
+	if len(own.Spec.Volumes) != 1 || len(own.Spec.Containers[0].VolumeMounts) != 1 {
+		t.Fatalf("own run's volumes = %+v", own.Spec.Volumes)
 	}
 	if !strings.Contains(h.audit.String(), `"action":"start"`) || !strings.Contains(h.audit.String(), `"person":"ada"`) {
 		t.Fatalf("no record of the start: %s", h.audit.String())
@@ -336,6 +361,60 @@ func TestACallersRunsAreItsOwn(t *testing.T) {
 	}
 	if len(h.cluster.pods) != 1 {
 		t.Fatalf("pods after the cancel = %d", len(h.cluster.pods))
+	}
+}
+
+// The list of what a caller may run carries an installed action's schemas as
+// the table holds them, and none where the action states none or the run is
+// the caller's own.
+func TestTheActionListCarriesAnActionsSchemas(t *testing.T) {
+	const inputs = `{"type":"object","required":["text"],"properties":{"text":{"type":"string"}}}`
+	const outputs = `{"type":"object","properties":{"sent":{"type":"boolean"}}}`
+	table := twoTenants()
+	table.Tenants[0].Actions[0].Schemas = table.Hold([]byte(inputs), []byte(outputs))
+	table.Tenants[0].Actions = append(table.Tenants[0].Actions, step("plain"))
+	// The same schemas of a second action take no second entry.
+	if again := table.Hold([]byte(inputs), []byte(outputs)); again != table.Tenants[0].Actions[0].Schemas || len(table.Schemas) != 1 {
+		t.Fatalf("held twice: %q, %d entries", again, len(table.Schemas))
+	}
+	table.Callers[0].Own[0].Schemas = table.Tenants[0].Actions[0].Schemas
+	document, err := table.Document()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseTable([]byte(document))
+	if err != nil {
+		t.Fatalf("a table with schemas is refused: %v", err)
+	}
+	srv := NewServer(&cluster{pods: map[string]*corev1.Pod{}}, program, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	srv.SetTable(parsed)
+	h := &harness{t: t, server: httptest.NewServer(srv.Handler())}
+	defer h.server.Close()
+
+	status, body := h.call(flowKey, http.MethodGet, "/v1/actions", "")
+	if status != http.StatusOK {
+		t.Fatalf("actions = %d %s", status, body)
+	}
+	var listed struct {
+		Actions []map[string]json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal([]byte(body), &listed); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]map[string]json.RawMessage{}
+	for _, action := range listed.Actions {
+		byName[string(action["name"])] = action
+	}
+	if ocr := byName[`"ocr"`]; string(ocr["inputs"]) != inputs || string(ocr["outputs"]) != outputs {
+		t.Fatalf("ocr = %s", body)
+	}
+	for _, name := range []string{`"plain"`, `"runner"`} {
+		entry, listed := byName[name]
+		_, hasInputs := entry["inputs"]
+		_, hasOutputs := entry["outputs"]
+		if !listed || hasInputs || hasOutputs {
+			t.Errorf("%s = %s", name, body)
+		}
 	}
 }
 

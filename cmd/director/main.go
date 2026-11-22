@@ -208,6 +208,16 @@ func run(log *slog.Logger) error {
 		definitions = schemacheck.Cached(func() (schemacheck.Report, error) {
 			return client.Definitions(context.Background())
 		}, schemacheck.DefaultSourceTTL, nil)
+		// And a tenant's manifest is put to the cluster before it is
+		// committed: applied as a dry run by the operator, which answers
+		// what the Tenant webhook and the schema would. A manifest the
+		// cluster would refuse is one Argo CD applies nothing of, with
+		// every later change to that tenant held up behind it. An operator
+		// that cannot be asked holds nothing back.
+		repo.GuardTenants(client.AdmitTenant, func(tenant string, err error) {
+			log.Warn("the cluster could not be asked whether it takes a tenant's manifest; the change is committed unasked",
+				"tenant", tenant, "error", err)
+		})
 	}
 	// The dispatcher carries out what is done once and follows nothing
 	// declared. It admits this process as the operator does, by a token
@@ -316,6 +326,7 @@ func run(log *slog.Logger) error {
 		envvar.Or("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log, api.CommissionKeysList)
 
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
+		TakeOutRefused: true,
 		Catalogue:      entries,
 		StoreURL:       storeURL,
 		Cluster:        cluster,

@@ -66,6 +66,11 @@ type GitOps struct {
 	// definitions refuses a commit the cluster would drop part of, set by
 	// GuardDefinitions. Nil checks nothing.
 	definitions *definitionsGuard
+	// admitTenant refuses a commit that leaves a tenant's manifest as the
+	// cluster would not take it, set by GuardTenants; tenantUnasked is told
+	// where the cluster could not be asked. Nil checks nothing.
+	admitTenant   TenantAdmitter
+	tenantUnasked func(tenant string, err error)
 	// afterPush is told of every commit that reached the remote, set by
 	// AfterPush. Nil tells nobody.
 	afterPush func(actor string)
@@ -570,6 +575,27 @@ func (g *GitOps) Install(ctx context.Context, tenant, profile, digest string, me
 func (g *GitOps) InstallFrom(
 	ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta Meta,
 ) (Result, error) {
+	return g.InstallFor(ctx, tenant, profile, digest, catalogue, defaultGrant, nil, meta)
+}
+
+// InstallFor is InstallFrom that also states the positions the app is given
+// to (Tenant.spec.apps[].positions), in the same commit. nil leaves an
+// entry's positions as they are; a list, empty or not, replaces them. The
+// position user is not among them: defaultGrant says it.
+func (g *GitOps) InstallFor(
+	ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, positions *[]string, meta Meta,
+) (Result, error) {
+	given := ""
+	if positions != nil {
+		for _, name := range *positions {
+			if !ValidName(name) {
+				return Result{}, fmt.Errorf("%w: position %q", ErrInvalidName, name)
+			}
+		}
+		if len(*positions) > 0 {
+			given = "[" + strings.Join(*positions, ", ") + "]"
+		}
+	}
 	if !ValidName(profile) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
 	}
@@ -602,6 +628,10 @@ func (g *GitOps) InstallFrom(
 			out, ok := insertComponentProfile(text, profile, digest, catalogue, forEveryone)
 			if !ok {
 				return "", "", false, errors.New("failed to update apps list")
+			}
+			if given != "" {
+				with, _ := setAppEntryKey(strings.Split(out, "\n"), profile, appPositionsKey, given, lastScalarBefore(strings.Split(out, "\n"), profile))
+				out = strings.Join(with, "\n")
 			}
 			return out, "installed", true, nil
 		}
@@ -639,6 +669,11 @@ func (g *GitOps) InstallFrom(
 			}
 			var stated bool
 			lines, stated = setAppEntryKey(lines, profile, appDefaultGrantKey, value, after)
+			changed = changed || stated
+		}
+		if positions != nil {
+			var stated bool
+			lines, stated = setAppEntryKey(lines, profile, appPositionsKey, given, lastScalarBefore(lines, profile))
 			changed = changed || stated
 		}
 		if !changed {
@@ -696,6 +731,22 @@ var ErrNotPinnedThere = errors.New("the app is not pinned to that build")
 // appDefaultGrantKey is the key of an app's entry that says every member of
 // the tenant has access to it by default.
 const appDefaultGrantKey = "defaultGrant"
+
+// appPositionsKey is the key of an app's entry that names the positions the
+// app is given to, written as a list on one line.
+const appPositionsKey = "positions"
+
+// lastScalarBefore is the key of an app's entry a new one-line key is
+// written under: the default grant when stated, else what says which build
+// the entry is, else nothing, which is directly under the entry's name.
+func lastScalarBefore(lines []string, profile string) string {
+	for _, key := range []string{appDefaultGrantKey, "catalogue", "digest"} {
+		if appEntryHasKey(lines, profile, key) {
+			return key
+		}
+	}
+	return ""
+}
 
 // appMovedAtKey and appMovedByKey record the last move of an entry's pin:
 // when, and who or what asked for it.
@@ -865,6 +916,9 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 
 	// Before anything is committed: what is staged is what would be pruned.
 	if err := g.checkDefinitions(ctx); err != nil {
+		return err
+	}
+	if err := g.checkTenants(ctx); err != nil {
 		return err
 	}
 

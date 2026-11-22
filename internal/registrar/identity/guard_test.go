@@ -14,7 +14,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 )
 
@@ -22,43 +21,17 @@ import (
 // of the platform's that holds no role, a custom group, one administrator and
 // one person who is not.
 //
-// The administrators' group is marked custom here although the platform never
-// marks it so. That takes the older refusal -- "only a custom group is renamed
-// or deleted" -- out of the way, so what these tests see refuse is the rule
-// about administrators and nothing that happens to stand in front of it.
+
+// guardedRealm is the kernel realm with root1, whom the Cluster claim names
+// a role holder, and user1, whom it does not.
 func guardedRealm(t *testing.T) (*fakeKeycloak, *Client, Realm) {
 	t.Helper()
-	return guardedRealmOf(t, platformAdmins, platformAdmins)
-}
-
-// guardedRealmOf is the same realm with root1 in group, and a client told
-// that protected are the groups holding platform roles.
-func guardedRealmOf(t *testing.T, group string, protected ...string) (*fakeKeycloak, *Client, Realm) {
-	t.Helper()
 	f, srv := newFake(t)
-	custom := map[string][]string{CustomGroupAttribute: {"true"}}
-	f.groups["kernel"] = []groupRep{
-		{ID: "g-role", Name: group, Path: "/" + group, Attributes: custom},
-		{ID: "g-unnamed", Name: "gentian:platform:unnamed", Path: "/gentian:platform:unnamed"},
-		{ID: "g-ops", Name: "gentian:platform:ops", Path: "/gentian:platform:ops", Attributes: custom},
-	}
 	f.users["kernel"] = []userRep{
 		{ID: "root1", Username: "admin@k.example", Email: "admin@k.example", Enabled: true, EmailVerified: true},
 		{ID: "user1", Username: "ada@k.example", Email: "ada@k.example", Enabled: true, EmailVerified: true},
 	}
-	f.memberOf = map[string][]string{
-		"root1": {"/" + group},
-		"user1": {"/gentian:platform:ops"},
-	}
-	return guardedClient(t, f, srv, protected...)
-}
-
-func guardedClient(t *testing.T, f *fakeKeycloak, srv *httptest.Server, protected ...string) (*fakeKeycloak, *Client, Realm) {
-	t.Helper()
-	if len(protected) == 0 {
-		protected = []string{platformAdmins}
-	}
-	c := clientProtecting(t, srv, StaticSource{"kernel": {Realm: "kernel", ClientID: ClientID, ClientSecret: "s"}}, protected...)
+	c := clientProtecting(t, srv, StaticSource{"kernel": {Realm: "kernel", ClientID: ClientID, ClientSecret: "s"}}, "root1")
 	r, err := c.Realm("kernel")
 	if err != nil {
 		t.Fatal(err)
@@ -88,41 +61,10 @@ func refused(t *testing.T, f *fakeKeycloak, what string, err error) {
 	}
 }
 
-func TestNobodyIsAddedToOrRemovedFromThePlatformAdministrators(t *testing.T) {
-	f, c, r := guardedRealm(t)
-	ctx := context.Background()
-	refused(t, f, "adding", c.SetMembership(ctx, r, "user1", platformAdmins, true))
-	refused(t, f, "removing", c.SetMembership(ctx, r, "root1", platformAdmins, false))
-}
-
-func TestNobodyIsInvitedIntoThePlatformAdministrators(t *testing.T) {
-	f, c, r := guardedRealm(t)
-	_, err := c.Invite(context.Background(), r, Invitation{
-		Email: "eve@example.com", Groups: []string{"gentian:platform:ops", platformAdmins},
-	})
-	refused(t, f, "inviting into the group", err)
-}
-
-func TestThePlatformAdministratorsGroupIsNotRenamedDeletedOrRecreated(t *testing.T) {
-	f, c, r := guardedRealm(t)
-	ctx := context.Background()
-
-	_, err := c.RenameGroup(ctx, r, platformAdmins, "gentian:platform:former-admins")
-	refused(t, f, "renaming the group", err)
-
-	refused(t, f, "deleting the group", c.DeleteGroup(ctx, r, platformAdmins))
-
-	_, err = c.CreateGroup(ctx, r, platformAdmins)
-	refused(t, f, "creating a group of that name", err)
-
-	_, err = c.RenameGroup(ctx, r, "gentian:platform:ops", platformAdmins)
-	refused(t, f, "renaming another group to that name", err)
-}
-
-func TestAPlatformAdministratorIsNotChangedFromHere(t *testing.T) {
-	ctx := context.Background()
+// personActs is every write this package makes to one person.
+func personActs(ctx context.Context) map[string]func(*Client, Realm, string) error {
 	address, off := "eve@example.com", false
-	for name, act := range map[string]func(*Client, Realm, string) error{
+	return map[string]func(*Client, Realm, string) error{
 		"update-person (address)": func(c *Client, r Realm, id string) error {
 			_, err := c.UpdatePerson(ctx, r, id, PersonUpdate{Email: &address})
 			return err
@@ -141,14 +83,18 @@ func TestAPlatformAdministratorIsNotChangedFromHere(t *testing.T) {
 			_, err := c.ActivateAccount(ctx, r, id, address, true, "", "")
 			return err
 		},
-	} {
+	}
+}
+
+func TestAHolderOfAClusterRoleIsNotChangedFromHere(t *testing.T) {
+	for name, act := range personActs(context.Background()) {
 		f, c, r := guardedRealm(t)
 		// An authenticator to remove, so remove-totp reaches its first write.
 		f.creds["root1"] = []map[string]string{{"id": "otp1", "type": "otp"}}
-		refused(t, f, name+" on an administrator", act(c, r, "root1"))
+		refused(t, f, name+" on a role holder", act(c, r, "root1"))
 
-		// The same act on somebody who is not an administrator goes through:
-		// the rule is about who the person is, not about the act.
+		// The same act on somebody who holds no role goes through: the rule
+		// is about who the person is, not about the act.
 		if err := act(c, r, "user1"); err != nil {
 			t.Errorf("%s on somebody else: %v", name, err)
 		}
@@ -160,7 +106,7 @@ func TestAPlatformAdministratorIsNotChangedFromHere(t *testing.T) {
 
 // The activation link is issued outside the admin API, so it is the one write
 // that could have gone round a rule placed on admin paths only.
-func TestTheActivationLinkOfAnAdministratorIsRefusedOnItsOwnPath(t *testing.T) {
+func TestTheActivationLinkOfARoleHolderIsRefusedOnItsOwnPath(t *testing.T) {
 	f, c, r := guardedRealm(t)
 	resp, err := c.doAt(context.Background(), r, http.MethodPost,
 		"/realms/kernel/gentian-activation/users/root1/link", "link", nil, map[string]any{"actions": []string{"UPDATE_PASSWORD"}})
@@ -170,55 +116,41 @@ func TestTheActivationLinkOfAnAdministratorIsRefusedOnItsOwnPath(t *testing.T) {
 	refused(t, f, "the activation link", err)
 }
 
-func TestAnAdministratorsOtherGroupsMayStillChange(t *testing.T) {
-	f, c, r := guardedRealm(t)
-	if err := c.SetMembership(context.Background(), r, "root1", "gentian:platform:unnamed", true); err != nil {
-		t.Fatalf("adding an administrator to another group: %v", err)
-	}
-	if w := f.writes(); len(w) != 1 || w[0].method != http.MethodPut {
-		t.Fatalf("writes = %v, want one PUT", w)
-	}
-}
-
-// A rule that cannot be applied refuses. The alternative is a write judged
-// against no group at all, which lets everything through.
-func TestWithoutTheGroupsNameNothingIsWritten(t *testing.T) {
-	f, srv := newFake(t)
-	f.users["kernel"] = []userRep{{ID: "user1", Username: "ada@k.example"}}
-	c, err := New(Config{
-		BaseURL: srv.URL,
-		Source:  StaticSource{"kernel": {Realm: "kernel", ClientID: ClientID, ClientSecret: "s"}},
-		PlatformRoleGroups: func(context.Context) ([]string, error) {
-			return nil, errors.New("the Cluster claim could not be read")
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, _ := c.Realm("kernel")
+// Role holders that cannot be read refuse every write to a person: letting
+// one through would be deciding without knowing.
+func TestWithoutTheRoleHoldersNothingIsWrittenToAPerson(t *testing.T) {
 	ctx := context.Background()
-	for name, err := range map[string]error{
-		"remove-person": c.RemovePerson(ctx, r, "user1"),
+	f, srv := newFake(t)
+	f.users["kernel"] = []userRep{{ID: "user1", Username: "ada@k.example", Enabled: true}}
+	for name, holders := range map[string]RoleHolders{
+		"an unreadable claim": func(context.Context) ([]string, error) { return nil, errors.New("the claim is away") },
 	} {
-		if !errors.Is(err, ErrGuardUnavailable) {
+		c, err := New(Config{BaseURL: srv.URL, Source: StaticSource{"kernel": {Realm: "kernel", ClientID: ClientID, ClientSecret: "s"}},
+			PlatformRoleHolders: holders})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, _ := c.Realm("kernel")
+		if err := c.RemovePerson(ctx, r, "user1"); !errors.Is(err, ErrGuardUnavailable) {
 			t.Errorf("%s: got %v, want ErrGuardUnavailable", name, err)
 		}
 	}
 	if w := f.writes(); len(w) != 0 {
-		t.Errorf("wrote %v without knowing the group", w)
+		t.Errorf("wrote %v", w)
 	}
-
 	if _, err := New(Config{BaseURL: srv.URL}); err == nil {
-		t.Error("a client was built with nothing to name the platform role groups")
+		t.Error("a client that is told no role holders would let every write through")
 	}
 }
 
-// A write to somewhere this package was never meant to write is refused, so a
-// method added later cannot reach, say, a client or a role by forgetting that
-// the rule has to know about it.
+// A write to a group, or one that would put a person in a group, has no
+// rule: what a person holds is the rights store's.
 func TestAWriteWithNoRuleIsRefused(t *testing.T) {
 	f, c, r := guardedRealm(t)
-	for _, path := range []string{"/clients", "/roles/admin", "/users//groups/g-admin", "/identity-provider/instances"} {
+	for _, path := range []string{
+		"/clients", "/roles/admin", "/identity-provider/instances", "/sessions", "/sessions/s1/x",
+		"/groups", "/groups/g1", "/groups/g1/children", "/users/user1/groups/g1", "/users//groups/g1",
+	} {
 		resp, err := c.do(context.Background(), r, http.MethodPost, path, nil, map[string]any{})
 		if resp != nil {
 			_ = resp.Body.Close()
@@ -227,8 +159,16 @@ func TestAWriteWithNoRuleIsRefused(t *testing.T) {
 			t.Errorf("POST %s: got %v, want ErrUnguarded", path, err)
 		}
 	}
+	// A person created into a group.
+	resp, err := c.do(context.Background(), r, http.MethodPost, "/users", nil, map[string]any{"username": "x", "groups": []string{"/any"}})
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if !errors.Is(err, ErrUnguarded) {
+		t.Errorf("a person created into a group: got %v, want ErrUnguarded", err)
+	}
 	// Another realm's path, reached through this realm's token.
-	resp, err := c.doAt(context.Background(), r, http.MethodPut, "/admin/realms/other/users/u1", "x", nil, nil)
+	resp, err = c.doAt(context.Background(), r, http.MethodPut, "/admin/realms/other/users/u1", "x", nil, nil)
 	if resp != nil {
 		_ = resp.Body.Close()
 	}
@@ -245,12 +185,10 @@ func TestClassifyReadsEveryWriteThisPackageMakes(t *testing.T) {
 		"/admin/realms/kernel/users":                          {},
 		"/admin/realms/kernel/users/u1":                       {user: "u1"},
 		"/admin/realms/kernel/users/u1/execute-actions-email": {user: "u1"},
-		"/admin/realms/kernel/users/u1/credentials/c1":        {user: "u1"},
-		"/admin/realms/kernel/users/u1/groups/g1":             {user: "u1", group: "g1", membership: true},
-		"/admin/realms/kernel/groups":                         {},
-		"/admin/realms/kernel/groups/g1":                      {group: "g1"},
-		"/admin/realms/kernel/groups/g1/children":             {group: "g1"},
+		"/admin/realms/kernel/users/u1/credentials/c1":        {user: "u1", credential: "c1"},
+		"/realms/kernel/gentian-device-passwords/users/u1":    {user: "u1"},
 		"/realms/kernel/gentian-activation/users/u1/link":     {user: "u1"},
+		"/admin/realms/kernel/sessions/s1":                    {session: "s1"},
 	} {
 		got, ok := classify("kernel", rel)
 		if !ok || got != want {
@@ -259,100 +197,72 @@ func TestClassifyReadsEveryWriteThisPackageMakes(t *testing.T) {
 	}
 }
 
-// The administrators' group as the platform really keeps it is not marked
-// custom, and "only a custom group is renamed or deleted" would refuse it
-// first. It is refused as what it is, so the caller hears the reason that
-// will not change; any other group of the platform's keeps the older answer.
-func TestThePlatformsOwnAdministratorsGroupIsRefusedAsProtectedNotAsNotCustom(t *testing.T) {
-	f, srv := newFake(t)
-	f.groups["kernel"] = []groupRep{
-		{ID: "g-admin", Name: platformAdmins, Path: "/" + platformAdmins},
-		{ID: "g-unnamed", Name: "gentian:platform:unnamed", Path: "/gentian:platform:unnamed"},
-	}
-	_, c, r := guardedClient(t, f, srv)
+// In a realm several tenants share, a tenant's token lists, reads and writes
+// its own people and nobody else: the others are not found, and a write to
+// one is refused before the realm hears of it.
+func TestAScopedRealmSeesAndTouchesOnlyItsOwnPeople(t *testing.T) {
 	ctx := context.Background()
+	f, c, r := guardedRealm(t)
+	f.users["kernel"] = append(f.users["kernel"],
+		userRep{ID: "mine1", Username: "mia@acme.example", Enabled: true, EmailVerified: true})
+	scoped := r.Scoped(only("mine1"))
 
-	refused(t, f, "deleting the group", c.DeleteGroup(ctx, r, platformAdmins))
-	_, err := c.RenameGroup(ctx, r, platformAdmins, "gentian:platform:former")
-	refused(t, f, "renaming the group", err)
-
-	if err := c.DeleteGroup(ctx, r, "gentian:platform:unnamed"); !errors.Is(err, ErrNotCustom) {
-		t.Errorf("another group of the platform's: got %v, want ErrNotCustom", err)
+	people, err := c.People(ctx, scoped, "", 0)
+	if err != nil || len(people) != 1 || people[0].ID != "mine1" {
+		t.Fatalf("people = %+v, err = %v, want the tenant's own alone", people, err)
 	}
-}
-
-// The rule is the same for every platform role, not the administrators'
-// alone: whichever group the Cluster claim names for a role, every refusal
-// above holds for it and for the people in it, while the client is told all
-// of the groups at once.
-func TestEveryPlatformRoleGroupIsProtectedAlike(t *testing.T) {
-	ctx := context.Background()
-	address, off := "eve@example.com", false
-	all := []string{
-		platformAdmins, "acme:security", "acme:audit", "acme:services", "acme:shared-apps", "acme:break-glass",
+	if all, err := c.People(ctx, r, "", 0); err != nil || len(all) != 3 {
+		t.Errorf("the unscoped realm lists %d people, err = %v", len(all), err)
 	}
-	for _, group := range all {
-		for what, act := range map[string]func(*Client, Realm) error{
-			"adding somebody": func(c *Client, r Realm) error { return c.SetMembership(ctx, r, "user1", group, true) },
-			"removing somebody": func(c *Client, r Realm) error {
-				return c.SetMembership(ctx, r, "root1", group, false)
-			},
-			"inviting somebody into it": func(c *Client, r Realm) error {
-				_, err := c.Invite(ctx, r, Invitation{Email: address, Groups: []string{"gentian:platform:ops", group}})
-				return err
-			},
-			"renaming it": func(c *Client, r Realm) error {
-				_, err := c.RenameGroup(ctx, r, group, "acme:former")
-				return err
-			},
-			"deleting it": func(c *Client, r Realm) error { return c.DeleteGroup(ctx, r, group) },
-			"creating a group of that name": func(c *Client, r Realm) error {
-				_, err := c.CreateGroup(ctx, r, group)
-				return err
-			},
-			"renaming another group to that name": func(c *Client, r Realm) error {
-				_, err := c.RenameGroup(ctx, r, "gentian:platform:ops", group)
-				return err
-			},
-			"changing a member's address": func(c *Client, r Realm) error {
-				_, err := c.UpdatePerson(ctx, r, "root1", PersonUpdate{Email: &address})
-				return err
-			},
-			"disabling a member": func(c *Client, r Realm) error {
-				_, err := c.UpdatePerson(ctx, r, "root1", PersonUpdate{Enabled: &off})
-				return err
-			},
-			"removing a member": func(c *Client, r Realm) error { return c.RemovePerson(ctx, r, "root1") },
-			"requiring a second factor of a member": func(c *Client, r Realm) error {
-				return c.RequireTOTP(ctx, r, "root1", true, "", "")
-			},
-			"removing a member's second factor": func(c *Client, r Realm) error { return c.RemoveTOTP(ctx, r, "root1") },
-			"mailing a member a password link": func(c *Client, r Realm) error {
-				return c.SendPasswordReset(ctx, r, "root1", "", "")
-			},
-			"activating a member's account": func(c *Client, r Realm) error {
-				_, err := c.ActivateAccount(ctx, r, "root1", address, true, "", "")
-				return err
-			},
-		} {
-			f, c, r := guardedRealmOf(t, group, all...)
-			f.creds["root1"] = []map[string]string{{"id": "otp1", "type": "otp"}}
-			refused(t, f, group+": "+what, act(c, r))
+	if _, err := c.Person(ctx, scoped, "user1"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another tenant's person: got %v, want ErrNotFound", err)
+	}
+	if p, err := c.Person(ctx, scoped, "mine1"); err != nil || p.ID != "mine1" {
+		t.Errorf("the tenant's own person: %+v, %v", p, err)
+	}
+	for name, act := range personActs(ctx) {
+		before := len(f.writes())
+		if err := act(c, scoped, "user1"); !errors.Is(err, ErrOutOfScope) && !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s on another tenant's person: got %v, want ErrOutOfScope", name, err)
+		}
+		if len(f.writes()) != before {
+			t.Errorf("%s on another tenant's person was written", name)
 		}
 	}
+	if err := c.RemovePerson(ctx, scoped, "mine1"); err != nil {
+		t.Errorf("removing the tenant's own person: %v", err)
+	}
 }
 
-// A group the claim names for no role is not protected because it looks like
-// one: the rule follows the claim, not the name.
-func TestAGroupTheClaimNamesForNoRoleIsManagedAsBefore(t *testing.T) {
-	f, c, r := guardedRealmOf(t, "acme:audit", platformAdmins)
-	if err := c.SetMembership(context.Background(), r, "user1", "acme:audit", true); err != nil {
-		t.Fatalf("adding somebody to a group that holds no role: %v", err)
+// A scope that cannot be read answers nothing and writes nothing: it is not
+// read as the whole realm.
+func TestAScopeThatCannotBeReadIsNotTheWholeRealm(t *testing.T) {
+	ctx := context.Background()
+	f, c, r := guardedRealm(t)
+	scoped := r.Scoped(func(context.Context) (map[string]bool, error) { return nil, errors.New("the store is away") })
+	if _, err := c.People(ctx, scoped, "", 0); !errors.Is(err, ErrScopeUnavailable) {
+		t.Errorf("people: got %v, want ErrScopeUnavailable", err)
 	}
-	if err := c.RemovePerson(context.Background(), r, "root1"); err != nil {
-		t.Fatalf("removing a member of a group that holds no role: %v", err)
+	if _, err := c.Person(ctx, scoped, "user1"); !errors.Is(err, ErrScopeUnavailable) {
+		t.Errorf("person: got %v, want ErrScopeUnavailable", err)
 	}
-	if len(f.writes()) != 2 {
-		t.Fatalf("writes = %v, want two", f.writes())
+	if err := c.RemovePerson(ctx, scoped, "user1"); !errors.Is(err, ErrScopeUnavailable) {
+		t.Errorf("remove: got %v, want ErrScopeUnavailable", err)
+	}
+	if w := f.writes(); len(w) != 0 {
+		t.Errorf("wrote %v", w)
+	}
+}
+
+// An invitation in a shared realm creates the account and mails it, although
+// nobody could have given the new account the tenant's position yet.
+func TestAnInvitationInASharedRealmMailsThePersonItMade(t *testing.T) {
+	f, c, r := guardedRealm(t)
+	p, err := c.Invite(context.Background(), r.Scoped(only()), Invitation{Email: "new@acme.example"})
+	if err != nil || p.ID != "abc123" {
+		t.Fatalf("Invite: %+v, %v", p, err)
+	}
+	if len(f.callsTo(http.MethodPut, "/users/abc123/execute-actions-email")) != 1 {
+		t.Errorf("the invitation was not mailed: %+v", f.writes())
 	}
 }

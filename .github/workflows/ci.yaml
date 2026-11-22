@@ -516,6 +516,65 @@ jobs:
           done <<< "${TAGS}"
           docker buildx imagetools create "${args[@]}" "ghcr.io/gentian-org/gentian-os@${DIGEST}"
 
+  # The charts of the components the platform places in every tenant from its
+  # own image (charts/${{ matrix.chart }}, charts/porter), published with that image:
+  # once the image has its tags, a moving chart per branch and an immutable
+  # one per commit, each naming this build's image. A placed component has no
+  # image updater, so each chart itself names the image; and a Helm release
+  # under an unchanged version is never upgraded, so the moving chart's
+  # appVersion names the immutable one a cluster installs.
+  placed-charts:
+    name: Chart — ${{ matrix.chart }}
+    runs-on: ubuntu-latest
+    needs: [publish]
+    if: ${{ needs.publish.result == 'success' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        chart: [homesync, porter, liaison]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Versions
+        id: v
+        run: |
+          base="$(sed -n 's/^version: *//p' charts/${{ matrix.chart }}/Chart.yaml)"
+          short="${GITHUB_SHA::7}"
+          # A prerelease part of digits alone is a number in semver, and
+          # "0710412" is refused for its leading zero: such a commit is named
+          # by as many more characters as it takes to reach a letter.
+          vshort="${short}"; n=7
+          while [[ "${vshort}" =~ ^[0-9]+$ && "${n}" -lt 40 ]]; do n=$((n + 1)); vshort="${GITHUB_SHA::n}"; done
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            ref="${GITHUB_REF_NAME}"
+            image="${GITHUB_REF_NAME#v}"
+          else
+            ref="${GITHUB_REF_NAME//\//-}"
+            image="${ref}-${short}"
+          fi
+          {
+            echo "moving=${base}-${ref}"
+            echo "immutable=${base}-${ref}.${vshort}"
+            echo "image=${image}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Name this build's image
+        run: |
+          sed -i 's/^\(\s*tag:\) "0\.1\.0"$/\1 "${{ steps.v.outputs.image }}"/' charts/${{ matrix.chart }}/values.yaml
+          test "$(grep -c 'tag: "${{ steps.v.outputs.image }}"' charts/${{ matrix.chart }}/values.yaml)" = 1
+      - name: Lint and package
+        run: |
+          chart="charts/${{ matrix.chart }}"
+          helm lint "${chart}"
+          helm package "${chart}" --version "${{ steps.v.outputs.immutable }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-immutable
+          helm package "${chart}" --version "${{ steps.v.outputs.moving }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-moving
+      - name: Push
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push /tmp/chart-immutable/*.tgz oci://ghcr.io/gentian-org/charts
+          helm push /tmp/chart-moving/*.tgz oci://ghcr.io/gentian-org/charts
+
   # The images beside the operator's. Each pushes and signs from its build
   # step, so it runs only once every check passed: a failed check publishes
   # and signs nothing.
@@ -538,21 +597,23 @@ jobs:
           # architecture-independent, but the copy runs beside Keycloak, so it
           # is built for the same platforms.
           #
-          # The identity appset names this image by the operator's tag
-          # (gentian.os.revision.placeholder): <branch>-<sha> for the
-          # installer's checkout, or a release's version. type=ref,event=tag
-          # publishes a release under v0.5.0 too, the spelling a chart
-          # rendered without the installer falls back to.
+          # The identity appset names this image by the hash of its sources
+          # (content-tag, scripts/tools/listener-tag.sh), so a build that
+          # leaves the listener alone leaves Keycloak's pod alone. Built once
+          # per content: when that tag exists, the job only adds this build's
+          # tags to it, and Maven is not asked at all.
           - title: Keycloak event listener image
             image: keycloak-event-listener
             context: kernel/extensions/keycloak-event-listener
             release-tag: type=ref,event=tag
+            content-tag: scripts/tools/listener-tag.sh
           # What the Jobs that move a tenant's objects run (rclone, age, tar),
           # tagged as the operator is, so the operator names its own build's.
           - title: Storage tools image
             image: storage-tools
             context: kernel/images/storage-tools
             release-tag: ""
+            content-tag: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -564,6 +625,24 @@ jobs:
           retry_wait_seconds: 20
           command: |
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+
+      # An image named by its sources, and whether the registry has it.
+      - name: Content tag
+        id: content
+        if: matrix.content-tag != ''
+        env:
+          SCRIPT: ${{ matrix.content-tag }}
+          IMAGE: ghcr.io/gentian-org/${{ matrix.image }}
+        run: |
+          tag="$(bash "${SCRIPT}")"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          if docker buildx imagetools inspect "${IMAGE}:${tag}" >/dev/null 2>&1; then
+            echo "exists=true" >> "${GITHUB_OUTPUT}"
+            echo "${IMAGE}:${tag} is published already; this build only tags it."
+          fi
 
       # An empty line among the tags (release-tag of an image that has none)
       # is no tag.
@@ -577,12 +656,15 @@ jobs:
             ${{ matrix.release-tag }}
             type=ref,event=branch
             type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
+            type=raw,value=${{ steps.content.outputs.tag }},enable=${{ steps.content.outputs.tag != '' }}
 
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
-
+      # A build fails now and then on a registry that does not answer (Maven
+      # Central did, twice on 2026-11-16); the second attempt below keeps that
+      # from leaving an image unpublished.
       - name: Build and push the image
         id: build
+        if: steps.content.outputs.exists != 'true'
+        continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
         with:
           # An SBOM and a SLSA provenance attestation travel with the image
@@ -595,26 +677,58 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      - name: Build and push the image (second attempt)
+        id: build_again
+        if: steps.build.outcome == 'failure'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          sbom: true
+          provenance: mode=max
+          context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ needs.plan.outputs.publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # The image is published under its content tag already, signed by the
+      # build that made it: this build's tags go on the same digest.
+      - name: Tag the published image
+        if: steps.content.outputs.exists == 'true' && needs.plan.outputs.publish == 'true'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SOURCE: ghcr.io/gentian-org/${{ matrix.image }}:${{ steps.content.outputs.tag }}
+        run: |
+          args=()
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] && args+=(--tag "${tag}")
+          done <<< "${TAGS}"
+          for attempt in 1 2 3; do
+            docker buildx imagetools create "${args[@]}" "${SOURCE}" && exit 0
+            echo "attempt ${attempt} failed; retrying"
+            sleep 20
+          done
+          exit 1
+
       # The published image, signed with this workflow's identity and scanned
       # (docs/security/controls.md K3, K5). Only where the build pushed: a
       # pull request's image exists nowhere to be signed. The scan is advisory
       # until the backlog it finds is triaged; dropping continue-on-error makes
       # it block.
       - name: Install cosign
-        if: needs.plan.outputs.publish == 'true'
+        if: needs.plan.outputs.publish == 'true' && steps.content.outputs.exists != 'true'
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532  # v4.1.3
       - name: Sign the image
-        if: needs.plan.outputs.publish == 'true'
+        if: needs.plan.outputs.publish == 'true' && steps.content.outputs.exists != 'true'
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.build.outputs.digest || steps.build_again.outputs.digest }}
           IMAGE: ghcr.io/gentian-org/${{ matrix.image }}
         run: cosign sign --yes --new-bundle-format=false --use-signing-config=false "${IMAGE}@${DIGEST}"
       - name: Scan the image
-        if: needs.plan.outputs.publish == 'true'
+        if: needs.plan.outputs.publish == 'true' && steps.content.outputs.exists != 'true'
         continue-on-error: true
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25  # v0.36.0
         with:
-          image-ref: ghcr.io/gentian-org/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          image-ref: ghcr.io/gentian-org/${{ matrix.image }}@${{ steps.build.outputs.digest || steps.build_again.outputs.digest }}
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true

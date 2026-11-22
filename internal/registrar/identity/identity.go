@@ -39,9 +39,9 @@ SPDX-License-Identifier: MPL-2.0
 // policed: to touch another tenant's realm the registrar would have to be
 // handed a credential it was never given.
 //
-// Who holds a platform role is not the registrar's to change. Every write
+// Who holds a cluster role is not the registrar's to change. Every write
 // leaves through one function, and that function refuses the ones that would
-// touch a platform role's group or a person in it: see guard.go.
+// touch the account of a person who holds one: see guard.go.
 package identity
 
 import (
@@ -65,7 +65,7 @@ import (
 // whoever has to fix it.
 var ErrNoCredential = errors.New("no Keycloak credential for this realm")
 
-// ErrNotFound is a Keycloak 404: the user, the group or the realm is not
+// ErrNotFound is a Keycloak 404: the user or the realm is not
 // there. Distinguished so a handler can answer 404 rather than 502.
 var ErrNotFound = errors.New("not found in the realm")
 
@@ -81,9 +81,10 @@ var ErrConflict = errors.New("already exists in the realm")
 // that would turn a missing authorization check into a cross-tenant one.
 type Realm struct {
 	name string
-	// groupPrefix confines this token to one group subtree; empty means the
-	// whole realm. Set through Scoped, for the tenant that shares a realm.
-	groupPrefix string
+	// subjects confines this token to the accounts it answers; nil means
+	// the whole realm. Set through Scoped, for the tenant that shares a
+	// realm.
+	subjects Subjects
 }
 
 // Name is the realm as Keycloak names it. For logging and for the record --
@@ -141,14 +142,12 @@ type Config struct {
 	// BaseURL is Keycloak's root, without /admin or /realms.
 	BaseURL string
 	Source  CredentialSource
-	// PlatformRoleGroups names the groups whose members hold a platform
-	// role. Required: every write is checked against them (guard.go), and a
-	// client that did not know the names could only let everything through.
-	PlatformRoleGroups RoleGroups
 	// PlatformRoleHolders names the subjects of the platform tenant's people
 	// the Cluster claim names role holders, whose accounts are not written
-	// from here either (guard.go). Nil names none.
-	PlatformRoleHolders RoleGroups
+	// from here (guard.go). Required: every write to a person is checked
+	// against them, and a client that did not know them could only let
+	// everything through.
+	PlatformRoleHolders RoleHolders
 	Logger              *slog.Logger
 	// HTTPClient is optional; the default has a timeout because an admin
 	// call on a request path must not outlive the request.
@@ -159,8 +158,7 @@ type Config struct {
 type Client struct {
 	base    string
 	source  CredentialSource
-	roles   RoleGroups
-	holders RoleGroups
+	holders RoleHolders
 	http    *http.Client
 	log     *slog.Logger
 
@@ -185,9 +183,9 @@ func New(cfg Config) (*Client, error) {
 	if _, err := url.Parse(base); err != nil {
 		return nil, fmt.Errorf("identity: BaseURL: %w", err)
 	}
-	if cfg.PlatformRoleGroups == nil {
-		return nil, errors.New("identity: PlatformRoleGroups is required: " +
-			"without the platform role groups no write can be judged")
+	if cfg.PlatformRoleHolders == nil {
+		return nil, errors.New("identity: PlatformRoleHolders is required: " +
+			"without the holders of the cluster's roles no write can be judged")
 	}
 	if cfg.Source == nil {
 		cfg.Source = StaticSource{}
@@ -200,7 +198,7 @@ func New(cfg Config) (*Client, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Client{base: base, source: cfg.Source, roles: cfg.PlatformRoleGroups, holders: cfg.PlatformRoleHolders, http: hc, log: log,
+	return &Client{base: base, source: cfg.Source, holders: cfg.PlatformRoleHolders, http: hc, log: log,
 		tokens: map[string]cachedToken{}}, nil
 }
 

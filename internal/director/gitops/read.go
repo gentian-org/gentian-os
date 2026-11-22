@@ -20,8 +20,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
 	"sigs.k8s.io/yaml"
-
-	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
 // App is one entry of a tenant's apps list as git records it.
@@ -40,6 +38,9 @@ type App struct {
 	// DefaultGrant is whether every member of the tenant has access to the
 	// app by default: the install was made for everyone.
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
+	// Positions are the positions whose holders use the app, beside the
+	// position user that DefaultGrant stands for.
+	Positions []string `json:"positions,omitempty"`
 	// Catalogue is the source the pinned build was fetched from.
 	Catalogue string `json:"catalogue,omitempty"`
 	// UpdateMode is the tenant's override of how the app moves to newer
@@ -136,31 +137,6 @@ func (g *GitOps) Tenants(ctx context.Context) ([]string, error) {
 // ErrNoClusterClaim is returned when the repository has no Cluster claim for
 // this cluster.
 var ErrNoClusterClaim = errors.New("no Cluster claim in the repository")
-
-// PlatformRoles returns the Keycloak group that holds each platform role,
-// keyed by the cluster relation it grants, from the cluster's Cluster claim.
-//
-// The claim in git is where authority over a cluster is written down, so this
-// is read from the same file the kernel domain comes from rather than from the
-// cluster: a cluster cannot widen its own administrators' rights by editing
-// something inside itself.
-func (g *GitOps) PlatformRoles(ctx context.Context) (map[string]string, error) {
-	var claim struct {
-		Spec struct {
-			PlatformRoles map[string]string `json:"platformRoles"`
-		} `json:"spec"`
-	}
-	if err := g.readClusterClaim(ctx, &claim); err != nil {
-		return nil, err
-	}
-	// The claim's field names are what an operator writes; the map's keys are
-	// the model's relations. authz.RolesFromClaim is the one translation
-	// between the two, shared with the operator's projection, so what the
-	// director checks is what the operator wrote. A field it does not know
-	// is not a role and grants nothing, the same as the operator treats it.
-	roles, _ := authz.RolesFromClaim(claim.Spec.PlatformRoles)
-	return roles, nil
-}
 
 // KernelDomain returns the kernel domain the cluster's Cluster claim declares
 // (clusters/<cluster>/kernel/claims/cluster.yaml). The claim in git is the one

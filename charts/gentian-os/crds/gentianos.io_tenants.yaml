@@ -295,6 +295,20 @@ spec:
                         export leaves it out, and the cluster an import lands on places its
                         own.
                       type: boolean
+                    positions:
+                      description: |-
+                        Positions names the positions of the tenant whose holders use this
+                        app: each holds the app's role user. A name is one of the positions
+                        every tenant has or one the tenant declares (spec.positions); a name
+                        that is neither gives nothing. defaultGrant is the position user, and
+                        the two are read together.
+                      items:
+                        maxLength: 63
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      maxItems: 256
+                      type: array
+                      x-kubernetes-list-type: set
                     profile:
                       description: |-
                         Profile is the name of the ComponentProfile to install.
@@ -453,6 +467,15 @@ spec:
                     - name
                     x-kubernetes-list-type: map
                 type: object
+              contactsBook:
+                default: person
+                description: |-
+                  ContactsBook is whose address book at the home the contacts an app
+                  keeps are kept equal to: each person's own, or one the tenant shares.
+                enum:
+                - person
+                - shared
+                type: string
               country:
                 description: |-
                   Country is the country the tenant is in, as an ISO 3166-1 alpha-2 code
@@ -740,37 +763,20 @@ spec:
                 x-kubernetes-list-map-keys:
                 - app
                 x-kubernetes-list-type: map
-              groups:
+              homes:
+                additionalProperties:
+                  type: string
                 description: |-
-                  Groups are groups of the tenant's realm declared in git; see
-                  TenantGroup.
-                items:
-                  description: |-
-                    TenantGroup is a group of the tenant's realm declared in git. The platform
-                    makes it; people are put in it in the Admin Console, and an app's profile
-                    or a TenantSignInFrom names it. It is not renamed or deleted from the
-                    console: git holds it.
-                  properties:
-                    name:
-                      description: |-
-                        Name is the group's name in the realm. Not one the platform's own
-                        groups take (gentian...).
-                      maxLength: 63
-                      minLength: 1
-                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                      type: string
-                      x-kubernetes-validations:
-                      - message: names beginning with gentian are the platform's own
-                          groups
-                        rule: '!self.startsWith(''gentian'')'
-                  required:
-                  - name
-                  type: object
-                maxItems: 50
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
+                  Homes names, per contract, the installed app that is the tenant's home
+                  for that kind of data (file-store, calendar-store, contacts-store):
+                  the provider every consumer of the contract is bound to. A contract
+                  not named here is bound to an installed provider of it, the first by
+                  name; one named here whose app is not installed binds nobody.
+                maxProperties: 3
+                type: object
+                x-kubernetes-validations:
+                - message: homes names file-store, calendar-store or contacts-store
+                  rule: self.all(k, k in ['file-store', 'calendar-store', 'contacts-store'])
               isolation:
                 description: Isolation describes the workload isolation boundaries
                   for this tenant.
@@ -1134,6 +1140,86 @@ spec:
                       the tenant's own administrators turn it on.
                     type: boolean
                 type: object
+              positions:
+                description: |-
+                  Positions are the tenant's own positions, beside the three every
+                  tenant has; see TenantPosition.
+                items:
+                  description: |-
+                    TenantPosition is a position of the tenant: a named set of roles a kind of
+                    person holds, "Sales intern" or "Engineering manager". What it is, is
+                    declared here; who holds it is not, and lives in the rights store.
+
+                    Every tenant has three positions it does not declare: user, a person of
+                    the tenant, with the apps installed for everyone; app-administrator, who
+                    administers every installed app; and tenant-administrator, who administers
+                    the tenant and holds no role on any app.
+                  properties:
+                    description:
+                      description: Description says who the position is for.
+                      maxLength: 400
+                      type: string
+                    includes:
+                      description: |-
+                        Includes are other positions of the tenant whose roles the holders of
+                        this one hold too: executive includes sales-manager. A circle of
+                        positions including each other is refused.
+                      items:
+                        type: string
+                      maxItems: 20
+                      type: array
+                      x-kubernetes-list-type: set
+                    name:
+                      description: |-
+                        Name is the position's name in the tenant. Not one of the three every
+                        tenant has.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                      x-kubernetes-validations:
+                      - message: user, app-administrator and tenant-administrator
+                          are positions every tenant has
+                        rule: '!(self in [''user'', ''app-administrator'', ''tenant-administrator''])'
+                    roles:
+                      description: Roles are the roles the position holds itself.
+                      items:
+                        description: |-
+                          TenantPositionRole is one role a position holds: on an app of the tenant,
+                          or on the tenant itself.
+                        properties:
+                          app:
+                            description: |-
+                              App is the profile name of the app, or of the add-on, the role is
+                              held on. Empty for a role on the tenant itself.
+                            maxLength: 63
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                          role:
+                            description: |-
+                              Role is user, admin, or a role the app's profile declares. On the
+                              tenant itself: user or admin.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - role
+                        type: object
+                      maxItems: 200
+                      type: array
+                    title:
+                      description: Title is the position as people read it.
+                      maxLength: 80
+                      type: string
+                  required:
+                  - name
+                  type: object
+                maxItems: 100
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               privileges:
                 description: |-
                   Privileges are the privilege requests a person granted for this
@@ -1175,6 +1261,18 @@ spec:
                         reviews.
                       format: date-time
                       type: string
+                    hosts:
+                      description: |-
+                        Hosts are the hosts an egress grant opens, for a request whose hosts
+                        are named at approval (hostsAtApproval): each one name, lower case,
+                        with a port where it is not 443. Ignored for any other request.
+                      items:
+                        maxLength: 259
+                        pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$
+                        type: string
+                      maxItems: 64
+                      type: array
+                      x-kubernetes-list-type: set
                     install:
                       description: |-
                         Install names the Component this grant is for, which is the component's
@@ -1190,17 +1288,15 @@ spec:
                       type: string
                     reason:
                       description: |-
-                        Reason in the approver's words, not the profile's. The profile already
-                        said why it wants the privilege; this is why somebody agreed.
+                        Reason is a comment the approver may leave, in their own words. The
+                        profile already said why it wants the privilege.
                       maxLength: 2000
-                      minLength: 10
                       type: string
                   required:
                   - approvedAt
                   - approver
                   - install
                   - privilege
-                  - reason
                   type: object
                 maxItems: 256
                 type: array
@@ -1227,12 +1323,6 @@ spec:
                       a runaway container. Sell RequestsCPU.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
-                  maxApps:
-                    description: MaxApps is the maximum number of apps this tenant
-                      may install.
-                    format: int32
-                    minimum: 1
-                    type: integer
                   maxPods:
                     description: MaxPods caps the number of pods in the tenant namespace
                       (init Jobs + app workloads).
@@ -1413,28 +1503,31 @@ spec:
                 items:
                   description: |-
                     TenantSignInFrom is another tenant of this cluster whose people sign in to
-                    this one with their account there, and the groups of this tenant they are
-                    in for it. It takes both tenants: this one names the other here, and the
+                    this one with their account there, and the positions of this tenant they
+                    are given for it. It takes both tenants: this one names the other here, and the
                     other names this one in its spec.signInTo. Either alone opens nothing.
 
                     The platform makes, in the other tenant's realm, the client this realm
                     signs in with (authenticated by a JWT this realm signs: no secret), and in
                     this realm an identity provider, tenant-<other>, that trusts the other
-                    realm's verified addresses and puts each person who arrives in the groups
-                    named, at every sign-in. An account that is already here under the same
+                    realm's verified addresses; the operator gives each person who arrives
+                    the positions named. An account that is already here under the same
                     address is linked only once its owner proves it.
                   properties:
-                    groups:
+                    positions:
                       description: |-
-                        Groups are the groups of this tenant its people are in: a name of
-                        spec.groups, or members (the tenant's members, who may enter it). The
-                        tenant's administrators and its perimeter approvers are never given
-                        this way.
+                        Positions are the positions of this tenant its people are given when
+                        they arrive: user (a person of the tenant, who may enter it) or a
+                        name of spec.positions. The positions of the tenant's and of its
+                        apps' administrators are never given this way.
                       items:
                         pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                         type: string
                       maxItems: 16
                       type: array
+                      x-kubernetes-validations:
+                      - message: an administrator's position is not given by a sign-in
+                        rule: self.all(p, !(p in ['app-administrator', 'tenant-administrator']))
                     tenant:
                       description: Tenant is the other tenant.
                       maxLength: 63
@@ -1528,6 +1621,47 @@ spec:
                     - required
                     - waived
                     type: string
+                  sessionMaxHours:
+                    description: |-
+                      SessionMaxHours is how long a sign-in through one of this tenant's
+                      token entries lasts before the person signs in again. Unset, it is 4
+                      hours (DefaultTokenEntrySessionHours). Longer takes effect only on a
+                      cluster whose claim allows tenants the choice
+                      (spec.tokenEntries.tenantsMayExtendSessions), and never past the
+                      tenant's own sign-in (spec.session.maxHours); a profile that states a
+                      shorter sessionMaxAge keeps it. A program keeps what renews its tokens
+                      on the person's computer, so this bounds what a copy of it is worth.
+                    format: int32
+                    maximum: 24
+                    minimum: 1
+                    type: integer
+                type: object
+              trustedDomains:
+                description: |-
+                  TrustedDomains are domains outside the cluster trusted for this
+                  tenant alone, beside those the cluster trusts
+                  (PlatformSecurityPolicy spec.trustedDomains).
+                properties:
+                  delegated:
+                    description: |-
+                      Delegated says the tenant's perimeter approver may add and remove
+                      domains for this tenant. Off unless the cluster's administrator turns
+                      it on; a tenant's administrator cannot. While it is off, Domains
+                      answers nothing.
+                    type: boolean
+                  domains:
+                    description: |-
+                      Domains are trusted for this tenant: an egress request of one of its
+                      installs that names hosts is granted without a further answer when
+                      every host is in a domain listed here or in the cluster's list, or
+                      under one.
+                    items:
+                      maxLength: 253
+                      pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
                 type: object
             required:
             - displayName
@@ -1609,19 +1743,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              defaultGrantedApps:
-                description: |-
-                  DefaultGrantedApps lists the apps whose default grant
-                  (spec.apps[].defaultGrant) has been applied: the tenant's members at
-                  that moment were added to the app's group. An app listed here is not
-                  granted again, which is what keeps a person removed from the group
-                  since then removed. An entry leaves the list when the app is
-                  uninstalled or no longer declares the grant, so declaring it again
-                  applies it again.
-                items:
-                  type: string
-                type: array
-                x-kubernetes-list-type: set
               domain:
                 description: |-
                   Domain is the custom domain a TenantDomain binds this tenant to, copied

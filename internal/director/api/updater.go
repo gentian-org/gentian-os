@@ -53,6 +53,7 @@ func (s *Server) startUpdater() {
 			case <-t.C:
 				s.runLatestMoves(ctx)
 				s.runReleaseMove(ctx)
+				s.runComesWith(ctx)
 			}
 		}
 	})

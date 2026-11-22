@@ -15,7 +15,9 @@ SPDX-License-Identifier: MPL-2.0
 package dispatcher
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -77,6 +79,27 @@ type Runnable struct {
 	// image is pulled with, by name: the cluster's own, then those of the
 	// repositories the tenant declared.
 	PullSecrets []string `json:"pullSecrets,omitempty"`
+	// Credentials is the Secret of the tenant's namespace for runs that
+	// holds the credentials a person set for an installed action, by name:
+	// one file per credential. A run's pod is given its files to read, at
+	// CredentialsPath. Empty for an action that asks for none; a caller's
+	// own run never has one.
+	Credentials string `json:"credentials,omitempty"`
+	// Schemas names the entry of the table's Schemas that says what a run of
+	// an installed action takes and returns. Empty for an action that
+	// states neither; a caller's own run has none.
+	Schemas string `json:"schemas,omitempty"`
+	// HostAliases are the entries of the pod's host table: each host outside
+	// the cluster an installed action was granted, at the address of that
+	// host's Service on the gateway for outgoing connections. A caller's own
+	// run never has one.
+	HostAliases []HostAlias `json:"hostAliases,omitempty"`
+}
+
+// HostAlias is one line of a run's host table.
+type HostAlias struct {
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
 }
 
 // Ref is the image a pod names: the repository at the digest.
@@ -119,6 +142,38 @@ type Tenant struct {
 type Table struct {
 	Callers []Caller `json:"callers"`
 	Tenants []Tenant `json:"tenants"`
+	// Schemas are what installed actions take and return, each stated once
+	// however many tenants installed the action, under a name made from what
+	// it says. An action names its entry (Runnable.Schemas).
+	Schemas map[string]Schemas `json:"schemas,omitempty"`
+}
+
+// Schemas are the JSON Schemas of what a run of an action takes and returns,
+// as the action's profile states them. The dispatcher passes them on to a
+// caller that asks what it may run and checks nothing against them.
+type Schemas struct {
+	Inputs  json.RawMessage `json:"inputs,omitempty"`
+	Outputs json.RawMessage `json:"outputs,omitempty"`
+}
+
+// Hold keeps an action's schemas in the table and answers with the name an
+// action refers to them by: empty where the action states neither. The same
+// schemas are kept once, so the table grows with the actions there are and
+// not with the tenants that installed them.
+func (t *Table) Hold(inputs, outputs []byte) string {
+	if len(inputs) == 0 && len(outputs) == 0 {
+		return ""
+	}
+	sum := sha256.New()
+	sum.Write(inputs)
+	sum.Write([]byte{0})
+	sum.Write(outputs)
+	name := hex.EncodeToString(sum.Sum(nil))[:16]
+	if t.Schemas == nil {
+		t.Schemas = map[string]Schemas{}
+	}
+	t.Schemas[name] = Schemas{Inputs: inputs, Outputs: outputs}
+	return name
 }
 
 var (
@@ -145,6 +200,9 @@ func (r Runnable) check() error {
 		if !secretName.MatchString(secret) {
 			return fmt.Errorf("%s is pulled with %q, which is not a Secret's name", r.Name, secret)
 		}
+	}
+	if r.Credentials != "" && !secretName.MatchString(r.Credentials) {
+		return fmt.Errorf("%s is given the credentials in %q, which is not a Secret's name", r.Name, r.Credentials)
 	}
 	return nil
 }
@@ -180,6 +238,11 @@ func ParseTable(raw []byte) (*Table, error) {
 		if err := unique("tenant "+tenant.Tenant, tenant.Actions); err != nil {
 			return nil, fmt.Errorf("the dispatcher's table: %w", err)
 		}
+		for _, action := range tenant.Actions {
+			if _, held := t.Schemas[action.Schemas]; action.Schemas != "" && !held {
+				return nil, fmt.Errorf("the dispatcher's table names schemas for %s of tenant %s that it does not hold", action.Name, tenant.Tenant)
+			}
+		}
 	}
 	seen := map[string]bool{}
 	for _, c := range t.Callers {
@@ -200,6 +263,11 @@ func ParseTable(raw []byte) (*Table, error) {
 		}
 		if err := unique(who, c.Own); err != nil {
 			return nil, fmt.Errorf("the dispatcher's table: %w", err)
+		}
+		for _, own := range c.Own {
+			if own.Credentials != "" {
+				return nil, fmt.Errorf("the dispatcher's table gives %s's own run %s credentials: only an installed action has them", who, own.Name)
+			}
 		}
 	}
 	return t, nil

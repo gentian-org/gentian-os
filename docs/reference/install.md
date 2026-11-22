@@ -687,7 +687,11 @@ commit has not been published yet, the preflight says so rather than leaving
 the cluster on an older image. The tag the installer resolved is written into
 the operator's Argo CD Application as an inline value, which Argo CD ranks
 above `image.tag` in `clusters/<cluster>/kernel/values.yaml`; pre-flight
-checks that both tags exist and says when they differ. `PORTAL_IMAGE_TAG`
+checks that both tags exist and says when they differ. It checks them for
+every image CI builds from the operator's commit, not only the operator's:
+the Keycloak event listener and the storage tools are pinned to the same tag
+and published by separate jobs, so one can be missing while the operator's
+exists. `PORTAL_IMAGE_TAG`
 names the branch whose charts are installed for the platform's own apps (the
 desktop, the administration console, the sign-in page, the App Store app).
 

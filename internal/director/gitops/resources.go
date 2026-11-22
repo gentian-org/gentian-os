@@ -149,14 +149,33 @@ func writeTenantPlan(manifest, tenant string, plan Plan, meta Meta) ([]string, e
 		return nil, err
 	}
 	listed, kustomizationChanged := ensurePatchListed(string(kustomization), ResourcePlanFile)
+	// Moving the tenant answers its request, whichever plan it asked for:
+	// the request goes in the same commit.
+	requestPath := filepath.Join(dir, PlanRequestFile)
+	_, requestErr := os.Stat(requestPath)
+	if requestErr != nil && !errors.Is(requestErr, os.ErrNotExist) {
+		return nil, requestErr
+	}
+	requested := requestErr == nil
+	listed, unlisted := removeListed(listed, PlanRequestFile, listPatch)
+	kustomizationChanged = kustomizationChanged || unlisted
 
-	if samePlan(string(existing), desired) && !kustomizationChanged {
+	if samePlan(string(existing), desired) && !kustomizationChanged && !requested {
 		return nil, nil
 	}
-	if err := os.WriteFile(patchPath, []byte(desired), 0o644); err != nil {
-		return nil, err
+	files := []string{}
+	if !samePlan(string(existing), desired) {
+		if err := os.WriteFile(patchPath, []byte(desired), 0o644); err != nil {
+			return nil, err
+		}
+		files = append(files, patchPath)
 	}
-	files := []string{patchPath}
+	if requested {
+		if err := os.Remove(requestPath); err != nil {
+			return nil, err
+		}
+		files = append(files, requestPath)
+	}
 	if kustomizationChanged {
 		if err := os.WriteFile(kustomizationPath, []byte(listed), 0o644); err != nil {
 			return nil, err
@@ -191,11 +210,6 @@ func withoutSetBy(text string) string {
 // as null, which is how a strategic merge removes a key. Omitting them would
 // leave whatever the manifest had, and the tenant would run on a ceiling that
 // is neither the manifest's nor the plan's but a mixture priced as the plan.
-//
-// maxApps is not among them, deliberately. A plan is a quantity of capacity,
-// the fields that become ResourceQuota keys, and maxApps becomes none: the
-// Tenant webhook enforces it against spec.apps. A plan change nulling it
-// would quietly delete a cluster's app cap, which no purchase should do.
 func renderResourcePlan(tenant string, plan Plan, meta Meta) string {
 	var b strings.Builder
 	b.WriteString("# Managed by the director: this tenant's resource plan, chosen in the\n")

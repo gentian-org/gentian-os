@@ -181,9 +181,9 @@ func questionOf(checker *Checker, req checkRequest) (question, int, string) {
 }
 
 // breakGlassQuestion is the break-glass question: does a person of the
-// platform tenant hold break_glass on the cluster -- through the realm's
-// group, or by name until the time their entry ends, after which the store
-// no longer holds the tuple.
+// platform tenant hold break_glass on the cluster -- by name, on the
+// Cluster claim, until the time their entry ends, after which the store no
+// longer holds the tuple.
 func breakGlassQuestion(checker *Checker, req checkRequest, user string) (question, int, string) {
 	if checker.BreakGlass == nil {
 		return question{}, http.StatusForbidden, "this key does not ask the break-glass question"

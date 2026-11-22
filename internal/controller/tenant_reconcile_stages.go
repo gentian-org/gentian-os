@@ -24,6 +24,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
@@ -122,11 +123,9 @@ type tenantReconcileState struct {
 	mailResult      ctrl.Result
 	appsResult      ctrl.Result
 	privilegeResult ctrl.Result
-
-	// defaultGrantRetry is set when an app declaring defaultGrant has not
-	// been granted yet, so the reconcile is run again even when nothing else
-	// asks for it.
-	defaultGrantRetry bool
+	// firstAdministratorResult asks to be run again while the tenant's
+	// first administrator does not hold the position yet.
+	firstAdministratorResult ctrl.Result
 
 	// statusAtEntry is the Tenant status as this reconcile found it, so a
 	// short-circuit can tell a write that changes something from one that
@@ -214,9 +213,6 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 	// Finalize has a return per data-plane stage; the pacing applies to all of
 	// them, so it is applied to what finalize returns rather than at each one.
 	finalRes, finalErr := r.reconcileTenantStageFinalize(ctx, state)
-	if finalErr == nil && finalRes.RequeueAfter == 0 && state.defaultGrantRetry {
-		finalRes.RequeueAfter = defaultGrantRetryAfter
-	}
 	if finalRes.RequeueAfter > 0 {
 		finalRes.RequeueAfter = tenantConvergenceRequeue(state.tenant, finalRes.RequeueAfter, time.Now())
 	}
@@ -436,6 +432,36 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 	state.privilegeResult = privilegeResult
 
+	// The first administrator's position. Not a condition of the tenant: a
+	// tenant whose administrator cannot be given it yet is otherwise as
+	// ready as it is, and is asked again.
+	firstAdministrator, err := r.ensureFirstAdministrator(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("first administrator: %w", err)
+	}
+	state.firstAdministratorResult = firstAdministrator
+
+	// A tenant that stopped letting the cluster's administrators in takes
+	// back what they were given for coming in.
+	if err := r.ensureKernelEntryWithdrawn(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("kernel entry: %w", err)
+	}
+
+	// Who administers gives a second factor: the rule follows the rights
+	// store onto the realm's accounts. Only once the realm is there. A pass
+	// that fails is said and tried again at the next reconcile; it does not
+	// hold back what the tenant needs after it -- a realm that does not
+	// declare the mark yet must not stop the tenant's apps.
+	if apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionIdentityReady) {
+		kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
+		if err == nil {
+			err = r.ensureSecondFactorMarks(ctx, tenant, kc)
+		}
+		if err != nil {
+			log.FromContext(ctx).Error(err, "the second factor rule was not brought onto the realm's accounts", "tenant", tenant.Name)
+		}
+	}
+
 	// The model gateway, for the apps and the placed components that
 	// declared it -- and its removal from the ones that did not. After both
 	// kinds of Component exist: each holds its release, or runs without the
@@ -446,6 +472,14 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 	if _, err := r.ensureModelAccess(ctx, tenant, profiles); err != nil {
 		return ctrl.Result{}, fmt.Errorf("model access: %w", err)
+	}
+	// An app whose requirement is optional has its path to the gateway
+	// opened by whether its key is delivered, which the policies written
+	// earlier in this pass could not know yet.
+	if installsOptionalModelAccess(tenant, profiles) {
+		if err := r.ensureNetworkPolicies(ctx, tenant); err != nil {
+			return ctrl.Result{}, fmt.Errorf("network policies after model access: %w", err)
+		}
 	}
 
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {
@@ -543,9 +577,6 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	// A plan change that Argo CD has synced is recorded in the usage history
 	// here, before the status it is noted on is written.
 	r.recordResourcePlan(ctx, tenant)
-	// The same for an app installed for everyone: granted here, once, and
-	// noted on the status this writes.
-	state.defaultGrantRetry = r.applyDefaultGrants(ctx, tenant)
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -583,6 +614,10 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	if state.appsResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; apps still converging", "tenant", tenant.Name)
 		return state.appsResult, nil
+	}
+	if state.firstAdministratorResult.RequeueAfter > 0 {
+		logger.Info("tenant ready; its first administrator does not hold the position yet", "tenant", tenant.Name)
+		return state.firstAdministratorResult, nil
 	}
 	if state.privilegeResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; app privilege sync scheduled", "tenant", tenant.Name)

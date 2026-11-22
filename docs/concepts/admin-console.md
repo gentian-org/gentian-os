@@ -35,7 +35,7 @@ service's answer from OpenFGA.
 |---|---|
 | **director** | Everything that is declared state: a write is a commit to the deployments repository, authored as the person. Also actions that happen once (take an export, publish a notice, purge an app's data) |
 | **usher** | Reads of what the cluster holds: installed components and their state, resources, exports, notices |
-| **registrar** | People and groups. It holds one Keycloak credential per realm; the console holds none |
+| **registrar** | People and what they hold. It holds one Keycloak credential per realm; the console holds none |
 | **custodian** | Credentials a person sets: repository credentials, the backup identity |
 
 ### 1.1 Screens
@@ -44,10 +44,10 @@ service's answer from OpenFGA.
 |---|---|---|
 | **Tenants** (platform administrator) | Create, retire and purge tenants, issue a tenant administrator's activation link | director, registrar |
 | **Members** | List, invite, update, switch off, remove; password reset; require or remove an authenticator; mailboxes of removed people (§4.3a) | registrar |
-| **Groups** | Custom groups and who is in each group, the app groups included | registrar |
+| **Positions** | The three positions every tenant has and the tenant's own: what each holds, which positions it includes, who was given it | director (what a position is), registrar (who holds it) |
 | **Apps** | The tenant's installed apps. Per app: state, who has access and whether it is for everyone, integrations, what it asked of the platform and what was approved, public addresses and their approval, uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([store-contract.md](store-contract.md) §8) | director, usher |
 | **Resources** | Plan, ceiling, usage history (§4.8) | usher (read), director (write) |
-| **Export** | Take one export now; download or delete the exports a person started. Scheduled backups are not listed | usher (read), director |
+| **Export** | Take one export now; download or delete the exports a person started. Scheduled backups are not listed. What is exported before an app update: the tenant's backup policy's `beforeMove` ([versioning.md](versioning.md) §5), read-only when the cluster allows tenants no policy of their own | usher (read), director |
 | **Security** | The realm's password, session and lockout policy (§4.5) | director |
 | **Integrations** | What the tenant's apps consume from each other, and the grants | director |
 | **Credentials** | Repository credentials, backup identity | custodian, director |
@@ -55,7 +55,7 @@ service's answer from OpenFGA.
 | **Audit** | Changes to declared state, from git (§4.7) | director |
 | **Cluster settings**, **Platform security**, **Customization**, **Usage Statistics** (platform administrator) | The Cluster claim's settings, permitted waivers, customization debt, the last usage statistics report | director |
 | **Role holders** (platform administrator) | Who holds `cluster#security_officer` or `cluster#auditor` by name: a picker over every tenant's administrators and a role, the holders as the Cluster claim declares them (§7) | registrar (the picker), director |
-| **Approvals** (security officer; the console of the officer's own tenant) | Every tenant's app requests of a privilege that weakens what protects the node — pod-security waivers, cluster roles — with the profile's reason and who asked for it; Approve with a reason. The list is the usher's (`GET /v1/clusters/{c}/approvals`, `can_approve` or `can_configure`); the approval is the director's privilege route, decided by the kind ([store-contract.md](store-contract.md) §8) | usher (read), director |
+| **Approvals** (security officer; the console of the officer's own tenant) | Every tenant's app requests of a privilege that weakens what protects the node — pod-security waivers, cluster roles — with the profile's reason and who asked for it; Approve, with a comment if the officer leaves one. The list is the usher's (`GET /v1/clusters/{c}/approvals`, `can_approve` or `can_configure`); the approval is the director's privilege route, decided by the kind ([store-contract.md](store-contract.md) §8) | usher (read), director |
 | **Models** (platform administrator) | The models the model gateway offers, which are the Cluster claim's: providers and their models, the models the cluster serves itself, the two serving switches, and the switch for the gateway's own console. Each model is flagged when it cannot answer. No token is entered here (§6a) | director; custodian (read, for the token's state) |
 | **Catalogs** | Hidden. The cluster renders no catalog of its own; the screen is kept and not linked |
 
@@ -89,7 +89,7 @@ relays an identity the edge established.
 | Interface | Where | For whom | Shows | Does |
 | --- | --- | --- | --- | --- |
 | **Desktop** | on the cluster, per tenant | everyone | the tiles the signed-in person may open: the usher's answer (`GET /v1/tenants/{t}/tiles`), filtered for the caller before it arrives | opens them. Nothing else: no install, uninstall, add-on, access, repository or store logic |
-| **Administration console** (this document) | on the cluster, per tenant | administrators | people and groups, policies, resources, credentials, and under **Apps** every installed app: its state, who has access and whether it is for everyone, its integrations, its privileges | administers: gives and takes away access, sets "for everyone", approves privileges, uninstalls, purges. It installs nothing and lists no catalog |
+| **Administration console** (this document) | on the cluster, per tenant | administrators | people and positions, policies, resources, credentials, and under **Apps** every installed app: its state, who holds which role on it and which positions it is given to, its integrations, its privileges | administers: gives and takes away access, sets "for everyone", approves privileges, uninstalls, purges. It installs nothing and lists no catalog |
 | **App Store app** ([store-contract.md](store-contract.md) §6) | on the cluster, per tenant; absent where the cluster offers no store | people who may install apps in the tenant | the store's data, at once and with no store account: apps, descriptions, pictures, reviews, evaluations and reports, versions, list prices. Signed in at the store: what the tenant has acquired | acquires from the store, which is what the sign-in to the store is for; installs through the director and sets the repository credential through the custodian |
 | **The store** ([store-contract.md](store-contract.md) §1) | outside the cluster, run by a vendor | — | nothing on the cluster. It serves data to the App Store app: the catalog to anyone who asks, with no token; a tenant's standing and acquisitions to a person signed in to it | data and commerce only. It never calls the cluster |
 | **Operations Console** | on the cluster, where installed | whoever looks after the cluster | an add-on's own screens ([data-ownership.md](data-ownership.md) §5) | what the add-on does; it is not part of the OS |
@@ -130,7 +130,7 @@ Tenant isolation rests on two independent layers (see [security/design.md](../se
 Keycloak Organizations (one realm, logical tenants) are not used: they share
 one user database. See [iam.md §1](iam.md#1-identity-topology-keycloak-native).
 
-Authority in the console is not read from a token's groups. Which screens a
+Authority in the console is not read from a token. Which screens a
 person gets is decided from two answers of the director: the verbs they hold
 on the tenant and on the cluster. Every relayed call is checked again by the
 service that receives it.
@@ -146,7 +146,7 @@ administrative paths live in the two interfaces only administrators are
 served: this console and the App Store app, which an administrator's tiles
 lead to. The desktop does not know what an administrator is: the usher's
 answer comes back already filtered for the caller, and `can_launch` derives
-from the app's own entitlement group, not from tenant membership. Its AI
+from a role on the app, not from being a person of the tenant. Its AI
 widget calls the model gateway with the desktop component's own granted
 credential, an `llm` requirement of its profile, never a master key.
 
@@ -154,17 +154,17 @@ credential, an `llm` requirement of its profile, never a master key.
 
 ## 3. Identity topology
 
-Realms, sign-in, the group names and the member/administrator split are
+Realms, sign-in, roles and positions are
 described once, in [iam.md §1.1–§1.3](iam.md#1-identity-topology-keycloak-native).
 What the console relies on:
 
-- People and groups of a tenant are in the tenant's own realm; the platform
+- A tenant's people are in the tenant's own realm; the platform
   tenant's are in the `kernel` realm.
 - The login name is the email address. `gentian.inviteEmail` is an optional
   second address used for the invitation, password reset and recovery.
-- Administrator and member are separate accounts: `can_use` on an app excludes
-  a tenant's administrators, so an administrator's desktop shows administration
-  tiles and a member's shows apps.
+- The position Tenant administrator holds no role on any app, so an
+  administrator's desktop shows administration tiles, and app tiles only
+  for apps the account was given a role on.
 
 ---
 
@@ -191,9 +191,9 @@ requests, which are the tenant's perimeter approver's (`can_approve_privilege`).
 - **Platform administrator.** The installer creates `admin@<KERNEL_DOMAIN>` in
   the kernel realm with no password and issues a single-use activation link
   (`./install.sh --activate-admin` for a new one).
-- **Tenant administrator.** Provisioning creates the realm, its groups and the
-  administrator account (`status.adminEmail` on the Tenant), a member of
-  `gentian:tenant:<t>:admins`, with no password. The registrar issues the
+- **Tenant administrator.** Provisioning creates the realm and the
+  administrator account (`status.adminEmail` on the Tenant), with no
+  password; the operator gives it the position Tenant administrator. The registrar issues the
   activation link: `kubectl gentian tenants activate-admin <tenant>`, or the
   *Tenants* screen.
 
@@ -213,9 +213,9 @@ requests, which are the tenant's perimeter approver's (`can_approve_privilege`).
 No password is derived, stored or printed for either ([iam.md §1.4](iam.md)).
 
 **Inviting a member.** *Members* → *Invite*: address, name, optional recovery
-address, the app groups to join (an app installed for everyone is preselected).
-The registrar creates the account with no password, always in the tenant's
-`members` group (entering the tenant takes it), and has Keycloak mail a link
+address, the positions to give. The registrar creates the account with no
+password, always gives the position User (entering the tenant takes it),
+and has Keycloak mail a link
 with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
 
 ### 4.3 Password reset and recovery
@@ -351,21 +351,27 @@ records who published it. Notices are stored in the tenant's own database,
 in the table the desktop reads; the console keeps no copy and reads the
 history through the usher.
 
+The desktop also provides the contract `notices`: a component of the tenant
+that the administrator granted the contract to puts a notice in the inbox of
+the people or positions it names, with the contract's credential. The route
+is reached from inside the cluster only: the edge does not route it.
+
 ---
 
 ## 6. App access
 
-Who may use an installed app is membership of the app's Keycloak group,
-`gentian:tenant:<t>:app:<profile>`, and nothing else. The console sets it: per
-person on *Members*, per group on *Groups*, and on *Apps* whether the app is
-for everyone. How membership becomes a decision at the front door and a tile
-on the desktop is [iam.md §1.6](iam.md).
+Who may use an installed app is who holds a role on it, and nothing else.
+The console sets it: at install and on *Apps*, the positions the app is
+given to; on *Positions*, who holds each position and which roles it holds;
+on a person's page, their positions and any single role given beside them.
+The *Access* page shows what a person, a position or an app holds and
+through what. How a role becomes a decision at the front door and a tile on
+the desktop is [iam.md §1.6](iam.md).
 
 **Accounts inside apps.** The platform does not create or remove a person's
-account in an app; an app makes one at the person's first sign-in. The one
-thing synchronized is who administers an app: members of
-`gentian:tenant:<t>:app-admins` are given the administrator role an app's
-profile declares (`spec.hooks.provisioning`, [iam.md §1.8](iam.md)).
+account in an app; an app makes one at the person's first sign-in. What an
+app is told is which roles the person holds on it
+([iam.md §1.8](iam.md)).
 
 ---
 
@@ -403,13 +409,12 @@ follow that commit.
 
 ## 7. Platform roles
 
-Which Keycloak group holds `admin` and `breakGlass` is stated on the Cluster
-claim (`spec.platformRoles`; `admin` defaults to `gentian:platform:admin`,
-`breakGlass` has no holder unless a group is named). The operator projects it
-into OpenFGA. Who is in those groups is not changed from this console by
-hand: the registrar refuses every write to a platform role's group and to its
-members. Every other cluster role -- security officer, auditor, service
-admin, shared-apps admin, perimeter approver -- is held by name: the *Role
+Every cluster role -- administrator, break-glass, security officer, auditor,
+service admin, shared-apps admin, perimeter approver -- is held by name on
+the Cluster claim, and the operator projects it into OpenFGA. While the
+claim names no administrator, the account the install made holds that role.
+The registrar refuses every write to the account of a platform-tenant
+person who holds a cluster role. The *Role
 holders* page lists the candidates (every person of the platform tenant and
 every other tenant's administrators), the cluster's administrator picks one,
 a role and a reason, optionally an expiry, and the director commits the
@@ -430,7 +435,7 @@ that on (*Security* → *Platform administrators may enter this tenant*,
 These stay outside the console:
 
 - Installing apps (the App Store app, or the command line)
-- Scheduled backups, the backup policy and its destinations (the Operations Console)
+- Scheduled backups, the backup policy's destinations and keys (the Operations Console)
 - Editing NetworkPolicy, Kyverno policy or other MAC rules
 - Authoring a `ComponentProfile` or a catalog
 

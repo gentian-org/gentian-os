@@ -45,6 +45,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o run-program ./cmd/
 # to. Its own process and ServiceAccount, so the identity that can write a
 # secret is not shared with anything that can read one.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o custodian ./cmd/custodian
+# The confidant: what keeps secrets of a person for the components that act
+# for them (cmd/confidant).
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o confidant ./cmd/confidant
 
 # The registrar: what keeps the list of people at Keycloak. Its own process
 # and ServiceAccount, so the credential that manages who may sign in is not
@@ -58,6 +61,17 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o arbiter ./cmd/arbi
 
 # vault-migrator: what a release changes in the vault, run once per release.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o vault-migrator ./cmd/vault-migrator
+
+# homesync: keeps the calendars and contacts the tenant's apps keep of their
+# own equal to the tenant's home. One per tenant, placed in its namespace.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o homesync ./cmd/homesync
+
+# porter: the platform's file dialog. One per tenant, placed in its namespace.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o porter ./cmd/porter
+
+# liaison: keeps a person's sign-ins at services outside the cluster. One in
+# a tenant that has an app which comes with it.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o liaison ./cmd/liaison
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
@@ -77,7 +91,11 @@ COPY --from=builder /workspace/usher /usher
 COPY --from=builder /workspace/dispatcher /dispatcher
 COPY --from=builder /workspace/run-program /run-program
 COPY --from=builder /workspace/custodian /custodian
+COPY --from=builder /workspace/confidant /confidant
 COPY --from=builder /workspace/registrar /registrar
+COPY --from=builder /workspace/homesync /homesync
+COPY --from=builder /workspace/porter /porter
+COPY --from=builder /workspace/liaison /liaison
 COPY --from=builder /workspace/arbiter /arbiter
 COPY --from=builder /workspace/vault-migrator /vault-migrator
 

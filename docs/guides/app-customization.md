@@ -243,7 +243,12 @@ opened is the gateway's port and nothing else in its namespace, so a profile
 that declares `llm` does not name `system-llm` in
 `gentianos.io/kernel-egress-namespaces`. On a cluster that serves no models
 the app is not installed: its Component waits and says the cluster has no
-model gateway. An app that keeps the key somewhere of its own on first start
+model gateway. An app that also runs without models declares `llm: {optional:
+true}`: while the cluster serves none, or its key is not delivered yet, it is
+installed without the two values, without `LLM_BASE_URL` and `LLM_API_KEY`
+and without a path to the gateway, and is rendered again when the key
+arrives. Its chart's defaults for the two values are what tell it there is no
+gateway. An app that keeps the key somewhere of its own on first start
 has to take it again when it changes -- the platform replaces a key at the
 gateway, it cannot reach into an app's database.
 
@@ -269,8 +274,7 @@ spec:
 `optional` is for such a component: while the cluster serves no models, or the
 key is not delivered yet, it is released without credentials and without a
 path to the gateway, `availableKey` receives `false`, and it is rendered again
-when the key arrives. For an app a tenant installs the requirement holds the
-release whether or not `optional` is set. Nobody uninstalls a placed
+when the key arrives. Nobody uninstalls a placed
 component, so its key goes when the tenant is deleted with its data, when the
 profile stops declaring `llm`, or when the platform takes the component away.
 
@@ -328,14 +332,10 @@ spec:
           model
             schema 1.1
           type user
-          type group
-            relations
-              define member: [user]
           type project
             relations
-              define owner: [user, group#member]
-              define viewer: [user, group#member, user:*] or owner
-        groups: mirror              # optional: keep the realm's groups in the store
+              define owner: [user]
+              define viewer: [user, user:*] or owner
         tuples:                     # optional: written by the platform
           - {user: "user:*", relation: viewer, object: "project:handbook"}
 ```
@@ -348,15 +348,8 @@ with the store and model taken from the key: `POST /v1/check`,
 `/v1/batch-check` (50), `/v1/list-objects`, `/v1/list-users`, `/v1/read`
 (pages of 100), `/v1/write` (100 tuples), `GET /v1/model`, each with
 `Authorization: Bearer <AUTHORIZATION_KEY>`; an unknown key is 401, and a key
-is limited to 100 calls a second. People are `user:<realm>/<subject>`. With
-`groups: mirror` the platform keeps every top-level group of the tenant's
-realm as `group:<realm>/<name>#member` (`:` in a name becomes `/`, so the
-tenant's members are `group:<realm>/gentian/tenant/<tenant>/members`); the
-model needs a `type group` with `define member: [user]`, and a store created
-after a membership was made holds it from that person's next change in the
-realm on. An app's key may not write a tuple whose object is a group (403);
-it gives its own objects to a group's members (`group:<realm>/<name>#member`
-as the user) as to a person. A starting tuple the profile drops is taken out again; what the app
+is limited to 100 calls a second. People are `user:<realm>/<subject>`.
+A starting tuple the profile drops is taken out again; what the app
 wrote is never touched. The store is the tenant's data: exported, restored
 into a fresh store, kept on uninstall and deleted by a purge.
 
@@ -367,6 +360,43 @@ and it hard-codes an assumption about where the service lives. `${SMTP_HOST}`,
 a placeholder reaches the cluster verbatim. The identity placeholders
 (`${TENANT_ID}`, `${TENANT_DOMAIN}`, `${TENANT_NAMESPACE}`, `${KERNEL_DOMAIN}`,
 `${NODE_IP}`) are — those describe who the tenant is, not where a service lives.
+
+### 1.2 Declaring the app's roles
+
+Who may do what inside an app is the platform's to say
+([iam.md §1.2](../concepts/iam.md)), in the app's own words. A profile
+declares what each role is called inside the app:
+
+```yaml
+spec:
+  roles:
+    claim: gentian_app_roles         # the default
+    user:
+      inApp: [base.group_user]
+    admin:
+      inApp: [base.group_system]
+    declared:
+      - name: sales-manager
+        title: Sales manager
+        includes: [salesperson]
+        inApp: [sales_team.group_sale_manager]
+      - name: salesperson
+        inApp: [sales_team.group_sale_salesman]
+```
+
+- `user` and `admin` are roles every app has; `declared` are the roles
+  between them. `admin` holds them all.
+- The app reads two claims from its sign-in token: `claim`, the in-app names
+  of the roles the person holds, and `<claim>_mapped`, every in-app name the
+  profile lists. It gives the first, takes the rest of the second, and
+  leaves alone what is in neither.
+- An add-on declares its own roles; they reach the token of the app it is
+  activated in.
+- An app that cannot read a token is told through its sync Job
+  (`spec.hooks.provisioning.syncJob`) or the sign-in sidecar (§2.3a).
+
+How the token is written and what happens when a role is taken away is in
+[iam.md §1.8](../concepts/iam.md).
 
 ---
 
@@ -540,6 +570,164 @@ whole. Once no granted target answers the contract (the target removed, the gran
 address is emptied again and the password kept. The granted capabilities are recorded and not
 enforced, and the target is not told which app is calling. What a consumer may do there is the target's to check.
 
+**A home, called as the person.** For files, calendars and contacts a tenant has one home each:
+the provider of `file-store` (WebDAV), `calendar-store` (CalDAV) or `contacts-store` (CardDAV)
+that every consumer of the contract is bound to. Where several installed apps provide one, the
+tenant names its home in `spec.homes` (`{calendar-store: nextcloud-base-ce}`); otherwise the first
+provider by name is bound. A consumer that reads and writes there as the person it acts for marks
+the integration `asPerson: true` and publishes the keys it signs statements with
+(`requires.services.vouching.keys`, below). It needs no more than `trustTier: certified`:
+
+```yaml
+spec:
+  integrations:
+    - {contract: calendar-store, asPerson: true}
+    - {contract: contacts-store, asPerson: true}
+  requires:
+    services:
+      vouching:
+        keys: {service: odoo-keys, port: 8069, path: /gentian/jwks}
+```
+
+- **The token.** The component asks the tenant's realm for a person's token with the scope
+  `home-<home's profile>` and gets one made out as the home's own sign-in makes them: the home's
+  sign-in client as audience and the claims of its OIDC pack. It is valid at the home and nowhere
+  else. Its client is given that scope only while the tenant's administrator grants the contract,
+  and a certified component's client is given no other app's scope.
+- **Who is covered.** A person is linked when they sign in to the component, with nobody asked:
+  the realm's `gentian-home-links` listener links them to the component's vouching entry while
+  the component has a home granted. From then on the component obtains their token whether they
+  are present or not.
+- **Only while the person is present.** An app that touches the home only while the person is at
+  its page (an editor that opens and saves their files) names no keys. It declares
+  `vouching: {exchange: true}` and `exchangeToken: true` on its gateway entry, and swaps the token
+  the edge hands it for the home's:
+
+  ```text
+  POST $VOUCHING_TOKEN_URL
+  grant_type=urn:ietf:params:oauth:grant-type:token-exchange
+  client_id=$VOUCHING_CLIENT_ID
+  client_secret=$VOUCHING_CLIENT_SECRET
+  subject_token=<the token in the request's Authorization header>
+  subject_token_type=urn:ietf:params:oauth:token-type:access_token
+  scope=<the home's scope, from homeScopeKey>
+  ```
+
+  Nobody is linked, and the realm believes nothing the app says about a person: it obtains a token
+  for whoever is signed in at its address at that moment and for nobody else, and that ends with
+  the person's session.
+- **What the component is told.** Per contract, under `valueMapping.integrations.<contract>`:
+  the home's address at `endpointKey`, and the scope to ask for at `homeScopeKey`. Both are values
+  of the chart, set while the contract is granted and left out otherwise:
+
+  ```yaml
+  valueMapping:
+    integrations:
+      file-store: {endpointKey: home.url, homeScopeKey: home.scope}
+  ```
+- **Paths.** The component never assumes the home's paths. For files the contract gives the root;
+  for calendars and address books it asks the home (`current-user-principal`, the home sets).
+
+**A file, asked of the person.** An app that needs a file of a person's and not their files asks
+the platform's file dialog, the porter, which every tenant has at `files.<tenant's domain>`. The
+person chooses in a window of the porter's own, and the app's page is handed what they chose and
+nothing else. The app gets no token for the home, and its server reaches no file.
+
+```yaml
+spec:
+  integrations:
+    - contract: file-store
+      dialog: [pick]        # pick, open, save
+```
+
+No `provider` and no `capabilities`: the tenant's file home answers, and the app reaches none of it.
+
+The app's page opens the window and the two speak by messages:
+
+```js
+const dialog = window.open("https://files.<tenant's domain>/dialog", "gentian-files", "popup,width=720,height=560");
+window.addEventListener("message", (ev) => {
+  if (ev.origin !== "https://files.<tenant's domain>" || ev.source !== dialog) return;
+  if (ev.data.gentianFiles === "ready") dialog.postMessage({gentianFiles: "ask", use: "pick"}, ev.origin);
+  if (ev.data.gentianFiles === "picked") attach(ev.data.file);   // {name, id, url}
+  // "cancelled": the person closed the window
+});
+```
+
+- **Which app asks** is the origin of the page that asks, as the browser states it: one of the
+  app's gateway entries. The dialog answers that origin and no other, and only for the uses the
+  tenant's administrator granted the app: each use is a capability of its file-store binding,
+  `dialog:pick`, `dialog:open`, `dialog:save`. A grant of these alone opens no network path to the
+  home and hands the app no key and no credential of it.
+- **A picked file** is its name, its id at the home and the address that opens it by that id.
+  Whoever follows the address is asked by the home, signed in as themselves; the address carries
+  the id and nothing of the file's path.
+- **A home is offered** when its profile says the three things WebDAV leaves open, with the
+  contract it provides:
+
+  ```yaml
+  spec:
+    provides:
+      - name: file-store
+        protocol: webdav
+        endpoint: {service: nextcloud, port: 8080, path: /remote.php/dav/}
+        files:
+          root: /files/{principal}/                        # where a person's files start
+          idProperty: "{http://owncloud.org/ns}fileid"     # the property that holds a file's id
+          open: {entry: web, path: "/f/{id}"}              # opens a file by its id
+  ```
+
+  `{principal}` is the last part of the address the home names as the person's principal
+  (`DAV:current-user-principal`).
+- **The porter** reaches the home as the person at its window and as nobody else, by the exchange
+  above. It is the platform's own and is given the tenant's file home with nobody asked.
+
+**An app that keeps a copy of its own.** An app whose pages read its own calendar or contacts
+tables (Odoo, ERPNext, a CRM) declares `homeSync`, and the tenant's home sync keeps those records
+equal to the home, per person who signs in to the app. The app writes no sync code: a driver for
+its framework speaks its API (`odoo`, Odoo's JSON-2), and the declaration says which records hold
+what:
+
+```yaml
+spec:
+  homeSync:
+    endpoint: {service: odoo, port: 8069}          # where the app's API answers
+    calendar:
+      driver: odoo
+      model: calendar.event
+      fields: {summary: name, description: description, location: location,
+               start: start, end: stop, allDay: allday, startDate: start_date, endDate: stop_date}
+      filter: [[partner_ids, in, ["$partner"]]]   # the person's records; $user, $partner
+      defaults: {user_id: "$user", partner_ids: [[4, "$partner"]]}
+    contacts:
+      driver: odoo
+      model: res.partner
+      fields: {name: name, email: email, phone: phone, mobile: mobile, organization: company_name}
+      filter: [[user_id, "=", "$user"]]
+      defaults: {user_id: "$user"}
+```
+
+- **The parts.** A calendar entry is `summary`, `description`, `location`, `start`, `end` (times),
+  `startDate`, `endDate` (the first and last day of an all-day entry), `allDay` and `rrule`; a contact
+  is `name`, `email`, `phone`, `mobile`, `organization`, `title`, `note`, `street`, `city`, `zip`,
+  `country` and `website`. A part the app has no field for is not written there, and what the home
+  keeps beyond the parts (alarms, attendees, other numbers) is kept. A mapped field the installed
+  app does not have (one an app release removed) is left out, with a warning in the home sync's log.
+- **The rules, the same for every app.** The home wins a conflict. A deletion goes both ways, except
+  that an entry changed at the home whose record was deleted in the app is made again in the app.
+  What is new on one side is made on the other. A person's calendar is the one the home names as
+  the default for new events (`schedule-default-calendar-URL`), else their first one whose entries
+  may be written; their contacts are their first address book. The tenant's
+  `spec.contactsBook` says whether contacts go to each person's own (`person`, the default) or to one
+  the tenant shares (`shared`, not kept yet). A recurring entry is kept with its rule, as one entry
+  at the home and, in Odoo, as one series: the driver shows the series' base event alone, writes a
+  change to every occurrence, and makes a series whose rule changed anew. Exceptions to single
+  occurrences of a recurring entry are not synced.
+- **As the person.** The home sync is a component of the platform's trust in every tenant. A person
+  who signs in to the app is linked to it (`gentian-home-links`), and it asks the realm for that
+  person's token for the app (`app-<profile>`) and for the home (`home-<profile>`). The app accepts
+  a token of the tenant's realm on its API; Odoo's `gentian_os` module does.
+
 **A companion that needs the Kubernetes API asks for a cluster role by name.** It cannot bring a
 role of its own: `requires.privileges.clusterRoles[]` names one of the roles the platform defines
 and the ServiceAccount the chart runs under, and the role is bound only where the cluster permits
@@ -591,7 +779,7 @@ The handler is the ConfigMap `<profile>.sign-in-handler` of the profile's bundle
 | | By | |
 |---|---|---|
 | Registers the sidecar at the tenant's realm | the operator | a SAML client named `https://<app host>/sso`, with one address its answer may be posted to, `https://<app host>/sso/acs`; the response and the assertion both signed; the person named by e-mail address |
-| Has the realm say who administers the app | the operator | one role at that client, `gentian-app-admin`, granted to the tenant's group `gentian:tenant:<tenant>:app-admins`, and a mapper that lists a person's roles at that client in the signed assertion. No other role is in the client's scope, and no group is named |
+| Has the realm say who administers the app | the operator | the platform's mapper on that client, which asks the rights store which roles the person holds on the app and lists them in the signed assertion as `Role`, in the names the profile gives them (`spec.roles`). A profile that names none gets `gentian-app-admin` for the app's administrator |
 | Runs the sidecar beside the app | the operator | one pod, with the handler from the bundle, told where the realm is. No service-account token, read-only, not root |
 | Hands the handler what was declared | the operator | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; `SECRET_<NAME>`; `APP_URL`. From this app's own vault paths; a profile names which, never where |
 | Routes two paths of the app's host to it | the operator | `/sso/login` as a rule of the app's own route, behind the session and the bouncer; `/sso/acs` on a route of its own with no session ([routing.md §4.1](../concepts/routing.md)) |
@@ -625,14 +813,11 @@ anybody in the app. So it runs only where it is known to be the reviewed file:
 `/sso/login`, which only a person the front door admits to this app reaches, and the answer the
 sidecar accepts has to be about that same person.
 
-**Who administers the app** is who holds the platform's **App Admin** role in that tenant, and
-nobody else: not the tenant's administrator for being that, and not the first person to open the
-app. The role is membership of the tenant's group `gentian:tenant:<tenant>:app-admins`. A tenant's
-administrator appoints somebody in the admin console — *Groups*, under *Roles*, the group
-`app-admins`: add the person; or the person's own page, under their groups — and withdraws it in
-the same place. It
-is one role per tenant, the one `provisioning.privilegedRole` already maps for other apps: who
-holds it administers every app of the tenant that maps it.
+**Who administers the app** is who holds the role `admin` on it, and nobody else: not the tenant's
+administrator for being that, and not the first person to open the app. A tenant's administrator
+gives it in the admin console: the position App administrator, which holds `admin` on every app,
+or the role on this one app, on the app's or the person's page
+([iam.md §1.2](../concepts/iam.md)).
 
 The realm states it in the assertion it signs; the sidecar reads it there and nowhere else — no
 header, no form field — and tells the handler (`person.appAdmin`). At every sign-in the handler
@@ -721,7 +906,7 @@ uninstalled app destroys it ([store-contract.md](../concepts/store-contract.md) 
 
 **Multi-tenancy is the sharp edge here.** An addon loaded into a shared runtime affects every
 tenant on that runtime. The existing Odoo pattern is the right precedent — per-tenant addon sets
-driven by group attributes (`gentianos.io/keycloak-group-attributes: {"gentianOdooModules":["crm"]}`)
+driven by the add-ons the tenant activated (`Tenant.spec.apps[].addons`)
 rather than per-tenant addon *binaries*. The framework makes this explicit:
 
 > **L3 rule (namespace test).** Per-tenant addons are allowed **only if the app instance runs in
@@ -947,7 +1132,7 @@ changes an approved entry from `none` to `app`, or adds
 either surface, may use one of the platform's names as its `subDomain` (or as
 the component's name, where it states none): `desktop`, `admin`, `store`,
 `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
-`account`, `accounts`, or anything below one (`x.admin`). `desktop`, `admin`
+`account`, `accounts`, `sync`, or anything below one (`x.admin`). `desktop`, `admin`
 and `store` are taken by the platform's own component for each and by nothing
 else; the others by nothing at all. Where the tenant's domain is the cluster's
 own -- the user tenant of a single-tenancy cluster -- the kernel's addresses
@@ -1273,15 +1458,15 @@ addon is activated only from a
 profile shown to be that build, and its base is held as it runs until it is.
 See [store-contract.md](../concepts/store-contract.md) §3 and §4.
 
-An addon is **entitled on its own**: its group is
-`gentian:tenant:<t>:app:<addon>` and its tile asks `can_launch` on
-`app:<t>/<addon>`. An addon for everyone is listed in
-`Tenant.spec.apps[].addonGrants` (`name`, `defaultGrant: true`) and is granted
-once per install like an app's `defaultGrant`; any other addon is given per
-person. The director's `PUT .../apps/{p}/addons` takes `"defaultGrant"` on an
+An addon is **an app of its own** in the rights store, with its own roles
+(`spec.roles` of its profile): its tile asks `can_launch` on
+`app:<t>/<addon>`, a role on it lets a person into its base, and the base's
+administrator administers it. An addon for everyone is listed in
+`Tenant.spec.apps[].addonGrants` (`name`, `defaultGrant: true`), which gives
+it to the position User; any other addon is given per position or person.
+The director's `PUT .../apps/{p}/addons` takes `"defaultGrant"` on an
 object entry (`{coordinate, digest, defaultGrant}` or `{name, defaultGrant}`),
-and needs `can_grant` for `true`. An addon installed with its app takes the
-app's choice; one added later is asked for on its own.
+and needs `can_grant` for `true`.
 
 **Editions** are `ce · me · ie · pe · ee`, and say *who maintains and supports
 the entry*, not who publishes it:

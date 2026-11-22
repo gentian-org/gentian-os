@@ -288,11 +288,11 @@ func TestAPreApprovalLeavesAnAdministratorsGrantAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	platform := gitops.Meta{Principal: "platform:placement"}
-	res, err := repo.PreApproveConsume(ctx, "demo", "store", "desktop-api", []string{"tiles", "read"}, platform)
+	res, err := repo.PreApproveConsume(ctx, "demo", "store", "desktop-api", []string{"tiles", "read"}, gitops.PreApprovedReason, platform)
 	if err != nil || res.Changed {
 		t.Fatalf("pre-approving a contract the grant names = %+v %v, want unchanged", res, err)
 	}
-	if res, err := repo.PreApproveConsume(ctx, "demo", "store", "calendar", []string{"read"}, platform); err != nil || !res.Changed {
+	if res, err := repo.PreApproveConsume(ctx, "demo", "store", "calendar", []string{"read"}, gitops.PreApprovedReason, platform); err != nil || !res.Changed {
 		t.Fatalf("pre-approving another contract = %+v %v, want changed", res, err)
 	}
 	grants := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/tenants/demo/"+gitops.GrantsFile)

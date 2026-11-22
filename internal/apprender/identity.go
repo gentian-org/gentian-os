@@ -11,28 +11,18 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
-	"encoding/json"
-	"fmt"
-	"strings"
-
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
-// renderIdentity registers the app at the tenant's realm: its entitlement
-// group, its own OIDC client with what hangs off it, each extension's own
-// client, and the sign-in sidecar's SAML client.
+// renderIdentity registers the app at the tenant's realm: its own OIDC
+// client with what hangs off it, each extension's own client, and the
+// sign-in sidecar's SAML client. Who may use the app is not registered
+// there: it is a role held in the rights store.
 func renderIdentity(in *Input, out *Rendered) error {
 	id := newIdentityScope(in)
-	// The entitlement group is how a tenant's administrator gives people an
-	// app they installed. Who may use a component the platform places is
-	// the platform's to say, and it has none.
-	if !in.Placed {
-		out.add(id.entitlementGroup())
-	}
 	out.add(id.appClient()...)
 	out.add(id.extensionClients()...)
 	out.add(id.tokenEntryClient()...)
@@ -120,72 +110,6 @@ func (id *identityScope) placeAll(uris []string) []string {
 // is. The realm objects are cluster-scoped, so the tenant makes them unique.
 func (id *identityScope) name(suffix string) string {
 	return id.tenant + "-" + id.in.App + "-" + suffix
-}
-
-// identityGroupName turns a Keycloak group path into the object name the
-// group is declared under (the groups Job's and tenant-default's rule).
-func identityGroupName(path string) string {
-	return strings.NewReplacer(":", "-", "_", "-", ".", "-").Replace(strings.ToLower(path))
-}
-
-// entitlementGroup is the app's entitlement group.
-//
-// Outside the OIDC client on purpose: an entitlement group is per app, not
-// per OIDC client, and a profile with no oidc block still has one.
-//
-// Here rather than in tenant-default because its attributes come from the
-// profile's gentianos.io/keycloak-group-attributes annotation, and a Group
-// declared without them would strip what the groups Job sets. Values are
-// strings: provider-keycloak splits a value on "##" into Keycloak's list, so
-// a list in the annotation is joined with "##". And the platform's mark,
-// which a realm import reads: a group carrying it is never made from a
-// bundle (internal/keycloak PlatformMarkerAttribute).
-func (id *identityScope) entitlementGroup() *unstructured.Unstructured {
-	path := keycloak.TenantAppGroup(id.tenant, id.in.App)
-	attrs := map[string]interface{}{}
-	if raw := id.in.ProfileAnnotations["gentianos.io/keycloak-group-attributes"]; raw != "" {
-		var parsed map[string]interface{}
-		if json.Unmarshal([]byte(raw), &parsed) == nil {
-			for k, v := range parsed {
-				attrs[k] = strings.Join(identityStrings(v), "##")
-			}
-		}
-	}
-	attrs["gentianos.io/managed-by"] = "platform"
-	return identityObject("group.keycloak.crossplane.io/v1alpha1", "Group", identityGroupName(path), map[string]interface{}{
-		"deletionPolicy": "Orphan",
-		"forProvider": map[string]interface{}{
-			"realmId":    id.realm,
-			"name":       path,
-			"attributes": attrs,
-		},
-		"providerConfigRef": identityProvider,
-	})
-}
-
-// identityStrings reads a JSON value as a list of strings, the way the
-// Composition's join read it: a list item by item, anything else as one.
-func identityStrings(v interface{}) []string {
-	str := func(v interface{}) string {
-		if s, ok := v.(string); ok {
-			return s
-		}
-		return fmt.Sprintf("%v", v)
-	}
-	switch v := v.(type) {
-	case nil:
-		return nil
-	case []interface{}:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if item != nil {
-				out = append(out, str(item))
-			}
-		}
-		return out
-	default:
-		return []string{str(v)}
-	}
 }
 
 // identityProvider is the provider config every realm object is written

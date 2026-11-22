@@ -138,6 +138,27 @@ func readBody(resp *http.Response) string {
 	return strings.TrimSpace(string(b))
 }
 
+// fastAnswerKey marks a context whose checks may be answered from OpenFGA's
+// caches.
+type fastAnswerKey struct{}
+
+// WithFastAnswer marks ctx so that the checks asked with it may be answered
+// from OpenFGA's caches, a few seconds behind the store (consistency
+// MINIMIZE_LATENCY). For what only shows: a desktop's tiles, the access
+// pages. Every other check reads the store as it is (HIGHER_CONSISTENCY),
+// so a right taken away is gone for it at once.
+func WithFastAnswer(ctx context.Context) context.Context {
+	return context.WithValue(ctx, fastAnswerKey{}, true)
+}
+
+// consistency is what a check asked with ctx tells OpenFGA.
+func consistency(ctx context.Context) string {
+	if fast, _ := ctx.Value(fastAnswerKey{}).(bool); fast {
+		return "MINIMIZE_LATENCY"
+	}
+	return "HIGHER_CONSISTENCY"
+}
+
 // Check asks whether user has relation on object in store, against model.
 //
 // It is stricter than Do: only a 200 is an answer, and a failure is a plain
@@ -151,9 +172,11 @@ func (c *Client) Check(ctx context.Context, store, model, user, relation, object
 			Object   string `json:"object"`
 		} `json:"tuple_key"`
 		AuthorizationModelID string `json:"authorization_model_id"`
+		Consistency          string `json:"consistency"`
 	}
 	body.TupleKey.User, body.TupleKey.Relation, body.TupleKey.Object = user, relation, object
 	body.AuthorizationModelID = model
+	body.Consistency = consistency(ctx)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return false, err
@@ -209,7 +232,8 @@ func (c *Client) BatchCheck(ctx context.Context, store, model string, checks []T
 	body := struct {
 		Checks               []item `json:"checks"`
 		AuthorizationModelID string `json:"authorization_model_id"`
-	}{AuthorizationModelID: model}
+		Consistency          string `json:"consistency"`
+	}{AuthorizationModelID: model, Consistency: consistency(ctx)}
 	for i, t := range checks {
 		body.Checks = append(body.Checks, item{
 			TupleKey:      tupleKey(t),

@@ -24,16 +24,23 @@ openfga:
     # (templates/externalsecret.yaml); the chart reads it into
     # OPENFGA_DATASTORE_URI by secretKeyRef.
     uriSecret: openfga-credentials
+    # The pool stays warm: a desktop's tiles are one batch of checks that
+    # fans out into hundreds of queries, and opening a connection per query
+    # after an idle spell costs more than the query.
     maxOpenConns: 30
-    maxIdleConns: 10
-    connMaxIdleTime: 30s
-    connMaxLifetime: 60s
+    maxIdleConns: 30
+    connMaxIdleTime: 5m
+    connMaxLifetime: 30m
     applyMigrations: true
     # initContainer runs `openfga migrate` before the server starts. waitForMigrations
     # must stay true — the chart only renders initContainers when it is true (job
     # waiter is gated separately on migrationType=job).
     migrationType: initContainer
     waitForMigrations: true
+  # A batch of checks answered within this, OpenFGA's default 3s being too
+  # short for a desktop's tiles on a slow datastore. The callers' own clients
+  # wait longer than this (internal/director/authz/authz.go).
+  requestTimeout: 10s
   grpc:
     enabled: true
   telemetry:
@@ -57,10 +64,27 @@ openfga:
   extraEnvVars:
     - name: OPENFGA_EXPERIMENTALS
       value: authzen
+    # The cache of raw entries a check reads, beside the cache of answers
+    # (checkQueryCache). Both serve only a request that asks for the fastest
+    # answer (consistency MINIMIZE_LATENCY): the desktop's tiles and the
+    # access pages. Every other check asks HIGHER_CONSISTENCY and reads the
+    # store as it is (internal/openfga, WithFastAnswer). The cache controller
+    # drops cached entries once the store changed.
+    - name: OPENFGA_CHECK_ITERATOR_CACHE_ENABLED
+      value: "true"
+    - name: OPENFGA_CHECK_ITERATOR_CACHE_TTL
+      value: 10s
+    - name: OPENFGA_CACHE_CONTROLLER_ENABLED
+      value: "true"
+  checkQueryCache:
+    enabled: true
+    ttl: 10s
+  # A desktop's tiles are one batch of checks that fans out into hundreds of
+  # dispatches at once; one CPU throttled it to seconds.
   resources:
     requests:
-      cpu: 50m
+      cpu: 250m
       memory: 128Mi
     limits:
-      cpu: "1"
+      cpu: "4"
       memory: 512Mi

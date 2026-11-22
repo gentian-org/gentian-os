@@ -69,11 +69,15 @@ spec:
             # Where Keycloak states a user's groups. The director runs in the
             # control namespace and is reached on the cluster network, never
             # through the edge: this is the kernel talking to itself.
-            # The provider jar is built from this repository, so it follows
-            # the same ref the manifests do. A tag of its own would let the
-            # jar and the values that configure it come from different commits.
+            # The provider jar is built from this repository and named by what
+            # it is built from: src-<hash of its sources>, which
+            # scripts/tools/listener-tag.sh prints and lint-listener-tag holds
+            # this line to. The jar and the values that configure it still
+            # come from the same commit, and a build that leaves the listener
+            # alone leaves Keycloak's pod alone: no restart, and no wait on an
+            # image a failed build never published.
             - name: global.eventListener.image
-              value: 'ghcr.io/gentian-org/keycloak-event-listener:gentian.os.revision.placeholder'
+              value: 'ghcr.io/gentian-org/keycloak-event-listener:src-701e03936ff5'
             # The OPERATOR's endpoint, not the director's. Who is in which
             # group is cluster state, so the thing that turns declared state
             # into cluster state projects it; the director reads the graph to
@@ -81,6 +85,11 @@ spec:
             # a tuple at all. The path is unchanged, so only the host moved.
             - name: global.eventListener.directorURL
               value: 'http://gentian-os-membership.ns.control.placeholder.svc.cluster.local:8090/v1/events/keycloak'
+            # Where the token hook asks which roles a person holds on the
+            # app they sign in to: the usher's own port for that question,
+            # in the control namespace, on the cluster network.
+            - name: global.eventListener.signInRolesURL
+              value: 'http://gentian-os-usher.ns.control.placeholder.svc.cluster.local:8083/v1/sign-in-roles'
             # The claim's mail.host, the relay Keycloak's realm sends through on
             # an external-mail cluster -- the same placeholder the mail
             # ApplicationSet fills. Without it keycloak-smtp-credentials had an

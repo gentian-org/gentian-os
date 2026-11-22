@@ -51,8 +51,12 @@ type Input struct {
 	ReleaseObject string
 	HelmRelease   string
 	// KeepVolumes names the ConfigMap the release reads its post-render patch
-	// from: the keep rule and the label rule.
+	// from: the keep rule, the label rule and the host rule.
 	KeepVolumes string
+	// HostAliases are the entries of the pods' host table: each host outside
+	// the cluster the component was granted, at the address of that host's
+	// Service on the gateway for outgoing connections.
+	HostAliases []HostAlias
 	// Composite names what the Composition named after the app's composite
 	// resource -- its OIDC clients' secrets in the provisioning namespace,
 	// which the clients read by that name, and its extensions' release
@@ -84,6 +88,10 @@ type Input struct {
 	// operator's: both reach the chart through ExtraValues, and nothing of
 	// either is read from the tenant's store.
 	Placed bool
+	// ModelAccessWithheld says the app's model gateway requirement is
+	// optional and not met: nothing of the gateway is read from the tenant's
+	// store, so the release and its hooks go without address and key.
+	ModelAccessWithheld bool
 
 	// What the component asks of its install beyond its profile.
 	PullSecrets        PullSecrets
@@ -97,10 +105,13 @@ type Input struct {
 	// Addons are the addons selected into this app, by the names the app
 	// knows them by.
 	Addons []string
-	// AdaptedAddons are, for an adapter whose profile names
-	// spec.adapter.addonsValuesPath, the IDs of the add-ons selected into the
-	// app it adapts; empty when there are none.
-	AdaptedAddons []string
+	// Roles is what the app's sign-in token says of a person's roles, nil
+	// for an app whose profile and add-ons name no role inside the app.
+	Roles *TokenRoles
+	// BridgedAddons are, for a bridge whose profile names
+	// spec.bridge.addonsValuesPath, the IDs of the add-ons selected into the
+	// app it connects; empty when there are none.
+	BridgedAddons []string
 	Replicas      *int64
 	ExtraValues   map[string]interface{}
 
@@ -120,6 +131,16 @@ type Input struct {
 	// now, by name. A few renders depend on them: an id the realm assigned,
 	// or an object that goes on being rendered once it exists.
 	Observed map[string]*unstructured.Unstructured
+}
+
+// TokenRoles is what an app's sign-in token carries of a person's roles.
+type TokenRoles struct {
+	// Claim is the claim the in-app names are written to.
+	Claim string
+	// InApp is what each role is called inside the app, by profile name --
+	// the app's own and each activated add-on's -- and by the role's name on
+	// the platform.
+	InApp map[string]map[string][]string
 }
 
 // PullSecrets are the tenant's pull Secrets this app's chart and images are
@@ -165,4 +186,10 @@ func (in *Input) extensionReleaseObject(extension string) string {
 // observed returns the object rendered before under this name, or nil.
 func (in *Input) observed(name string) *unstructured.Unstructured {
 	return in.Observed[name]
+}
+
+// HostAlias is one line of a pod's host table.
+type HostAlias struct {
+	IP       string
+	Hostname string
 }

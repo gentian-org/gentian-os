@@ -1,0 +1,20 @@
+# The image is the platform's own: the porter is one of its programs.
+image:
+  repository: ghcr.io/gentian-org/gentian-os
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# The Secret and the ConfigMap the platform writes for this component, by
+# their names (vouching-<profile> and the plan).
+vouchingSecret: vouching-porter
+planConfigMap: porter-plan
+
+port: 8080
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 24Mi
+  limits:
+    cpu: 500m
+    memory: 96Mi

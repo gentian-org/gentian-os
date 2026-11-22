@@ -11,13 +11,16 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
+
+// SignInAdminRole is the name the sign-in sidecar knows the app's
+// administrator by, in the Role attribute of the realm's answer.
+const SignInAdminRole = "gentian-app-admin"
 
 // signInSidecar is the sign-in sidecar's registration at the realm
 // (requires.services.identity.sidecar), for an app that can do neither OIDC
@@ -98,51 +101,31 @@ func (id *identityScope) signInSidecar() []*unstructured.Unstructured {
 
 	// Who administers the app. An app signed in to this way has no claim of
 	// its own to read, so the realm tells the sidecar in the signed answer
-	// whether the person is in the tenant's app administrators' group
-	// (internal/keycloak/groups.go): one role at the sidecar's client, that
-	// role granted to the group (exhaustive: false, adding one mapping), and
-	// a mapper listing the person's roles at this client as Role -- the name
-	// of the list the realm gives every SAML client by default.
-	// fullScopeAllowed is false above, so the list is that role or nothing.
-	//
-	// Orphan on all of them, and nothing is left behind by it: the realm
-	// removes a client's roles, their grants and its mappers with the
-	// client.
-	roleName := id.name("sign-in-admin-role")
-	adminsGroup := identityGroupName(keycloak.TenantAppAdminsGroup(id.tenant))
+	// which roles the person holds on it: the platform's mapper asks the
+	// rights store and lists them as Role, in the names the profile gives
+	// them. A profile that names none gets the one name the sidecar knows
+	// for the app's administrator.
+	inApp := map[string]map[string][]string{id.in.ProfileName: {"admin": {SignInAdminRole}}}
+	if id.in.Roles != nil && len(id.in.Roles.InApp) > 0 {
+		inApp = id.in.Roles.InApp
+	}
+	rolesJSON, _ := json.Marshal(inApp)
 	objs = append(objs,
-		identityObject("role.keycloak.crossplane.io/v1alpha1", "Role", roleName, map[string]interface{}{
+		// Named apart from the role-list mapper it took the place of: the
+		// provider does not change a mapper's kind in place.
+		identityObject("client.keycloak.crossplane.io/v1alpha1", "ProtocolMapper", id.name("sign-in-roles-mapper"), map[string]interface{}{
 			"deletionPolicy": "Orphan",
 			"forProvider": map[string]interface{}{
 				"realmId":         id.realm,
 				"samlClientIdRef": identityRef(clientName),
-				"name":            "gentian-app-admin",
-				"description":     fmt.Sprintf("Administers %s: held by the tenant's app administrators", app),
-			},
-			"providerConfigRef": identityProvider,
-		}),
-		identityObject("group.keycloak.crossplane.io/v1alpha1", "Roles", id.name("sign-in-admin-grant"), map[string]interface{}{
-			"deletionPolicy": "Orphan",
-			"forProvider": map[string]interface{}{
-				"realmId":     id.realm,
-				"exhaustive":  false,
-				"groupIdRef":  identityRef(adminsGroup),
-				"roleIdsRefs": []interface{}{identityRef(roleName)},
-			},
-			"providerConfigRef": identityProvider,
-		}),
-		identityObject("client.keycloak.crossplane.io/v1alpha1", "ProtocolMapper", id.name("sign-in-admin-mapper"), map[string]interface{}{
-			"deletionPolicy": "Orphan",
-			"forProvider": map[string]interface{}{
-				"realmId":         id.realm,
-				"samlClientIdRef": identityRef(clientName),
-				"name":            "app-admin",
+				"name":            "app-roles",
 				"protocol":        "saml",
-				"protocolMapper":  "saml-role-list-mapper",
+				"protocolMapper":  "gentian-saml-app-roles",
 				"config": map[string]interface{}{
-					"attribute.name":       "Role",
-					"attribute.nameformat": "Basic",
-					"single":               "true",
+					"attribute.name": "Role",
+					"gentian.tenant": id.tenant,
+					"gentian.app":    id.in.ProfileName,
+					"gentian.roles":  string(rolesJSON),
 				},
 			},
 			"providerConfigRef": identityProvider,

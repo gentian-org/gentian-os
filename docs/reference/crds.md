@@ -124,6 +124,7 @@ BackupPolicy is where a tenant's bundles go and who can read them. Cluster-scope
 |---|---|---|---|
 | `spec` | object |  | BackupPolicySpec is one backup arrangement: the cluster's default, or one tenant's override of it. |
 | `spec.allowTenantOverride` | boolean |  | `AllowTenantOverride` lets tenants state policies of their own. |
+| `spec.beforeMove` | string |  | `BeforeMove` is what is exported before an installed app moves to another build (docs/concepts/versioning.md §5): tenant, the app and the tenant's own -- its… |
 | `spec.destination` | object |  | `Destination` is where bundles are written. |
 | `spec.destination.addressingStyle` | string |  | `AddressingStyle` is how a bucket is named in a request to Endpoint: path (https://host/bucket/key, the default when empty) or virtualHost… |
 | `spec.destination.bucket` | string |  | `Bucket` holds the bundles. |
@@ -143,6 +144,7 @@ BackupPolicy is where a tenant's bundles go and who can read them. Cluster-scope
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.credentialRequirement` | string |  | `CredentialRequirement` names the requirement carrying this destination's keys, and CredentialSatisfied reports whether it has been filled. |
 | `status.credentialSatisfied` | boolean |  |  |
+| `status.effectiveBeforeMove` | string |  | `EffectiveBeforeMove` is what is exported before an app moves, after inheritance. |
 | `status.effectiveBucket` | string |  |  |
 | `status.effectiveEndpoint` | string |  | `EffectiveEndpoint` and EffectiveBucket are the values in force after inheritance, published so an admin reads what applies rather than recomputing the merge. |
 | `status.effectiveRecipients` | []string |  | `EffectiveRecipients` are the age public keys in force, empty when the cluster's own key is used. |
@@ -261,8 +263,9 @@ Component is an installed instance of a ComponentProfile.
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
 | `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
+| `spec.privileges[].hosts` | []string |  | `Hosts` are the hosts an egress grant opens, for a request whose hosts are named at approval (hostsAtApproval): each one name, lower case, with a port where it… |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress, clusterRoles or apiExtensions. |
-| `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
+| `spec.privileges[].reason` | string |  | `Reason` is a comment the approver may leave, in their own words. |
 | `spec.profileRef` | object | yes | `ProfileRef` names the catalog entry this is an instance of. |
 | `spec.profileRef.digest` | string |  | `Digest` pins the profile bundle this instance was installed from. |
 | `spec.profileRef.name` | string | yes |  |
@@ -275,6 +278,7 @@ Component is an installed instance of a ComponentProfile.
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.fulfilment` | string |  | `Fulfilment` is "dedicated" or "shared". |
+| `status.outgoingHosts` | []string |  | `OutgoingHosts` are the hosts outside the cluster this component was granted, each a name with its port where it is not 443. |
 | `status.pendingPrivileges` | []string |  | `PendingPrivileges` are requests of the profile that nobody has granted yet, as \<kind>/\<name>. |
 | `status.rollout` | object |  | `Rollout` is which build this instance actually runs, and how the last move to the pinned build went. |
 | `status.rollout.digest` | string |  | `Digest` is the build the instance runs: the last one that rolled out and verified. |
@@ -305,7 +309,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 |---|---|---|---|
 | `spec` | object |  | ComponentProfileSpec is one catalog entry: what a component is, what it needs from the platform, and what it may expose. |
 | `spec.action` | object |  | `Action` is what an action takes, returns and runs. |
-| `spec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `spec.action.agentBridges` | []string |  | `AgentBridges` names the agent bridges whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
 | `spec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
 | `spec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
 | `spec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
@@ -314,15 +318,6 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.action.resources.cpu` | int-or-string |  |  |
 | `spec.action.resources.memory` | int-or-string |  |  |
 | `spec.action.runtime` | string |  | `Runtime` is what runs the action. |
-| `spec.adapter` | object |  | `Adapter` is what an adapter adapts. |
-| `spec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
-| `spec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
-| `spec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
-| `spec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
-| `spec.adapter.endpoint` | object |  | `Endpoint` is where the adapter's tool server (MCP) answers inside the tenant: its Service, the port and the path. |
-| `spec.adapter.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
-| `spec.adapter.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
-| `spec.adapter.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `spec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `spec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `spec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -339,6 +334,35 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.backup.volumes` | object |  | `Volumes` narrows what is captured from the app's PersistentVolumeClaims. |
 | `spec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `spec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
+| `spec.bridge` | object |  | `Bridge` is what a bridge connects and the ways its calls go. |
+| `spec.bridge.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the bridge is told which add-ons are selected into the app it connects in its tenant: a list… |
+| `spec.bridge.app` | object |  | `App` is the app of the tenant the bridge connects: the app's ComponentProfile, which must be installed in the same tenant. |
+| `spec.bridge.app.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
+| `spec.bridge.app.versions` | []string |  | `Versions` are the catalog versions of the app this bridge was reviewed against. |
+| `spec.bridge.ways` | []object | yes | `Ways` are the directions the bridge's calls go, each in one protocol and each approved on its own. |
+| `spec.bridge.ways[].callee` | string | yes | `Callee` is who answers them. |
+| `spec.bridge.ways[].caller` | string | yes | `Caller` is who opens the calls. |
+| `spec.bridge.ways[].endpoint` | object |  | `Endpoint` is where the bridge's tool server answers inside the tenant, for a way whose caller is the tenant's agents: its Service, the port and the path. |
+| `spec.bridge.ways[].endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `spec.bridge.ways[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `spec.bridge.ways[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
+| `spec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
+| `spec.bridge.ways[].outside` | object |  | `Outside` describes a tool server outside the platform, for a way from the tenant's agents to the outside in mcp, on a bridge packaged as an api whose baseUrl… |
+| `spec.bridge.ways[].outside.signIn` | object |  | `SignIn` is how a person the calls are made for is known to the server. |
+| `spec.bridge.ways[].outside.signIn.oauth` | object | yes | `OAuth` is a sign-in by OAuth 2.0 authorization code with PKCE: the person is sent to the service, and the component that keeps people's connections is handed a… |
+| `spec.bridge.ways[].outside.signIn.oauth.issuer` | string | yes | `Issuer` is the authorization server: its metadata is read at /.well-known/oauth-authorization-server below it (RFC 8414). |
+| `spec.bridge.ways[].outside.signIn.oauth.scopes` | []string |  | `Scopes` are the scopes asked for. |
+| `spec.bridge.ways[].outside.tools` | []object | yes | `Tools` are the tools that may be called. |
+| `spec.bridge.ways[].outside.tools[].class` | string | yes | `Class` is read for a tool that changes nothing at the service, and change for one that does. |
+| `spec.bridge.ways[].outside.tools[].description` | string | yes | `Description` is what a person who builds with the tool reads. |
+| `spec.bridge.ways[].outside.tools[].inputSchema` | object |  | `InputSchema` is the JSON Schema of the tool's arguments. |
+| `spec.bridge.ways[].outside.tools[].name` | string | yes | `Name` is the tool's name on the platform: with the bridge's name and Version it is what a person allows and what a call names. |
+| `spec.bridge.ways[].outside.tools[].tool` | string |  | `Tool` is the name the server knows the tool by. |
+| `spec.bridge.ways[].outside.tools[].version` | integer (int32) | yes | `Version` is the version of what is written here: raised when the tool is reviewed again because its inputs or what it does changed. |
+| `spec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
+| `spec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
+| `spec.bridge.ways[].root` | string |  | `Root` is where a calendar or contact program that found the door by its discovery address (RFC 6764: /.well-known/caldav, /.well-known/carddav) is sent, to ask… |
+| `spec.bridge.ways[].speaksAs` | string | yes | `SpeaksAs` is whom the calls are made for. |
 | `spec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
 | `spec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `spec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
@@ -438,7 +462,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].extraValues` | object (free-form) |  | `ExtraValues` are merged into the sidecar Helm release values. |
 | `spec.extensions[].kernelRequirements` | object |  | ServiceRequirements declares kernel services the sidecar needs. |
 | `spec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `spec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `spec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `spec.extensions[].kernelRequirements.authorization.tuples[].object` | string | yes |  |
@@ -497,6 +521,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.partners.call` | []string |  | `Call` names the tenant's partners the component asks assertions towards (standard token exchange, scope partner-\<name>): a person's token in, a token for the… |
 | `spec.extensions[].kernelRequirements.partners.commission` | boolean |  | `Commission` says the component asks the director to add receiving partners to the tenants that name it, or to take them away. |
 | `spec.extensions[].kernelRequirements.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
+| `spec.extensions[].kernelRequirements.personSecrets` | object |  | `PersonSecrets` declares that the component keeps secrets that belong to one person each, with the confidant: the lasting credential of a sign-in a person gave… |
 | `spec.extensions[].kernelRequirements.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `spec.extensions[].kernelRequirements.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
 | `spec.extensions[].kernelRequirements.rights.breakGlass` | boolean |  | `BreakGlass` lets the same key ask one question more, for a person of the platform tenant: do they hold break_glass on the cluster now (cluster#break_glass)… |
@@ -522,8 +547,10 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `spec.extensions[].kernelRequirements.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `spec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
+| `spec.extensions[].kernelRequirements.vouching.consent` | string |  | `Consent` names the profile of the component whose page asks people whether this one may speak for them, where that is not this component's own page. |
 | `spec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `spec.extensions[].kernelRequirements.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
 | `spec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -538,6 +565,23 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].valueMapping.oidc.clientSecretOpenbaoPath` | string |  | `ClientSecretOpenbaoPath` overrides the default per-tenant OpenBao secret path (gentian-os/tenants/{tenant}/apps/{app}/oidc) for reading the OIDC client secret. |
 | `spec.extensions[].valueMapping.oidc.clientSecretOpenbaoProperty` | string |  | `ClientSecretOpenbaoProperty` overrides the property name within the OpenBao secret (default: "client-secret"). |
 | `spec.extensions[].valueMapping.oidc.issuerKey` | string |  | `IssuerKey` is the Helm value key for the OIDC issuer URL. |
+| `spec.homeSync` | object |  | `HomeSync` is how an app that keeps calendars or contacts of its own keeps them, so that the platform keeps them equal to the tenant's home. |
+| `spec.homeSync.calendar` | object |  | `Calendar` is how the app keeps calendar entries. |
+| `spec.homeSync.calendar.defaults` | map[string]object |  | `Defaults` are written onto a record made from the home, in the driver's form, with the same placeholders. |
+| `spec.homeSync.calendar.driver` | string | yes | `Driver` is the driver of the app's framework. |
+| `spec.homeSync.calendar.fields` | map[string]string | yes | `Fields` maps a part of an entry to the app's field. |
+| `spec.homeSync.calendar.filter` | object |  | `Filter` selects a person's records, in the driver's form (for Odoo, a domain); "$user" and "$partner" stand for the person in the app. |
+| `spec.homeSync.calendar.model` | string | yes | `Model` is the app's record type (for Odoo, the model: calendar.event). |
+| `spec.homeSync.contacts` | object |  | `Contacts` is how the app keeps contacts. |
+| `spec.homeSync.contacts.defaults` | map[string]object |  | `Defaults` are written onto a record made from the home, in the driver's form, with the same placeholders. |
+| `spec.homeSync.contacts.driver` | string | yes | `Driver` is the driver of the app's framework. |
+| `spec.homeSync.contacts.fields` | map[string]string | yes | `Fields` maps a part of an entry to the app's field. |
+| `spec.homeSync.contacts.filter` | object |  | `Filter` selects a person's records, in the driver's form (for Odoo, a domain); "$user" and "$partner" stand for the person in the app. |
+| `spec.homeSync.contacts.model` | string | yes | `Model` is the app's record type (for Odoo, the model: calendar.event). |
+| `spec.homeSync.endpoint` | object | yes | `Endpoint` is where the app's API answers inside the tenant: its Service, the port and the path the driver's calls go under. |
+| `spec.homeSync.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `spec.homeSync.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `spec.homeSync.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `spec.hooks` | object |  | `Hooks` are lifecycle actions at install, upgrade and resync. |
 | `spec.hooks.postInstall` | object |  | `PostInstall` runs once after the component is first ready. |
 | `spec.hooks.postInstall.envFrom` | []string |  | `EnvFrom` names Secrets already present in the tenant namespace to inject wholesale (matches how this app's own secrets already land — e.g.… |
@@ -548,7 +592,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.hooks.postInstall.script` | string | yes | `Script` is the shell script body, run via `/bin/sh -c`. |
 | `spec.hooks.postInstall.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount in the tenant namespace (e.g. |
 | `spec.hooks.provisioning` | object |  | `Provisioning` configures the component through its own API after install and on resync. |
-| `spec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` maps gentian:tenant:\<t>:app-admins members to an in-app administrator role (for example the Nextcloud "admin" group). |
+| `spec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` is the in-app administrator role the app's administrators -- whoever holds admin on it in the rights store -- are put in, for an app that… |
 | `spec.hooks.provisioning.privilegedRole.kind` | string | yes | `Kind` is the application's native role type. |
 | `spec.hooks.provisioning.privilegedRole.name` | string | yes | `Name` is the in-app role identifier (for example Nextcloud group "admin"). |
 | `spec.hooks.provisioning.syncJob` | object |  | `SyncJob` is how this app applies PrivilegedRole. |
@@ -562,8 +606,10 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.hooks.provisioning.syncJob.script` | string | yes | `Script` executed with /bin/sh. |
 | `spec.hooks.provisioning.syncJob.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount. |
 | `spec.integrations` | []object |  | `Integrations` are opportunistic relationships with peer components. |
+| `spec.integrations[].asPerson` | boolean |  | `AsPerson` says the app calls the contract's provider -- the tenant's home for that kind of data -- as the person it acts for, with that person's rights there… |
 | `spec.integrations[].capabilities` | []string |  | `Capabilities` lists the specific capabilities required from the contract. |
 | `spec.integrations[].contract` | string | yes | `Contract` is the name of the contract to consume. |
+| `spec.integrations[].dialog` | []string |  | `Dialog` says the app's pages ask the platform's file dialog (the porter) for files, and what for: pick, open, save. |
 | `spec.integrations[].provider` | string |  | `Provider` is the expected provider app by profile name. |
 | `spec.launch` | string | yes | `Launch` is how a person reaches this component. |
 | `spec.package` | object | yes | `Package` is how the component is deployed. |
@@ -571,7 +617,10 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.package.addon.id` | string | yes | `ID` is what the hosting component's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
 | `spec.package.addon.of` | string | yes | `Of` is the ComponentProfile this addon activates into. |
 | `spec.package.api` | object |  | `API` describes a component the platform routes to rather than runs. |
-| `spec.package.api.baseUrl` | string | yes | `BaseURL` is the external service origin (e.g. |
+| `spec.package.api.backend` | object |  | `Backend` is the Service of the tenant a bridge is answered by: the Service of the app it connects, which speaks the bridge's protocols itself. |
+| `spec.package.api.backend.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `spec.package.api.backend.service` | string | yes | `Service` is the Service's name in the tenant's namespace. |
+| `spec.package.api.baseUrl` | string |  | `BaseURL` is the external service origin (e.g. |
 | `spec.package.api.runtime` | string |  | `Runtime` selects how the tenant reaches the external service. |
 | `spec.package.api.tenantBinding` | string |  | `TenantBinding` declares how the tenant is identified to the external service. |
 | `spec.package.api.tile` | object |  | `Tile` puts this entry on the desktop of whoever holds its relation. |
@@ -612,6 +661,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.package.valueMapping.imap.portKey` | string |  | `PortKey` is the Helm value key for the IMAP port. |
 | `spec.package.valueMapping.integrations` | map[string]object |  | `Integrations` maps optional integration credentials to Helm keys, keyed by the contract name. |
 | `spec.package.valueMapping.integrations{}.endpointKey` | string |  | `EndpointKey` is the Helm value key for the integration's service endpoint URL. |
+| `spec.package.valueMapping.integrations{}.homeScopeKey` | string |  | `HomeScopeKey` is the Helm value key for the scope the component asks the tenant's realm a person's token for the home with, for a contract it calls as the… |
 | `spec.package.valueMapping.integrations{}.passwordKey` | string |  | `PasswordKey` is the Helm value key for the integration password. |
 | `spec.package.valueMapping.integrations{}.userKey` | string |  | `UserKey` is the Helm value key for the integration username. |
 | `spec.package.valueMapping.llm` | object |  | `LLM` maps the model gateway's address and the component's key to Helm keys, for a component that declares requires.services.llm. |
@@ -668,6 +718,12 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.provides[].endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
 | `spec.provides[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
 | `spec.provides[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
+| `spec.provides[].files` | object |  | `Files` is what a provider of file-store says about itself beyond WebDAV, so that the platform's file dialog (the porter) can show a person their files and name… |
+| `spec.provides[].files.idProperty` | string | yes | `IDProperty` is the WebDAV property that holds a file's id: one that stays the same when the file is moved or renamed, and is the same for everybody who may see… |
+| `spec.provides[].files.open` | object | yes | `Open` is the address that opens a file by its id in a browser. |
+| `spec.provides[].files.open.entry` | string | yes | `Entry` is the name of the provider's gateway entry (expose[].name). |
+| `spec.provides[].files.open.path` | string | yes | `Path` is the path on that entry, with "{id}" where the id goes. |
+| `spec.provides[].files.root` | string | yes | `Root` is where a person's files start, as a path below the contract's endpoint. |
 | `spec.provides[].name` | string | yes | `Name` is the contract name (e.g., "file-store", "project-management"). |
 | `spec.provides[].protocol` | string |  | `Protocol` is the technical protocol used (e.g., "http-json", "webdav"). |
 | `spec.requires` | object |  | `Requires` is what the platform is obliged to provide before this component may run. |
@@ -690,9 +746,11 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.privileges.clusterRoles[].rules[].verbs` | []string | yes | `verbs` is a list of Verbs that apply to ALL the ResourceKinds contained in this rule. |
 | `spec.requires.privileges.clusterRoles[].serviceAccount` | string |  | `ServiceAccount` is the ServiceAccount the component's chart runs its pods under, in the component's namespace. |
 | `spec.requires.privileges.egress` | []object |  | `Egress` opens outbound network beyond the tenant baseline. |
+| `spec.requires.privileges.egress[].hosts` | []string |  | `Hosts` are the hosts outside the cluster the component connects to, each one name, lower case, with a port where it is not 443: "graph.microsoft.com"… |
+| `spec.requires.privileges.egress[].hostsAtApproval` | boolean |  | `HostsAtApproval` says the hosts are named by whoever approves the request, for this install: for a component whose destinations its installation chooses, such… |
 | `spec.requires.privileges.egress[].name` | string | yes | `Name` is what a PrivilegeGrant refers to. |
 | `spec.requires.privileges.egress[].reason` | string | yes | `Reason` is what the approver reads. |
-| `spec.requires.privileges.egress[].rule` | object | yes | `Rule` is the egress to allow. |
+| `spec.requires.privileges.egress[].rule` | object |  | `Rule` is the egress to allow by address. |
 | `spec.requires.privileges.egress[].rule.ports` | []object |  | `ports` is a list of destination ports for outgoing traffic. |
 | `spec.requires.privileges.egress[].rule.ports[].endPort` | integer (int32) |  | `endPort` indicates that the range of ports from port to endPort if set, inclusive, should be allowed by the policy. |
 | `spec.requires.privileges.egress[].rule.ports[].port` | int-or-string |  | `port` represents the port on the given protocol. |
@@ -720,7 +778,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.privileges.podSecurity[].scope` | string | yes | `Scope` is the container or composition part it is waived for. |
 | `spec.requires.services` | object |  | `Services` are what the platform must fulfill before this component runs: identity, database, object storage, cache, mail, MCP. |
 | `spec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `spec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `spec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `spec.requires.services.authorization.tuples[].object` | string | yes |  |
@@ -779,6 +837,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.partners.call` | []string |  | `Call` names the tenant's partners the component asks assertions towards (standard token exchange, scope partner-\<name>): a person's token in, a token for the… |
 | `spec.requires.services.partners.commission` | boolean |  | `Commission` says the component asks the director to add receiving partners to the tenants that name it, or to take them away. |
 | `spec.requires.services.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
+| `spec.requires.services.personSecrets` | object |  | `PersonSecrets` declares that the component keeps secrets that belong to one person each, with the confidant: the lasting credential of a sign-in a person gave… |
 | `spec.requires.services.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `spec.requires.services.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
 | `spec.requires.services.rights.breakGlass` | boolean |  | `BreakGlass` lets the same key ask one question more, for a person of the platform tenant: do they hold break_glass on the cluster now (cluster#break_glass)… |
@@ -804,12 +863,26 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `spec.requires.services.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `spec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
+| `spec.requires.services.vouching.consent` | string |  | `Consent` names the profile of the component whose page asks people whether this one may speak for them, where that is not this component's own page. |
 | `spec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `spec.requires.services.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
 | `spec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `spec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `spec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `spec.roles` | object |  | `Roles` are the roles people hold on this app: user and admin, which every app has, and the further ones it declares, each with what it is called inside the app. |
+| `spec.roles.admin` | object |  | `Admin` is what the role admin is called inside the app. |
+| `spec.roles.admin.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
+| `spec.roles.claim` | string |  | `Claim` is the token claim the roles are written to. |
+| `spec.roles.declared` | []object |  | `Declared` are the roles of the app between user and admin. |
+| `spec.roles.declared[].description` | string |  | `Description` says what the role is for. |
+| `spec.roles.declared[].inApp` | []string |  | `InApp` are the app's own names for the role. |
+| `spec.roles.declared[].includes` | []string |  | `Includes` are other declared roles of the app whose holders the holders of this one are too: manager includes salesman. |
+| `spec.roles.declared[].name` | string | yes | `Name` is the role's name on the platform. |
+| `spec.roles.declared[].title` | string |  | `Title` is the role as people read it. |
+| `spec.roles.user` | object |  | `User` is what the role user is called inside the app. |
+| `spec.roles.user.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
 | `spec.secrets` | object |  | `Secrets` are values the platform generates and holds that have no external counterparty. |
 | `spec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `spec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
@@ -1111,6 +1184,8 @@ PlatformSecurityPolicy is the cluster singleton where platform administrators ap
 | `spec.allowedMacWaivers[].policy` | string | yes | `Policy` is the Kyverno ClusterPolicy name. |
 | `spec.allowedMacWaivers[].profile` | string | yes | `Profile` is the ComponentProfile metadata.name that may use this waiver. |
 | `spec.allowedMacWaivers[].scope` | string | yes | `Scope` matches MacWaiverRequest.scope on the profile. |
+| `spec.preApprovedEgressCatalogs` | []string |  | `PreApprovedEgressCatalogs` lists catalogs, by the origin a materialized profile records ("cluster/\<source>" or "tenant/\<tenant>/\<source>"), whose apps' egress… |
+| `spec.trustedDomains` | []string |  | `TrustedDomains` are the domains outside the cluster this cluster trusts, whatever travels. |
 | `status` | object |  | PlatformSecurityPolicyStatus reports observed policy state. |
 | `status.allowedMacWaiverCount` | integer |  | `AllowedMacWaiverCount` is len(spec.allowedMacWaivers) last written to the gentian-platform-security ConfigMap. |
 | `status.conditions` | []object |  | `Conditions` provide reconciliation detail. |
@@ -1150,7 +1225,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
 | `status.profileSpec` | object |  | `ProfileSpec` is the bundle's profile spec, with the defaults the API server gives a ComponentProfile, written once the bundle verified. |
 | `status.profileSpec.action` | object |  | `Action` is what an action takes, returns and runs. |
-| `status.profileSpec.action.adapters` | []string |  | `Adapters` names the adapters whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
+| `status.profileSpec.action.agentBridges` | []string |  | `AgentBridges` names the agent bridges whose tools the calling component may call on a run's behalf, by their ComponentProfile. |
 | `status.profileSpec.action.command` | []string | yes | `Command` is what a run starts in the action's image. |
 | `status.profileSpec.action.deadlineSeconds` | integer (int32) |  | `DeadlineSeconds` is the longest one attempt of a run may take. |
 | `status.profileSpec.action.inputs` | object |  | `Inputs` is the JSON Schema of what a run takes. |
@@ -1159,15 +1234,6 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.action.resources.cpu` | int-or-string |  |  |
 | `status.profileSpec.action.resources.memory` | int-or-string |  |  |
 | `status.profileSpec.action.runtime` | string |  | `Runtime` is what runs the action. |
-| `status.profileSpec.adapter` | object |  | `Adapter` is what an adapter adapts. |
-| `status.profileSpec.adapter.adapts` | object |  | `Adapts` names the app whose interface this adapter uses: the app's ComponentProfile, which must be installed in the same tenant. |
-| `status.profileSpec.adapter.adapts.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
-| `status.profileSpec.adapter.adapts.versions` | []string |  | `Versions` are the catalog versions of the app this adapter was reviewed against. |
-| `status.profileSpec.adapter.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the adapter is told which add-ons are selected into the app it adapts in its tenant: a list of… |
-| `status.profileSpec.adapter.endpoint` | object |  | `Endpoint` is where the adapter's tool server (MCP) answers inside the tenant: its Service, the port and the path. |
-| `status.profileSpec.adapter.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
-| `status.profileSpec.adapter.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
-| `status.profileSpec.adapter.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `status.profileSpec.backup` | object |  | `Backup` declares what a consistent copy of this component consists of. |
 | `status.profileSpec.backup.boundSecrets` | []object |  | `BoundSecrets` lists secrets this app's data is welded to: not derived, held outside the app's own captured data, and required to make sense of that data again. |
 | `status.profileSpec.backup.boundSecrets[].keys` | []string |  | `Keys` selects individual keys at that path. |
@@ -1184,6 +1250,35 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.backup.volumes` | object |  | `Volumes` narrows what is captured from the app's PersistentVolumeClaims. |
 | `status.profileSpec.backup.volumes.excludePaths` | []string |  | `ExcludePaths` drops matching paths from the captured archive, as glob patterns relative to each volume root. |
 | `status.profileSpec.backup.volumes.include` | []string |  | `Include` names the PersistentVolumeClaims to capture. |
+| `status.profileSpec.bridge` | object |  | `Bridge` is what a bridge connects and the ways its calls go. |
+| `status.profileSpec.bridge.addonsValuesPath` | string |  | `AddonsValuesPath` is the dot-separated Helm values path at which the bridge is told which add-ons are selected into the app it connects in its tenant: a list… |
+| `status.profileSpec.bridge.app` | object |  | `App` is the app of the tenant the bridge connects: the app's ComponentProfile, which must be installed in the same tenant. |
+| `status.profileSpec.bridge.app.profile` | string | yes | `Profile` is the ComponentProfile of the app. |
+| `status.profileSpec.bridge.app.versions` | []string |  | `Versions` are the catalog versions of the app this bridge was reviewed against. |
+| `status.profileSpec.bridge.ways` | []object | yes | `Ways` are the directions the bridge's calls go, each in one protocol and each approved on its own. |
+| `status.profileSpec.bridge.ways[].callee` | string | yes | `Callee` is who answers them. |
+| `status.profileSpec.bridge.ways[].caller` | string | yes | `Caller` is who opens the calls. |
+| `status.profileSpec.bridge.ways[].endpoint` | object |  | `Endpoint` is where the bridge's tool server answers inside the tenant, for a way whose caller is the tenant's agents: its Service, the port and the path. |
+| `status.profileSpec.bridge.ways[].endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `status.profileSpec.bridge.ways[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `status.profileSpec.bridge.ways[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
+| `status.profileSpec.bridge.ways[].name` | string | yes | `Name` names the way within the bridge, and in the tenant's approvals. |
+| `status.profileSpec.bridge.ways[].outside` | object |  | `Outside` describes a tool server outside the platform, for a way from the tenant's agents to the outside in mcp, on a bridge packaged as an api whose baseUrl… |
+| `status.profileSpec.bridge.ways[].outside.signIn` | object |  | `SignIn` is how a person the calls are made for is known to the server. |
+| `status.profileSpec.bridge.ways[].outside.signIn.oauth` | object | yes | `OAuth` is a sign-in by OAuth 2.0 authorization code with PKCE: the person is sent to the service, and the component that keeps people's connections is handed a… |
+| `status.profileSpec.bridge.ways[].outside.signIn.oauth.issuer` | string | yes | `Issuer` is the authorization server: its metadata is read at /.well-known/oauth-authorization-server below it (RFC 8414). |
+| `status.profileSpec.bridge.ways[].outside.signIn.oauth.scopes` | []string |  | `Scopes` are the scopes asked for. |
+| `status.profileSpec.bridge.ways[].outside.tools` | []object | yes | `Tools` are the tools that may be called. |
+| `status.profileSpec.bridge.ways[].outside.tools[].class` | string | yes | `Class` is read for a tool that changes nothing at the service, and change for one that does. |
+| `status.profileSpec.bridge.ways[].outside.tools[].description` | string | yes | `Description` is what a person who builds with the tool reads. |
+| `status.profileSpec.bridge.ways[].outside.tools[].inputSchema` | object |  | `InputSchema` is the JSON Schema of the tool's arguments. |
+| `status.profileSpec.bridge.ways[].outside.tools[].name` | string | yes | `Name` is the tool's name on the platform: with the bridge's name and Version it is what a person allows and what a call names. |
+| `status.profileSpec.bridge.ways[].outside.tools[].tool` | string |  | `Tool` is the name the server knows the tool by. |
+| `status.profileSpec.bridge.ways[].outside.tools[].version` | integer (int32) | yes | `Version` is the version of what is written here: raised when the tool is reviewed again because its inputs or what it does changed. |
+| `status.profileSpec.bridge.ways[].paths` | []string |  | `Paths` are the path prefixes of the app a caller from outside the platform reaches. |
+| `status.profileSpec.bridge.ways[].protocol` | string | yes | `Protocol` is what the calls are made in. |
+| `status.profileSpec.bridge.ways[].root` | string |  | `Root` is where a calendar or contact program that found the door by its discovery address (RFC 6764: /.well-known/caldav, /.well-known/carddav) is sent, to ask… |
+| `status.profileSpec.bridge.ways[].speaksAs` | string | yes | `SpeaksAs` is whom the calls are made for. |
 | `status.profileSpec.classes` | []string | yes | `Classes` lists the modes this component may be deployed under. |
 | `status.profileSpec.comesWith` | []string |  | `ComesWith` names the profiles of the apps this app is installed together with. |
 | `status.profileSpec.customization` | object |  | `Customization` declares what a tenant may change about this component. |
@@ -1283,7 +1378,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].extraValues` | object (free-form) |  | `ExtraValues` are merged into the sidecar Helm release values. |
 | `status.profileSpec.extensions[].kernelRequirements` | object |  | ServiceRequirements declares kernel services the sidecar needs. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples[].object` | string | yes |  |
@@ -1342,6 +1437,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.partners.call` | []string |  | `Call` names the tenant's partners the component asks assertions towards (standard token exchange, scope partner-\<name>): a person's token in, a token for the… |
 | `status.profileSpec.extensions[].kernelRequirements.partners.commission` | boolean |  | `Commission` says the component asks the director to add receiving partners to the tenants that name it, or to take them away. |
 | `status.profileSpec.extensions[].kernelRequirements.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
+| `status.profileSpec.extensions[].kernelRequirements.personSecrets` | object |  | `PersonSecrets` declares that the component keeps secrets that belong to one person each, with the confidant: the lasting credential of a sign-in a person gave… |
 | `status.profileSpec.extensions[].kernelRequirements.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `status.profileSpec.extensions[].kernelRequirements.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
 | `status.profileSpec.extensions[].kernelRequirements.rights.breakGlass` | boolean |  | `BreakGlass` lets the same key ask one question more, for a person of the platform tenant: do they hold break_glass on the cluster now (cluster#break_glass)… |
@@ -1367,8 +1463,10 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `status.profileSpec.extensions[].kernelRequirements.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
+| `status.profileSpec.extensions[].kernelRequirements.vouching.consent` | string |  | `Consent` names the profile of the component whose page asks people whether this one may speak for them, where that is not this component's own page. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `status.profileSpec.extensions[].kernelRequirements.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
@@ -1383,6 +1481,23 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].valueMapping.oidc.clientSecretOpenbaoPath` | string |  | `ClientSecretOpenbaoPath` overrides the default per-tenant OpenBao secret path (gentian-os/tenants/{tenant}/apps/{app}/oidc) for reading the OIDC client secret. |
 | `status.profileSpec.extensions[].valueMapping.oidc.clientSecretOpenbaoProperty` | string |  | `ClientSecretOpenbaoProperty` overrides the property name within the OpenBao secret (default: "client-secret"). |
 | `status.profileSpec.extensions[].valueMapping.oidc.issuerKey` | string |  | `IssuerKey` is the Helm value key for the OIDC issuer URL. |
+| `status.profileSpec.homeSync` | object |  | `HomeSync` is how an app that keeps calendars or contacts of its own keeps them, so that the platform keeps them equal to the tenant's home. |
+| `status.profileSpec.homeSync.calendar` | object |  | `Calendar` is how the app keeps calendar entries. |
+| `status.profileSpec.homeSync.calendar.defaults` | map[string]object |  | `Defaults` are written onto a record made from the home, in the driver's form, with the same placeholders. |
+| `status.profileSpec.homeSync.calendar.driver` | string | yes | `Driver` is the driver of the app's framework. |
+| `status.profileSpec.homeSync.calendar.fields` | map[string]string | yes | `Fields` maps a part of an entry to the app's field. |
+| `status.profileSpec.homeSync.calendar.filter` | object |  | `Filter` selects a person's records, in the driver's form (for Odoo, a domain); "$user" and "$partner" stand for the person in the app. |
+| `status.profileSpec.homeSync.calendar.model` | string | yes | `Model` is the app's record type (for Odoo, the model: calendar.event). |
+| `status.profileSpec.homeSync.contacts` | object |  | `Contacts` is how the app keeps contacts. |
+| `status.profileSpec.homeSync.contacts.defaults` | map[string]object |  | `Defaults` are written onto a record made from the home, in the driver's form, with the same placeholders. |
+| `status.profileSpec.homeSync.contacts.driver` | string | yes | `Driver` is the driver of the app's framework. |
+| `status.profileSpec.homeSync.contacts.fields` | map[string]string | yes | `Fields` maps a part of an entry to the app's field. |
+| `status.profileSpec.homeSync.contacts.filter` | object |  | `Filter` selects a person's records, in the driver's form (for Odoo, a domain); "$user" and "$partner" stand for the person in the app. |
+| `status.profileSpec.homeSync.contacts.model` | string | yes | `Model` is the app's record type (for Odoo, the model: calendar.event). |
+| `status.profileSpec.homeSync.endpoint` | object | yes | `Endpoint` is where the app's API answers inside the tenant: its Service, the port and the path the driver's calls go under. |
+| `status.profileSpec.homeSync.endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
+| `status.profileSpec.homeSync.endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
+| `status.profileSpec.homeSync.endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
 | `status.profileSpec.hooks` | object |  | `Hooks` are lifecycle actions at install, upgrade and resync. |
 | `status.profileSpec.hooks.postInstall` | object |  | `PostInstall` runs once after the component is first ready. |
 | `status.profileSpec.hooks.postInstall.envFrom` | []string |  | `EnvFrom` names Secrets already present in the tenant namespace to inject wholesale (matches how this app's own secrets already land — e.g.… |
@@ -1393,7 +1508,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.hooks.postInstall.script` | string | yes | `Script` is the shell script body, run via `/bin/sh -c`. |
 | `status.profileSpec.hooks.postInstall.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount in the tenant namespace (e.g. |
 | `status.profileSpec.hooks.provisioning` | object |  | `Provisioning` configures the component through its own API after install and on resync. |
-| `status.profileSpec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` maps gentian:tenant:\<t>:app-admins members to an in-app administrator role (for example the Nextcloud "admin" group). |
+| `status.profileSpec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` is the in-app administrator role the app's administrators -- whoever holds admin on it in the rights store -- are put in, for an app that… |
 | `status.profileSpec.hooks.provisioning.privilegedRole.kind` | string | yes | `Kind` is the application's native role type. |
 | `status.profileSpec.hooks.provisioning.privilegedRole.name` | string | yes | `Name` is the in-app role identifier (for example Nextcloud group "admin"). |
 | `status.profileSpec.hooks.provisioning.syncJob` | object |  | `SyncJob` is how this app applies PrivilegedRole. |
@@ -1407,8 +1522,10 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.hooks.provisioning.syncJob.script` | string | yes | `Script` executed with /bin/sh. |
 | `status.profileSpec.hooks.provisioning.syncJob.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount. |
 | `status.profileSpec.integrations` | []object |  | `Integrations` are opportunistic relationships with peer components. |
+| `status.profileSpec.integrations[].asPerson` | boolean |  | `AsPerson` says the app calls the contract's provider -- the tenant's home for that kind of data -- as the person it acts for, with that person's rights there… |
 | `status.profileSpec.integrations[].capabilities` | []string |  | `Capabilities` lists the specific capabilities required from the contract. |
 | `status.profileSpec.integrations[].contract` | string | yes | `Contract` is the name of the contract to consume. |
+| `status.profileSpec.integrations[].dialog` | []string |  | `Dialog` says the app's pages ask the platform's file dialog (the porter) for files, and what for: pick, open, save. |
 | `status.profileSpec.integrations[].provider` | string |  | `Provider` is the expected provider app by profile name. |
 | `status.profileSpec.launch` | string | yes | `Launch` is how a person reaches this component. |
 | `status.profileSpec.package` | object | yes | `Package` is how the component is deployed. |
@@ -1416,7 +1533,10 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.package.addon.id` | string | yes | `ID` is what the hosting component's own addon system calls this addon: an Odoo module name, a Nextcloud app id, an XWiki extension. |
 | `status.profileSpec.package.addon.of` | string | yes | `Of` is the ComponentProfile this addon activates into. |
 | `status.profileSpec.package.api` | object |  | `API` describes a component the platform routes to rather than runs. |
-| `status.profileSpec.package.api.baseUrl` | string | yes | `BaseURL` is the external service origin (e.g. |
+| `status.profileSpec.package.api.backend` | object |  | `Backend` is the Service of the tenant a bridge is answered by: the Service of the app it connects, which speaks the bridge's protocols itself. |
+| `status.profileSpec.package.api.backend.port` | integer (int32) | yes | `Port` is the Service's port. |
+| `status.profileSpec.package.api.backend.service` | string | yes | `Service` is the Service's name in the tenant's namespace. |
+| `status.profileSpec.package.api.baseUrl` | string |  | `BaseURL` is the external service origin (e.g. |
 | `status.profileSpec.package.api.runtime` | string |  | `Runtime` selects how the tenant reaches the external service. |
 | `status.profileSpec.package.api.tenantBinding` | string |  | `TenantBinding` declares how the tenant is identified to the external service. |
 | `status.profileSpec.package.api.tile` | object |  | `Tile` puts this entry on the desktop of whoever holds its relation. |
@@ -1457,6 +1577,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.package.valueMapping.imap.portKey` | string |  | `PortKey` is the Helm value key for the IMAP port. |
 | `status.profileSpec.package.valueMapping.integrations` | map[string]object |  | `Integrations` maps optional integration credentials to Helm keys, keyed by the contract name. |
 | `status.profileSpec.package.valueMapping.integrations{}.endpointKey` | string |  | `EndpointKey` is the Helm value key for the integration's service endpoint URL. |
+| `status.profileSpec.package.valueMapping.integrations{}.homeScopeKey` | string |  | `HomeScopeKey` is the Helm value key for the scope the component asks the tenant's realm a person's token for the home with, for a contract it calls as the… |
 | `status.profileSpec.package.valueMapping.integrations{}.passwordKey` | string |  | `PasswordKey` is the Helm value key for the integration password. |
 | `status.profileSpec.package.valueMapping.integrations{}.userKey` | string |  | `UserKey` is the Helm value key for the integration username. |
 | `status.profileSpec.package.valueMapping.llm` | object |  | `LLM` maps the model gateway's address and the component's key to Helm keys, for a component that declares requires.services.llm. |
@@ -1513,6 +1634,12 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.provides[].endpoint.path` | string |  | `Path` is appended to the address the consumer is told, for an API served below the root. |
 | `status.profileSpec.provides[].endpoint.port` | integer (int32) | yes | `Port` is the Service's port, and must be the port the provider's pods listen on: a network policy matches the port a pod listens on, and the way it opens is to… |
 | `status.profileSpec.provides[].endpoint.service` | string | yes | `Service` is the provider's Service, in the namespace it is installed in. |
+| `status.profileSpec.provides[].files` | object |  | `Files` is what a provider of file-store says about itself beyond WebDAV, so that the platform's file dialog (the porter) can show a person their files and name… |
+| `status.profileSpec.provides[].files.idProperty` | string | yes | `IDProperty` is the WebDAV property that holds a file's id: one that stays the same when the file is moved or renamed, and is the same for everybody who may see… |
+| `status.profileSpec.provides[].files.open` | object | yes | `Open` is the address that opens a file by its id in a browser. |
+| `status.profileSpec.provides[].files.open.entry` | string | yes | `Entry` is the name of the provider's gateway entry (expose[].name). |
+| `status.profileSpec.provides[].files.open.path` | string | yes | `Path` is the path on that entry, with "{id}" where the id goes. |
+| `status.profileSpec.provides[].files.root` | string | yes | `Root` is where a person's files start, as a path below the contract's endpoint. |
 | `status.profileSpec.provides[].name` | string | yes | `Name` is the contract name (e.g., "file-store", "project-management"). |
 | `status.profileSpec.provides[].protocol` | string |  | `Protocol` is the technical protocol used (e.g., "http-json", "webdav"). |
 | `status.profileSpec.requires` | object |  | `Requires` is what the platform is obliged to provide before this component may run. |
@@ -1535,9 +1662,11 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.privileges.clusterRoles[].rules[].verbs` | []string | yes | `verbs` is a list of Verbs that apply to ALL the ResourceKinds contained in this rule. |
 | `status.profileSpec.requires.privileges.clusterRoles[].serviceAccount` | string |  | `ServiceAccount` is the ServiceAccount the component's chart runs its pods under, in the component's namespace. |
 | `status.profileSpec.requires.privileges.egress` | []object |  | `Egress` opens outbound network beyond the tenant baseline. |
+| `status.profileSpec.requires.privileges.egress[].hosts` | []string |  | `Hosts` are the hosts outside the cluster the component connects to, each one name, lower case, with a port where it is not 443: "graph.microsoft.com"… |
+| `status.profileSpec.requires.privileges.egress[].hostsAtApproval` | boolean |  | `HostsAtApproval` says the hosts are named by whoever approves the request, for this install: for a component whose destinations its installation chooses, such… |
 | `status.profileSpec.requires.privileges.egress[].name` | string | yes | `Name` is what a PrivilegeGrant refers to. |
 | `status.profileSpec.requires.privileges.egress[].reason` | string | yes | `Reason` is what the approver reads. |
-| `status.profileSpec.requires.privileges.egress[].rule` | object | yes | `Rule` is the egress to allow. |
+| `status.profileSpec.requires.privileges.egress[].rule` | object |  | `Rule` is the egress to allow by address. |
 | `status.profileSpec.requires.privileges.egress[].rule.ports` | []object |  | `ports` is a list of destination ports for outgoing traffic. |
 | `status.profileSpec.requires.privileges.egress[].rule.ports[].endPort` | integer (int32) |  | `endPort` indicates that the range of ports from port to endPort if set, inclusive, should be allowed by the policy. |
 | `status.profileSpec.requires.privileges.egress[].rule.ports[].port` | int-or-string |  | `port` represents the port on the given protocol. |
@@ -1565,7 +1694,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.privileges.podSecurity[].scope` | string | yes | `Scope` is the container or composition part it is waived for. |
 | `status.profileSpec.requires.services` | object |  | `Services` are what the platform must fulfill before this component runs: identity, database, object storage, cache, mail, MCP. |
 | `status.profileSpec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `status.profileSpec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `status.profileSpec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `status.profileSpec.requires.services.authorization.tuples[].object` | string | yes |  |
@@ -1624,6 +1753,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.partners.call` | []string |  | `Call` names the tenant's partners the component asks assertions towards (standard token exchange, scope partner-\<name>): a person's token in, a token for the… |
 | `status.profileSpec.requires.services.partners.commission` | boolean |  | `Commission` says the component asks the director to add receiving partners to the tenants that name it, or to take them away. |
 | `status.profileSpec.requires.services.partners.serviceAccount` | string |  | `ServiceAccount` is the Kubernetes service account the component's pods run as; its token is the client's credential. |
+| `status.profileSpec.requires.services.personSecrets` | object |  | `PersonSecrets` declares that the component keeps secrets that belong to one person each, with the confidant: the lasting credential of a sign-in a person gave… |
 | `status.profileSpec.requires.services.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `status.profileSpec.requires.services.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
 | `status.profileSpec.requires.services.rights.breakGlass` | boolean |  | `BreakGlass` lets the same key ask one question more, for a person of the platform tenant: do they hold break_glass on the cluster now (cluster#break_glass)… |
@@ -1649,12 +1779,26 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.storage.s3.objectLock` | boolean |  | `ObjectLock` makes the bucket with S3 Object Lock, which cannot be switched off again, and lets the app read and set the bucket's default retention… |
 | `status.profileSpec.requires.services.turn` | object |  | `TURN` declares that the component's clients relay real-time media through the platform's TURN edge. |
 | `status.profileSpec.requires.services.vouching` | object |  | `Vouching` declares that the component obtains tokens of a person who is not at a browser, on the strength of that person's earlier consent: it signs a short… |
+| `status.profileSpec.requires.services.vouching.consent` | string |  | `Consent` names the profile of the component whose page asks people whether this one may speak for them, where that is not this component's own page. |
 | `status.profileSpec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
+| `status.profileSpec.requires.services.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
 | `status.profileSpec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
 | `status.profileSpec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `status.profileSpec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `status.profileSpec.roles` | object |  | `Roles` are the roles people hold on this app: user and admin, which every app has, and the further ones it declares, each with what it is called inside the app. |
+| `status.profileSpec.roles.admin` | object |  | `Admin` is what the role admin is called inside the app. |
+| `status.profileSpec.roles.admin.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
+| `status.profileSpec.roles.claim` | string |  | `Claim` is the token claim the roles are written to. |
+| `status.profileSpec.roles.declared` | []object |  | `Declared` are the roles of the app between user and admin. |
+| `status.profileSpec.roles.declared[].description` | string |  | `Description` says what the role is for. |
+| `status.profileSpec.roles.declared[].inApp` | []string |  | `InApp` are the app's own names for the role. |
+| `status.profileSpec.roles.declared[].includes` | []string |  | `Includes` are other declared roles of the app whose holders the holders of this one are too: manager includes salesman. |
+| `status.profileSpec.roles.declared[].name` | string | yes | `Name` is the role's name on the platform. |
+| `status.profileSpec.roles.declared[].title` | string |  | `Title` is the role as people read it. |
+| `status.profileSpec.roles.user` | object |  | `User` is what the role user is called inside the app. |
+| `status.profileSpec.roles.user.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
 | `status.profileSpec.secrets` | object |  | `Secrets` are values the platform generates and holds that have no external counterparty. |
 | `status.profileSpec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `status.profileSpec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
@@ -1697,7 +1841,6 @@ ResourcePlan is a named preset of tenant resource limits. It is deliberately **n
 | `spec.productSku` | string |  | `ProductSku` identifies this plan to the commerce backend. |
 | `spec.quotas` | object | yes | `Quotas` are the limits a tenant on this plan receives. |
 | `spec.quotas.cpu` | int-or-string |  | `CPU` caps the sum of container CPU **limits** in the namespace. |
-| `spec.quotas.maxApps` | integer (int32) |  | `MaxApps` is the maximum number of apps this tenant may install. |
 | `spec.quotas.maxPods` | integer (int32) |  | `MaxPods` caps the number of pods in the tenant namespace (init Jobs + app workloads). |
 | `spec.quotas.memory` | int-or-string |  | `Memory` caps the sum of container memory **limits** in the namespace. |
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
@@ -1750,6 +1893,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.apps[].movedAt` | string |  | `MovedAt` is when the pin was last moved to another build, RFC 3339, and MovedBy who or what moved it: a person's id, or the policy that did ("policy:latest"). |
 | `spec.apps[].movedBy` | string |  |  |
 | `spec.apps[].placed` | boolean |  | `Placed` says the platform put this app here, because its profile is placeable (ComponentProfile spec.placement). |
+| `spec.apps[].positions` | []string |  | `Positions` names the positions of the tenant whose holders use this app: each holds the app's role user. |
 | `spec.apps[].profile` | string |  | `Profile` is the name of the ComponentProfile to install. |
 | `spec.apps[].profileRef` | object |  | `ProfileRef` selects a ComponentProfile by catalog identity (family, version, edition, offering tier). |
 | `spec.apps[].profileRef.identity` | object |  | `Identity` selects a profile by catalog tuple when Name is empty. |
@@ -1767,6 +1911,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.catalogue.sources[].oci.artifact` | string | yes | `Artifact` is the reference, without a scheme: \<registry host>/\<repository>:\<tag>, or @sha256:\<digest> in place of or after the tag. |
 | `spec.catalogue.sources[].oci.repository` | string | yes | `Repository` is the name of the repository whose credential the artifact is read with: one declared for the tenant, for a tenant's catalog; one declared for the… |
 | `spec.catalogue.sources[].url` | string |  | `URL` is the https address the catalog is served from. |
+| `spec.contactsBook` | string |  | `ContactsBook` is whose address book at the home the contacts an app keeps are kept equal to: each person's own, or one the tenant shares. |
 | `spec.country` | string |  | `Country` is the country the tenant is in, as an ISO 3166-1 alpha-2 code in upper case (CH, DE). |
 | `spec.deletion` | object |  | `Deletion` refines what a Delete leaves behind. |
 | `spec.deletion.keepBundles` | boolean |  | `KeepBundles` keeps the tenant's backup bucket and the bundles in it when everything else is deleted: the offboarding case, where the tenant was handed a copy… |
@@ -1801,8 +1946,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.grants[].grantedAt` | string (date-time) |  | `GrantedAt` is when. |
 | `spec.grants[].grantedBy` | string |  | `GrantedBy` is the Keycloak subject who granted it, set by the director from the caller's token, never supplied by a caller. |
 | `spec.grants[].reason` | string |  | `Reason` in the granter's words, where they gave one. |
-| `spec.groups` | []object |  | `Groups` are groups of the tenant's realm declared in git; see TenantGroup. |
-| `spec.groups[].name` | string | yes | `Name` is the group's name in the realm. |
+| `spec.homes` | map[string]string |  | `Homes` names, per contract, the installed app that is the tenant's home for that kind of data (file-store, calendar-store, contacts-store): the provider every… |
 | `spec.isolation` | object |  | `Isolation` describes the workload isolation boundaries for this tenant. |
 | `spec.isolation.databasePrefix` | string |  | `DatabasePrefix` is the prefix for all database names belonging to this tenant. |
 | `spec.isolation.keycloakRealm` | string |  | `KeycloakRealm` is the Keycloak realm name for this tenant. |
@@ -1850,17 +1994,25 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.partners[].name` | string | yes | `Name` is the partner's name here: the realm's scope and identity provider for it are partner-\<name>. |
 | `spec.platformAccess` | object |  | `PlatformAccess` is what the tenant opens to the platform's own people beyond the director: whether the platform's administrators may sign in to the tenant. |
 | `spec.platformAccess.adminsEnter` | boolean |  | `AdminsEnter` says the members of the platform's administrators' group may sign in to this tenant, through the kernel realm, and hold its admins group for as… |
+| `spec.positions` | []object |  | `Positions` are the tenant's own positions, beside the three every tenant has; see TenantPosition. |
+| `spec.positions[].description` | string |  | `Description` says who the position is for. |
+| `spec.positions[].includes` | []string |  | `Includes` are other positions of the tenant whose roles the holders of this one hold too: executive includes sales-manager. |
+| `spec.positions[].name` | string | yes | `Name` is the position's name in the tenant. |
+| `spec.positions[].roles` | []object |  | `Roles` are the roles the position holds itself. |
+| `spec.positions[].roles[].app` | string |  | `App` is the profile name of the app, or of the add-on, the role is held on. |
+| `spec.positions[].roles[].role` | string | yes | `Role` is user, admin, or a role the app's profile declares. |
+| `spec.positions[].title` | string |  | `Title` is the position as people read it. |
 | `spec.privileges` | []object |  | `Privileges` are the privilege requests a person granted for this tenant's components (AD-5). |
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
 | `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
+| `spec.privileges[].hosts` | []string |  | `Hosts` are the hosts an egress grant opens, for a request whose hosts are named at approval (hostsAtApproval): each one name, lower case, with a port where it… |
 | `spec.privileges[].install` | string | yes | `Install` names the Component this grant is for, which is the component's object name in the tenant's namespace. |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>. |
-| `spec.privileges[].reason` | string | yes | `Reason` in the approver's words, not the profile's. |
+| `spec.privileges[].reason` | string |  | `Reason` is a comment the approver may leave, in their own words. |
 | `spec.quotas` | object |  | `Quotas` sets resource limits for this tenant. |
 | `spec.quotas.cpu` | int-or-string |  | `CPU` caps the sum of container CPU **limits** in the namespace. |
-| `spec.quotas.maxApps` | integer (int32) |  | `MaxApps` is the maximum number of apps this tenant may install. |
 | `spec.quotas.maxPods` | integer (int32) |  | `MaxPods` caps the number of pods in the tenant namespace (init Jobs + app workloads). |
 | `spec.quotas.memory` | int-or-string |  | `Memory` caps the sum of container memory **limits** in the namespace. |
 | `spec.quotas.requestsCpu` | int-or-string |  | `RequestsCPU` caps the sum of container CPU **requests** in the namespace. |
@@ -1887,7 +2039,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.security.session.maxHours` | integer (int32) |  | `MaxHours` ends it regardless of activity. |
 | `spec.security.session.rememberMe` | boolean |  | `RememberMe` offers the longer session the realm is configured for. |
 | `spec.signInFrom` | []object |  | `SignInFrom` are other tenants of this cluster whose people sign in here; see TenantSignInFrom. |
-| `spec.signInFrom[].groups` | []string |  | `Groups` are the groups of this tenant its people are in: a name of spec.groups, or members (the tenant's members, who may enter it). |
+| `spec.signInFrom[].positions` | []string |  | `Positions` are the positions of this tenant its people are given when they arrive: user (a person of the tenant, who may enter it) or a name of spec.positions. |
 | `spec.signInFrom[].tenant` | string | yes | `Tenant` is the other tenant. |
 | `spec.signInTo` | []string |  | `SignInTo` are other tenants of this cluster this tenant's people may sign in to with their account here: this tenant's half of the other's spec.signInFrom. |
 | `spec.signUp` | object |  | `SignUp` is whether people make their own accounts in the realm. |
@@ -1898,6 +2050,10 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.storeTerms.version` | string | yes | `Version` is the version of the terms the store named when they were accepted. |
 | `spec.tokenEntries` | object |  | `TokenEntries` is how this tenant's token entries come to be served: a component's address that takes a token of the tenant's realm in place of a session. |
 | `spec.tokenEntries.approval` | string |  | `Approval` says whether a token entry needs the perimeter approver's approval before it is served. |
+| `spec.tokenEntries.sessionMaxHours` | integer (int32) |  | `SessionMaxHours` is how long a sign-in through one of this tenant's token entries lasts before the person signs in again. |
+| `spec.trustedDomains` | object |  | `TrustedDomains` are domains outside the cluster trusted for this tenant alone, beside those the cluster trusts (PlatformSecurityPolicy spec.trustedDomains). |
+| `spec.trustedDomains.delegated` | boolean |  | `Delegated` says the tenant's perimeter approver may add and remove domains for this tenant. |
+| `spec.trustedDomains.domains` | []string |  | `Domains` are trusted for this tenant: an egress request of one of its installs that names hosts is granted without a further answer when every host is in a… |
 | `status` | object |  | TenantStatus holds the observed state of a Tenant. |
 | `status.adminEmail` | string |  | `AdminEmail` is the resolved contact address for this tenant, and the administrator's login: admin@\<effectiveDomain>. |
 | `status.appCount` | integer |  | `AppCount` is the total number of apps requested in spec. |
@@ -1908,7 +2064,6 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `status.conditions[].reason` | string | yes | `reason` contains a programmatic identifier indicating the reason for the condition's last transition. |
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
-| `status.defaultGrantedApps` | []string |  | `DefaultGrantedApps` lists the apps whose default grant (spec.apps[].defaultGrant) has been applied: the tenant's members at that moment were added to the app's… |
 | `status.domain` | string |  | `Domain` is the custom domain a TenantDomain binds this tenant to, copied here by the operator so every consumer of EffectiveDomain reads it from the tenant… |
 | `status.mail` | object |  | `Mail` holds the observed DNS record data produced by the mail reconciler. |
 | `status.mail.dkimPublicKey` | string |  | `DKIMPublicKey` is the RSA public key for DKIM signing, base64-encoded (PKIX DER). |
@@ -1970,6 +2125,7 @@ TenantExport captures one tenant's data into an encrypted bundle.
 | `spec.encryption.passphraseSecretRef.key` | string |  | `Key` defaults to "passphrase". |
 | `spec.encryption.passphraseSecretRef.name` | string | yes |  |
 | `spec.encryption.recipients` | []string |  | `Recipients` are age public keys (age1…) to encrypt to, used with mode: recipient. |
+| `spec.tenantCore` | boolean |  | `TenantCore` says whether the tenant's own is captured beside the apps: its realm, its desktop's database and its mailboxes. |
 | `spec.ttlSeconds` | integer (int64) |  | `TTLSeconds` is how long the bundle should be kept before it may be collected. |
 | `status` | object |  | TenantExportStatus reports progress, and carries the state needed to undo a half-finished export after a controller restart. |
 | `status.apps` | []object |  | `Apps` reports per-app progress, including the window each app was paused for. |

@@ -48,7 +48,7 @@ type BuildInput struct {
 	Apps []gentianov1alpha1.TenantApp
 	// Placed are the install names of the components the platform places
 	// in the tenant, which Apps leaves out. One of them that may speak as a
-	// person is a caller of the tenant's adapters like an installed one;
+	// person is a caller of the tenant's agent bridges like an installed one;
 	// nothing else is derived from them here.
 	Placed []string
 	// Profiles are the profiles by install name. They may name more than
@@ -65,25 +65,31 @@ type BuildInput struct {
 	// PodSelectors are the labels each app's pods carry, for an app whose
 	// delivery does not put the app label on them. A contract's two sides,
 	// and the app's own policies (forPods), are selected by these.
-	PodSelectors  map[string]map[string]string
-	Config        Config
-	KubeAPIEndpts *discoveryv1.EndpointSlice
+	PodSelectors map[string]map[string]string
+	// ModelAccessWithheld are the apps released without the model gateway:
+	// the requirement is optional and the app's key is not delivered. Such
+	// an app's policy opens no path to the gateway.
+	ModelAccessWithheld map[string]bool
+	Config              Config
+	KubeAPIEndpts       *discoveryv1.EndpointSlice
 }
 
 // BuildDesired returns all operator-managed NetworkPolicies for a tenant.
 func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 	out := []*networkingv1.NetworkPolicy{
-		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts, in.adapterExclusion()...),
+		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts, in.agentBridgeExclusion()...),
 		ExportJobNetworkPolicy(in.TenantName, in.Namespace, in.Config),
 	}
-	out = append(out, AdapterNetworkPolicies(in)...)
+	out = append(out, AgentBridgeNetworkPolicies(in)...)
+	out = append(out, HomeSyncNetworkPolicies(in)...)
+	out = append(out, PorterNetworkPolicies(in)...)
 
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
 		if profile == nil {
 			continue
 		}
-		if np := KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config); np != nil {
+		if np := kernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config, !in.ModelAccessWithheld[app.Profile]); np != nil {
 			out = append(out, in.forPods(app.Profile, np))
 		}
 		out = append(out, in.forPods(app.Profile, AppInternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile)))
@@ -175,7 +181,13 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 			names[np.Name] = struct{}{}
 		}
 	}
-	for _, np := range AdapterNetworkPolicies(in) {
+	for _, np := range AgentBridgeNetworkPolicies(in) {
+		names[np.Name] = struct{}{}
+	}
+	for _, np := range HomeSyncNetworkPolicies(in) {
+		names[np.Name] = struct{}{}
+	}
+	for _, np := range PorterNetworkPolicies(in) {
 		names[np.Name] = struct{}{}
 	}
 	// Only while there is a Memcached app to build them for: named

@@ -434,10 +434,11 @@ Both are rotated after every use (step 6).
 
 ### Procedure
 
-1. **Declare.** Add yourself to `gentian:platform:break-glass` in the
-   kernel realm. The group has no standing members, so the membership
-   change is the incident's first audit line, in the Keycloak event log,
-   before anything is written.
+1. **Declare.** Break-glass is a person the Cluster claim names
+   (`spec.platformAccess.roleHolders`, role `breakGlass`, with a reason
+   and an `expiresAt`); nobody holds it otherwise. Name yourself in the
+   first commit of step 3, so that the entry is the incident's first audit
+   line, before anything else is written.
 2. **Open the kit** and extract the two credentials to a workstation that
    will be wiped afterwards. Never onto a cluster node.
 3. **Make the change in a clone, signed.** Commit as yourself with the
@@ -455,15 +456,15 @@ Both are rotated after every use (step 6).
    as part of the same incident.
 5. **Bring the director back.** The operator reconciles the OpenFGA store
    from git, so a change to roles or grants made in step 3 is reflected
-   without a second manual step. Group memberships do not come from git: if
-   the store itself was lost, they return from Keycloak as each person's
-   groups next change (#642).
+   without a second manual step. Who holds which position or role is not in
+   git: if the store itself was lost, it returns with each tenant's
+   restore from its backup.
 6. **Rotate and close.** Revoke `break-glass-push` at the git host and issue
    a new one; retire the signing key id from the `sourceIntegrity` policy
-   and add the replacement; re-seal both into the kit; remove yourself from
-   the break-glass group. The incident is closed when the auditor can
-   see, for one incident id: the group change (issuer log), the commit
-   (change log), and the rotation.
+   and add the replacement; re-seal both into the kit; take your `breakGlass` entry off
+   the claim, or let it expire. The incident is closed when the auditor can
+   see, for one incident id: the entry and the commit (change log), and
+   the rotation.
 
 ## What this does not cover
 

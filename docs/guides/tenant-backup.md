@@ -122,6 +122,9 @@ What your users see depends on the app:
   page and come back by themselves.
 - Apps without one are stopped and restarted. To a user that looks like the app
   being briefly unavailable.
+- Apps that run nothing — an action, or an app that never started — have
+  nothing to pause. What they hold is copied as it stands, and an app that
+  holds nothing is recorded as captured, empty.
 
 > **Why pause at all?** An app's database refers to its files, and its files
 > refer back. Copying them while the app is still writing produces a set of

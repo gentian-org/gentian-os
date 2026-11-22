@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -540,16 +541,33 @@ func (s *Server) moveEntry(ctx context.Context, c call, e updateEntry) (gitops.R
 // from the cluster's store, held to the floor, committed with its profile,
 // and the pin moved. The same path an install takes, without a response
 // writer: what would have been the refusal comes back as detail.
+// As an install does, it first installs the apps the build comes with and the
+// tenant does not have, and moves nothing where one of them cannot be had.
 // defaultGrant is the install's, as InstallFrom takes it: nil for a move.
 func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueName, digest string, defaultGrant *bool) (gitops.Result, string, error) {
-	source, detail, err := s.materialise(ctx, c, "app", tenant, profile, catalogueName, digest)
+	source, definition, detail, err := s.materialise(ctx, c, "app", tenant, profile, catalogueName, digest)
 	if err != nil {
 		return gitops.Result{}, detail, err
+	}
+	// The apps this build comes with and the tenant does not have, before
+	// the pin: a build may come with one the build before it did not.
+	if definition != nil && len(definition.Spec.ComesWith) > 0 {
+		writing, done := context.WithTimeout(context.WithoutCancel(ctx), comesWithWait)
+		defer done()
+		ctx = writing
+		if _, refusal, err := s.bringComesWith(ctx, c, tenant, profile, definition, source.Name, defaultGrant); err != nil {
+			return gitops.Result{}, err.Error(), err
+		} else if refusal != "" {
+			return gitops.Result{}, refusal, errComesWithRefused
+		}
 	}
 	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, digest, source.Name, defaultGrant, c.meta)
 	if err != nil {
 		return gitops.Result{}, err.Error(), err
 	}
+	// What the new build asks of the apps it came with, or that came with
+	// it, is pre-approved as what the first build asked was.
+	s.approveAmong(ctx, tenant)
 	return res, "", nil
 }
 
@@ -557,7 +575,7 @@ func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueN
 // catalogue, by the steps moveTo takes; the app's other add-ons, and who
 // has each, stay as they are.
 func (s *Server) moveAddonTo(ctx context.Context, c call, tenant, base, addon, catalogueName, digest string) (gitops.Result, string, error) {
-	source, detail, err := s.materialise(ctx, c, "add-on", tenant, addon, catalogueName, digest)
+	source, _, detail, err := s.materialise(ctx, c, "add-on", tenant, addon, catalogueName, digest)
 	if err != nil {
 		return gitops.Result{}, detail, err
 	}
@@ -583,34 +601,34 @@ func (s *Server) moveAddonTo(ctx context.Context, c call, tenant, base, addon, c
 // read from the cluster's store, held to the floor and to the reserved
 // addresses, and committed with its profile. what says which it is, "app"
 // or "add-on", for a refusal.
-func (s *Server) materialise(ctx context.Context, c call, what, tenant, profile, catalogueName, digest string) (visibleSource, string, error) {
+func (s *Server) materialise(ctx context.Context, c call, what, tenant, profile, catalogueName, digest string) (visibleSource, *gentianov1alpha1.ComponentProfile, string, error) {
 	rec := &recorder{}
 	req := (&http.Request{}).WithContext(ctx)
 	source, known, err := s.resolveSource(ctx, tenant, catalogueName)
 	if err != nil {
-		return visibleSource{}, err.Error(), err
+		return visibleSource{}, nil, err.Error(), err
 	}
 	if !known {
-		return visibleSource{}, "the tenant no longer sees catalog " + catalogueName, fmt.Errorf("unknown catalog")
+		return visibleSource{}, nil, "the tenant no longer sees catalog " + catalogueName, fmt.Errorf("unknown catalog")
 	}
 	fetched, ok := s.fetchOrStored(rec, req, source, tenant, profile, digest)
 	if !ok {
-		return visibleSource{}, rec.detail(), fmt.Errorf("fetch refused")
+		return visibleSource{}, nil, rec.detail(), fmt.Errorf("fetch refused")
 	}
 	if s.refusedByFloor(rec, req, fetched, what+" "+catalogueName+"/"+profile) {
-		return visibleSource{}, rec.detail(), fmt.Errorf("floor")
+		return visibleSource{}, nil, rec.detail(), fmt.Errorf("floor")
 	}
 	zone, err := s.reservedAddressZone(ctx)
 	if err != nil {
-		return visibleSource{}, err.Error(), err
+		return visibleSource{}, nil, err.Error(), err
 	}
 	if why := fetchedTakesReservedAddress(fetched.Definition, source.origin(tenant), zone); why != "" {
-		return visibleSource{}, why, fmt.Errorf("reserved address")
+		return visibleSource{}, nil, why, fmt.Errorf("reserved address")
 	}
 	if _, ok := s.commitEntry(rec, req, c, tenant, source, fetched); !ok {
-		return visibleSource{}, rec.detail(), fmt.Errorf("commit refused")
+		return visibleSource{}, nil, rec.detail(), fmt.Errorf("commit refused")
 	}
-	return source, "", nil
+	return source, fetched.Definition, "", nil
 }
 
 // recorder captures what a handler would have answered, for a caller that

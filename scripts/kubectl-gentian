@@ -32,14 +32,15 @@
 #                                  (--identity-file <f> | --passphrase) [--drop-custom-domain]
 #                                  (the bundle's custom domain is kept unless --drop-custom-domain)
 #   kubectl gentian tenants delegate-catalogues <name> on|off
+#   kubectl gentian tenants delegate-trusted-domains <name> on|off
+#                                                             whether the tenant's perimeter approver may keep trusted domains
 #   kubectl gentian tenants domain <name>                      the domain of its own it is bound to
 #   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
 #                                                             (a cluster with many tenants only)
 #   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
 #   kubectl gentian tenants mail-mode <name> [<mode>]          what the operator provisions for its mail:
 #                                                             selfhosted, external, transport-only, disabled
-#   kubectl gentian tenants groups <name> [<group>... | --clear]   its own groups, declared in git
-#   kubectl gentian tenants sign-in <name> [--from <tenant> --groups <g>,... | --remove <tenant>]
+#   kubectl gentian tenants sign-in <name> [--from <tenant> --positions <p>,... | --remove <tenant>]
 #                                                             people of another tenant of this cluster signing in here
 #   kubectl gentian tenants partners <name>                    realms of other clusters its realm links accounts with
 #   kubectl gentian tenants partners <name> add <partner> --issuer <https://<host>/<path to the realm>>
@@ -90,20 +91,21 @@
 #   kubectl gentian release set <vX.Y.Z> [--auto-upgrade none|patch|minor]   run this release; one signed commit by the director
 #   kubectl gentian release track <branch>       follow a gentian-os branch build by build (a development cluster)
 #   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
-#                                                mainAddress.tenant=<tenant>, mail.serviceMode=system,
-#                                                platformRoles.auditor=gentian:platform:auditor ...
+#                                                mainAddress.tenant=<tenant>, mail.serviceMode=system ...
 #   kubectl gentian domains [--problems]         every domain the cluster serves, the DNS records it needs, and whether
 #                                                the internet has them: present, pending, missing, or held by another record
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
-#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
+#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone] [--approve-egress]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
-#   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
+#   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...
 #                                                             approve one request: egress (the tenant's perimeter approver),
 #                                                             podSecurity or clusterRoles (the cluster's security officer),
 #                                                             apiExtensions or a role that writes (break-glass)
 #   kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"
+#   kubectl gentian apps withdraw <app> <kind>/<name> --tenant <tenant>
+#                                                             take back one approval; the request waits for an answer again
 #                                                             decline one, with the same right; the app keeps waiting
 #   kubectl gentian approvals list                             what awaits the security officer and the perimeter
 #                                                             approver, across all tenants: who answers, who asked,
@@ -118,6 +120,10 @@
 #                                     [--acknowledge-main-address-rule] [--yes]
 #   kubectl gentian exposures list --tenant <tenant>            what the tenant has on the internet
 #   kubectl gentian exposures withdraw <app-instance> <entry> --tenant <tenant>
+#   kubectl gentian trusted-domains list --tenant <tenant>      the domains trusted for this tenant alone
+#   kubectl gentian trusted-domains add <domain> --tenant <tenant>
+#                                                               an egress request whose hosts are all in trusted domains needs no answer
+#   kubectl gentian trusted-domains remove <domain> --tenant <tenant>
 #   kubectl gentian exposures alias <app-instance> <entry> --tenant <tenant> (--host <name>.<cluster's domain> | --remove)
 #                                                               a second address for a published entry, directly under
 #                                                               the cluster's own domain; the cluster's administrator's
@@ -653,7 +659,7 @@ cmd_tenants_create() {
     if [[ "${signup}" == "true" ]]; then
         echo "WARNING: --self-sign-up lets anybody on the internet make an account in this tenant's" >&2
         echo "  realm, on a registration page at the cluster's identity provider. Such an account" >&2
-        echo "  is in none of the tenant's groups: no desktop, no rights on the platform, not" >&2
+        echo "  holds no position of the tenant: no desktop, no rights on the platform, not" >&2
         echo "  counted as a user of the tenant. The address is confirmed by a message to it and" >&2
         echo "  the page carries a proof-of-work check; the tenant's mail is transport-only so the" >&2
         echo "  realm can send. For a tenant whose apps serve the public; not for a workspace." >&2
@@ -989,12 +995,13 @@ cmd_apps_list() {
 # way the director fetches the bundle from the source and installs nothing
 # unless it hashes to the digest sent.
 _apps_install() {
-    local app="$1" t="$2" everyone="$3" from="" digest=""
+    local app="$1" t="$2" everyone="$3" from="" digest="" approve="false"
     shift 3
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --from) from="${2:?}"; shift 2 ;;
             --digest) digest="${2:?}"; shift 2 ;;
+            --approve-egress) approve="true"; shift ;;
             *) shift ;;
         esac
     done
@@ -1031,9 +1038,28 @@ _apps_install() {
     # The one spelling a manifest carries, so what is printed is what is recorded.
     digest="$(printf '%s' "${digest}" | tr '[:upper:]' '[:lower:]')"
     [[ "${digest}" == sha256:* ]] || digest="sha256:${digest}"
+    # What the build, and the apps it comes with, ask for beyond the tenant:
+    # said before the install, and approved with it under --approve-egress by
+    # whoever is the tenant's perimeter approver.
+    local asks waiting approving="[]"
+    asks="$(_call GET "/v1/tenants/${t}/catalogues/${from}/entries/${app}/asks?digest=${digest}")" || exit 1
+    waiting="$(printf '%s' "${asks}" | jq -r '.egress | length')"
+    if [[ "${waiting}" != "0" ]]; then
+        echo "It asks for outbound access:"
+        printf '%s' "${asks}" | jq -r '.egress[] |
+            "  \(.install) \(.privilege)" +
+            (if (.hosts // []) | length > 0 then "  to \(.hosts | join(", "))" else "  by address" end) +
+            (if (.reason // "") != "" then "  -- \(.reason)" else "" end)'
+        if [[ "${approve}" == "true" ]]; then
+            [[ "$(printf '%s' "${asks}" | jq -r '.mayApprove')" == "true" ]] ||
+                die "--approve-egress is the perimeter approver's of ${t}; install without it, and the app waits for their answer"
+            approving="$(printf '%s' "${asks}" | jq -c '[.egress[] | {install, privilege}]')"
+        fi
+    fi
     local body answer status commit message
-    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --argjson e "${everyone}" \
-        '{coordinate: $c, digest: $d} + (if $e then {defaultGrant: true} else {} end)')"
+    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --argjson e "${everyone}" --argjson a "${approving}" \
+        '{coordinate: $c, digest: $d} + (if $e then {defaultGrant: true} else {} end) +
+         (if ($a | length) > 0 then {approve: $a} else {} end)')"
     answer="$(_call POST "/v1/tenants/${t}/apps/${app}" "${body}")" || exit 1
     status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
     commit="$(printf '%s' "${answer}" | jq -r '.commit // "" | .[0:8]')"
@@ -1057,6 +1083,17 @@ _apps_install() {
                 echo "Moving ${app} in ${t} to this build: committed (${commit:-no commit id}); the platform rolls it out."
             else
                 echo "Installing ${app} into ${t}: committed (${commit:-no commit id}); the platform installs it."
+            fi
+            if [[ "${waiting}" != "0" ]]; then
+                local approved
+                approved="$(printf '%s' "${answer}" | jq -r '(.approved // []) | length')"
+                if [[ "${approved}" == "${waiting}" ]]; then
+                    echo "Its outbound access is approved, by you."
+                elif [[ "${approve}" == "true" ]]; then
+                    echo "Approved ${approved} of ${waiting} requests; the rest wait: 'kubectl gentian apps approve <app> --tenant ${t}' lists them." >&2
+                else
+                    echo "It waits for that approval: install with --approve-egress, or 'kubectl gentian apps approve <app> <kind>/<name> --tenant ${t}'."
+                fi
             fi ;;
     esac
 }
@@ -1710,6 +1747,80 @@ cmd_tenants_delegate_catalogues() {
     fi
 }
 
+# tenants delegate-trusted-domains: whether a tenant's perimeter approver may
+# keep trusted domains for their tenant. The cluster administrator's to say.
+cmd_tenants_delegate_trusted_domains() {
+    local name="${1:-}" state="${2:-}"
+    [[ -n "${name}" && ( "${state}" == "on" || "${state}" == "off" ) ]] ||
+        die "usage: kubectl gentian tenants delegate-trusted-domains <name> on|off"
+    _tenant "The tenant" "${name}"
+    _discover
+    if [[ "${state}" == "on" ]]; then
+        _call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/trusted-domains-delegation" >/dev/null
+        echo "The perimeter approver of ${name} may now keep trusted domains for the tenant: committed."
+    else
+        _call DELETE "/v1/clusters/${_CLUSTER}/tenants/${name}/trusted-domains-delegation" >/dev/null
+        echo "${name} may no longer keep trusted domains: committed. Its list stays and answers nothing until it is delegated again."
+    fi
+}
+
+# trusted-domains: the domains outside the cluster trusted for one tenant
+# alone. An egress request of one of its apps whose hosts are all in trusted
+# domains is granted without a further answer. Adding and removing is the
+# tenant's perimeter approver's, once the cluster's administrator delegated
+# the list (tenants delegate-trusted-domains).
+cmd_trusted_domains() {
+    local usage_text sub="${1:-}" domain="" t="" answer
+    usage_text='usage: kubectl gentian trusted-domains list --tenant <tenant>
+       kubectl gentian trusted-domains add|remove <domain> --tenant <tenant>'
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+            -*) die "unknown option $1" ;;
+            *)
+                [[ -z "${domain}" ]] || die "unexpected argument $1"
+                domain="$1"
+                shift ;;
+        esac
+    done
+    [[ -n "${t}" ]] || die "${usage_text}"
+    _tenant "a tenant" "${t}"
+    need curl jq
+    case "${sub}" in
+        list)
+            [[ -z "${domain}" ]] || die "${usage_text}"
+            answer="$(_call GET "/v1/tenants/${t}/trusted-domains")" || exit 1
+            if [[ "$(jq -r '.delegated // false' <<<"${answer}")" != "true" ]]; then
+                echo "Trusted domains are not delegated to ${t}: its list answers nothing (tenants delegate-trusted-domains ${t} on)."
+            fi
+            if [[ "$(jq -r '.domains | length' <<<"${answer}")" == "0" ]]; then
+                echo "${t} has no trusted domains of its own."
+                return 0
+            fi
+            echo "Trusted for ${t}:"
+            jq -r '.domains[] | "  " + .' <<<"${answer}"
+            ;;
+        add|remove)
+            [[ -n "${domain}" ]] || die "${usage_text}"
+            [[ "${domain}" =~ ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$ ]] ||
+                die "a domain is written in lower case with at least two labels, as in example.org: not '${domain}'"
+            if [[ "${sub}" == "add" ]]; then
+                answer="$(_call PUT "/v1/tenants/${t}/trusted-domains/${domain}")" || exit 1
+                if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+                    echo "${domain} is trusted for ${t} already; nothing was committed."
+                    return 0
+                fi
+                echo "${domain} is now trusted for ${t}: committed ($(_committed "${answer}")). Requests for hosts in it need no further answer."
+            else
+                answer="$(_call DELETE "/v1/tenants/${t}/trusted-domains/${domain}")" || exit 1
+                echo "${domain} is no longer trusted for ${t}: committed ($(_committed "${answer}")). A request it answered waits for an answer again."
+            fi
+            ;;
+        *) die "${usage_text}" ;;
+    esac
+}
+
 # tenants platform-access: whether the platform's administrators may sign in
 # to a tenant, as its administrators (Tenant spec.platformAccess.adminsEnter).
 # The tenant's own administrators' switch, off unless turned on, and not the
@@ -1801,27 +1912,30 @@ cmd_platform_roles_candidates() {
     fi
 }
 
-# The members of the kernel-realm group admin and breakGlass are held through
-# (spec.platformRoles). Read only: they are managed in Keycloak.
+# The platform tenant's people who hold a cluster role, as the kernel realm
+# knows them. Read only: who holds a role is written on the Cluster claim.
 cmd_platform_roles_members() {
     [[ $# -eq 0 ]] || die "usage: kubectl gentian platform-roles members"
     need jq
     _discover
     local answer
     answer="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/platform-role-members")" || exit 1
-    jq -r '(["ROLE","GROUP","LOGIN","EMAIL"] | @tsv),
-        (.roles[] | . as $r | if .unavailable then [$r.role, $r.group, "(could not be read)", ""] | @tsv
-            elif (.members | length) == 0 then [$r.role, $r.group, "(nobody)", ""] | @tsv
-            else .members[] | [$r.role, $r.group, .username, (.email // "")] | @tsv end)' <<<"${answer}" |
-        column -t -s $'\t'
-    if [[ "$(jq -r '.complete' <<<"${answer}")" != "true" ]]; then
-        echo "A group could not be read; the list is incomplete."
+    if [[ "$(jq '.roles | length' <<<"${answer}")" == "0" ]]; then
+        echo "The claim names nobody of the platform tenant a role holder."
+    else
+        jq -r '(["ROLE","LOGIN","EMAIL"] | @tsv),
+            (.roles[] | . as $r | .members[] | [$r.role, .username, (.email // "")] | @tsv)' <<<"${answer}" |
+            column -t -s $'\t'
     fi
-    echo "These groups are managed in Keycloak, in the kernel realm."
+    if [[ "$(jq -r '.complete' <<<"${answer}")" != "true" ]]; then
+        echo "A holder could not be read from the kernel realm; they are listed as the claim names them."
+    fi
+    echo "Who holds a role is written on the Cluster claim: platform-roles holders."
 }
 
 # review: the periodic review of who holds a role over the cluster. Shows the
-# group members and the holders, asks, and has the director record it: one
+# platform tenant's holders as the kernel realm knows them and the holders
+# as the claim names them, asks, and has the director record it: one
 # commit listing what was shown, with the next review a quarter on unless
 # --next names another date.
 cmd_platform_roles_review() {
@@ -1837,10 +1951,8 @@ cmd_platform_roles_review() {
     local members holders answer typed
     members="$(_call_registrar GET "/v1/clusters/${_CLUSTER}/platform-role-members")" || exit 1
     holders="$(_call GET "/v1/clusters/${_CLUSTER}/platform-roles/holders")" || exit 1
-    jq -r '(["ROLE","GROUP","LOGIN","EMAIL"] | @tsv),
-        (.roles[] | . as $r | if .unavailable then [$r.role, $r.group, "(could not be read)", ""] | @tsv
-            elif (.members | length) == 0 then [$r.role, $r.group, "(nobody)", ""] | @tsv
-            else .members[] | [$r.role, $r.group, .username, (.email // "")] | @tsv end)' <<<"${members}" |
+    jq -r '(["ROLE","LOGIN","EMAIL"] | @tsv),
+        (.roles[] | . as $r | .members[] | [$r.role, .username, (.email // "")] | @tsv)' <<<"${members}" |
         column -t -s $'\t'
     echo
     if [[ "$(jq '.roleHolders | length' <<<"${holders}")" == "0" ]]; then
@@ -1851,8 +1963,8 @@ cmd_platform_roles_review() {
             column -t -s $'\t'
     fi
     echo
-    [[ "$(jq -r '.complete' <<<"${members}")" == "true" ]] || die "a group could not be read; a review of an incomplete list is not recorded"
-    echo "Take away what nobody should hold first: Keycloak for the groups, platform-roles holders remove for the claim."
+    [[ "$(jq -r '.complete' <<<"${members}")" == "true" ]] || die "a holder could not be read from the kernel realm; a review of an incomplete list is not recorded"
+    echo "Take away what nobody should hold first: platform-roles holders remove."
     read -r -p "Type reviewed to record that this is who should hold these roles: " typed
     [[ "${typed}" == "reviewed" ]] || die "nothing was recorded"
     answer="$(_call POST "/v1/clusters/${_CLUSTER}/actions/review-access" \
@@ -2039,63 +2151,21 @@ _committed() {
     echo "${commit:-no commit id}"
 }
 
-# kubectl gentian tenants groups <tenant> [<group>... | --clear]
-# A tenant's own groups of its realm, declared in git (spec.groups): made by
-# the platform, filled in the Admin Console. Without names it shows them;
-# with names it sets them (the list given is the list); --clear removes all.
-cmd_tenants_groups() {
-    local name="${1:-}" clear="" answer body
-    [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants groups <tenant> [<group>... | --clear]"
-    shift
-    _tenant "a tenant" "${name}"
-    local groups=()
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --clear) clear=1; shift ;;
-            -*) die "unknown option $1" ;;
-            *) _label "a group" "$1"; groups+=("$1"); shift ;;
-        esac
-    done
-    need curl jq
-    _connect
-    if [[ -z "${clear}" && ${#groups[@]} -eq 0 ]]; then
-        answer="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/groups")" || exit 1
-        if [[ "$(jq '.groups | length' <<<"${answer}")" == "0" ]]; then
-            echo "Tenant ${name} declares no groups of its own."
-        else
-            jq -r '.groups[]' <<<"${answer}"
-        fi
-        return 0
-    fi
-    [[ -z "${clear}" || ${#groups[@]} -eq 0 ]] || die "--clear takes no groups"
-    if [[ ${#groups[@]} -gt 0 ]]; then
-        body="$(printf '%s\n' "${groups[@]}" | jq -R . | jq -sc '{groups: .}')"
-    else
-        body='{"groups":[]}'
-    fi
-    answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/groups" "${body}")" || exit 1
-    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
-        echo "Tenant ${name}'s groups are as given already; nothing was committed."
-        return 0
-    fi
-    echo "Tenant ${name}'s groups: committed ($(_committed "${answer}")). The platform makes them in its realm."
-}
-
-# kubectl gentian tenants sign-in <target> [--from <source> --groups <g>,... | --remove <source>]
+# kubectl gentian tenants sign-in <target> [--from <source> --positions <p>,... | --remove <source>]
 # People of another tenant of this cluster signing in to <target> with their
-# account there, given the groups of <target> named (members, or groups of
-# its own: tenants groups). One commit of both tenants' line; the platform
+# account there, given the positions of <target> named (user, or positions
+# the tenant declares). One commit of both tenants' line; the platform
 # makes the client and the identity provider. Without options it shows what
 # <target> declares.
 cmd_tenants_sign_in() {
     local name="${1:-}" from="" given="" remove="" answer body
-    [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants sign-in <tenant> [--from <tenant> --groups <g>,... | --remove <tenant>]"
+    [[ -n "${name}" && "${name}" != -* ]] || die "usage: kubectl gentian tenants sign-in <tenant> [--from <tenant> --positions <p>,... | --remove <tenant>]"
     shift
     _tenant "a tenant" "${name}"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --from) from="${2:-}"; shift 2 || die "--from needs a tenant" ;;
-            --groups) given="${2:-}"; shift 2 || die "--groups needs a list" ;;
+            --positions) given="${2:-}"; shift 2 || die "--positions needs a list" ;;
             --remove) remove="${2:-}"; shift 2 || die "--remove needs a tenant" ;;
             *) die "unexpected argument $1" ;;
         esac
@@ -2106,7 +2176,7 @@ cmd_tenants_sign_in() {
         answer="$(_call GET "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in")" || exit 1
         jq -r --arg t "${name}" '
             (if (.signInFrom | length) == 0 then "No tenant'"'"'s people sign in to \($t)."
-             else (.signInFrom[] | "people of \(.tenant) sign in to \($t) as: \((.groups // []) | join(", "))") end),
+             else (.signInFrom[] | "people of \(.tenant) sign in to \($t) as: \((.positions // []) | join(", "))") end),
             (if (.signInTo | length) > 0 then "people of \($t) sign in to: \(.signInTo | join(", "))" else empty end)' <<<"${answer}"
         return 0
     fi
@@ -2122,7 +2192,7 @@ cmd_tenants_sign_in() {
         return 0
     fi
     _tenant "a tenant" "${from}"
-    body="$(printf '%s' "${given}" | tr ',' '\n' | sed '/^$/d' | jq -R . | jq -sc '{groups: .}')"
+    body="$(printf '%s' "${given}" | tr ',' '\n' | sed '/^$/d' | jq -R . | jq -sc '{positions: .}')"
     answer="$(_call PUT "/v1/clusters/${_CLUSTER}/tenants/${name}/sign-in/${from}" "${body}")" || exit 1
     if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
         echo "People of ${from} sign in to ${name} as declared already; nothing was committed."
@@ -2831,16 +2901,17 @@ cmd_apps() {
             ;;
         approve) cmd_apps_approve "$@" ;;
         decline) cmd_apps_decline "$@" ;;
-        *) die "usage: kubectl gentian apps list|install|uninstall|approve|decline ..." ;;
+        withdraw) cmd_apps_withdraw "$@" ;;
+        *) die "usage: kubectl gentian apps list|install|uninstall|approve|decline|withdraw ..." ;;
     esac
 }
 
-# kubectl gentian apps approve <app> [<kind>/<name>] --tenant <t> --reason "<why>" [--expires <RFC 3339>]
+# kubectl gentian apps approve <app> [<kind>/<name>] --tenant <t> [--reason "<comment>"] [--expires <RFC 3339>]
 #
 # An app whose profile asks for more than the default posture waits until a
 # person answers each request (the Component reads "waiting for approval of
 # <kind>/<name>"). This is the answer: one commit through the director, with
-# the approver taken from the session and the reason in their words. Who may
+# the approver taken from the session and, if they leave one, a comment. Who may
 # answer is the director's to decide by the request: an egress request is the
 # tenant administrator's, a podSecurity or clusterRoles one the cluster's
 # security officer's, an apiExtensions one or a cluster role that writes
@@ -2848,11 +2919,13 @@ cmd_apps() {
 # for, as the cluster has it.
 cmd_apps_approve() {
     local usage_text app="" privilege="" reason="" expires="" t answer kind name
+    local -a hosts=()
     usage_text='usage: kubectl gentian apps approve <app> --tenant <tenant>
-       kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]'
+       kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...'
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+            --host) [[ -n "${2:-}" ]] || die "--host needs a value"; hosts+=("$2"); shift 2 ;;
             --reason) reason="${2:-}"; shift 2 || die "--reason needs a value" ;;
             --expires) expires="${2:-}"; shift 2 || die "--expires needs a value" ;;
             -*) die "unknown option $1" ;;
@@ -2881,7 +2954,7 @@ cmd_apps_approve() {
         local p
         while IFS= read -r p; do printf '  %s\n' "${p}"; done <<<"${pending}"
         echo "Approve one with:"
-        echo "  kubectl gentian apps approve ${app} <kind>/<name> --tenant ${t} --reason \"<why, in your words>\""
+        echo "  kubectl gentian apps approve ${app} <kind>/<name> --tenant ${t}"
         return 0
     fi
 
@@ -2889,7 +2962,6 @@ cmd_apps_approve() {
     kind="${PRIV_KIND}"
     name="${PRIV_NAME}"
     reason="$(printf '%s' "${reason}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-    (( ${#reason} >= 10 )) || die "--reason is required: at least ten characters, in your own words. It is what a reviewer reads in the commit."
 
     # An API extension's approval names the definitions it approves: the
     # digest the cluster reports for the request as the profile has it now.
@@ -2903,13 +2975,63 @@ cmd_apps_approve() {
         echo "Approving the definitions of ${privilege} as the profile has them now (${digest})."
     fi
 
+    # An egress request whose hosts are named at approval opens the hosts
+    # the approval names, and nothing without them.
+    if [[ "${kind}" == "egress" ]]; then
+        local at_approval
+        answer="$(_call_usher GET "/v1/tenants/${t}/apps/status")" || exit 1
+        at_approval="$(jq -r --arg a "${app}" --arg p "${privilege}" \
+            '[.apps[]? | (., .addons[]?) | select(.name == $a or .profile == $a) | .pendingPrivilegeApprovals[]? | select(.privilege == $p) | .hostsAtApproval // false][0] // false' <<<"${answer}")"
+        if [[ "${at_approval}" == "true" && ${#hosts[@]} -eq 0 ]]; then
+            die "${privilege} of ${app} opens the hosts its approval names: add --host <host> for each one."
+        fi
+    elif [[ ${#hosts[@]} -gt 0 ]]; then
+        die "--host belongs to an egress approval"
+    fi
+    local hosts_json
+    hosts_json="$(printf '%s\n' "${hosts[@]+"${hosts[@]}"}" | jq -R . | jq -sc 'map(select(. != ""))')"
+
     answer="$(_call PUT "/v1/tenants/${t}/privileges/${app}/${kind}/${name}" \
-        "$(jq -n --arg r "${reason}" --arg e "${expires}" --arg d "${digest}" '{reason: $r} + (if $e == "" then {} else {expiresAt: $e} end) + (if $d == "" then {} else {digest: $d} end)')")" || exit 1
+        "$(jq -n --arg r "${reason}" --arg e "${expires}" --arg d "${digest}" --argjson h "${hosts_json}" '(if $r == "" then {} else {reason: $r} end) + (if $e == "" then {} else {expiresAt: $e} end) + (if $d == "" then {} else {digest: $d} end) + (if ($h | length) == 0 then {} else {hosts: $h} end)')")" || exit 1
     if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
         echo "${privilege} of ${app} in ${t} is approved already; nothing was committed."
         return 0
     fi
     echo "Approved ${privilege} for ${app} in ${t}: committed ($(_committed "${answer}")). The app goes on once the platform has it."
+}
+
+# kubectl gentian apps withdraw <app> <kind>/<name> --tenant <t>
+#
+# Takes back one approval: one commit through the director. The app's request
+# waits for an answer again and the platform takes away what the approval
+# gave. Whoever may approve a request of the kind may withdraw it.
+cmd_apps_withdraw() {
+    local usage_text app="" privilege="" t answer
+    usage_text='usage: kubectl gentian apps withdraw <app> <kind>/<name> --tenant <tenant>'
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+            -*) die "unknown option $1" ;;
+            *)
+                if [[ -z "${app}" ]]; then app="$1"
+                elif [[ -z "${privilege}" ]]; then privilege="$1"
+                else die "unexpected argument $1"
+                fi
+                shift ;;
+        esac
+    done
+    [[ -n "${app}" && -n "${privilege}" && -n "${t:-}" ]] || die "${usage_text}"
+    _label "an app" "${app}"
+    _tenant "a tenant" "${t}"
+    need curl jq
+    _privilege_ref "${privilege}"
+
+    answer="$(_call DELETE "/v1/tenants/${t}/privileges/${app}/${PRIV_KIND}/${PRIV_NAME}")" || exit 1
+    if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
+        echo "${privilege} of ${app} in ${t} is not approved; nothing was committed."
+        return 0
+    fi
+    echo "Withdrew ${privilege} from ${app} in ${t}: committed ($(_committed "${answer}")). The request waits for an answer again."
 }
 
 # _privilege_ref <kind>/<name> -- checks the request's shape and names the
@@ -3294,13 +3416,13 @@ main() {
                 retire) cmd_tenants_retire "$@" ;;
                 import) cmd_tenants_import "$@" ;;
                 delegate-catalogues) cmd_tenants_delegate_catalogues "$@" ;;
+                delegate-trusted-domains) cmd_tenants_delegate_trusted_domains "$@" ;;
                 domain) cmd_tenants_domain "$@" ;;
                 mail-mode) cmd_tenants_mail_mode "$@" ;;
                 partners) cmd_tenants_partners "$@" ;;
-                groups) cmd_tenants_groups "$@" ;;
                 sign-in) cmd_tenants_sign_in "$@" ;;
                 platform-access) cmd_tenants_platform_access "$@" ;;
-                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|domain|mail-mode|partners|groups|sign-in|platform-access" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|delegate-trusted-domains|domain|mail-mode|partners|groups|sign-in|platform-access" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;
@@ -3312,6 +3434,7 @@ main() {
         domain|domains) cmd_domains "$@" ;;
         platform-role|platform-roles) cmd_platform_roles "$@" ;;
         exposure|exposures) cmd_exposures "$@" ;;
+        trusted-domains) cmd_trusted_domains "$@" ;;
         approval|approvals) cmd_approvals "$@" ;;
         resource|resources) cmd_resources "$@" ;;
         credential|credentials) cmd_credentials "$@" ;;

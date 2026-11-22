@@ -80,6 +80,29 @@ func TestExchangeSecretsAreGatheredByRealm(t *testing.T) {
 	}
 }
 
+// A realm's door device client secret is gathered beside its exchange
+// client secret, under an entry of its own.
+func TestDeviceClientSecretsAreGatheredBesideTheExchangeSecrets(t *testing.T) {
+	ctx := context.Background()
+	devices := exchangeSecret("edge-acme-devices", "", "acme-devices")
+	devices.Labels = map[string]string{devicesRealmLabel: "acme"}
+	c := fake.NewClientBuilder().WithScheme(rightsScheme(t)).WithObjects(
+		exchangeSecret("acme-exchange", "acme", "acme-secret"),
+		devices,
+	).Build()
+	r := &GatewayPlatformReconciler{Client: c}
+	if err := r.ensureBouncerExchangeSecrets(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: bouncerExchangeSecret, Namespace: servicesNamespace}, s); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Data) != 2 || string(s.Data["acme"]) != "acme-secret" || string(s.Data["acme.devices"]) != "acme-devices" {
+		t.Fatalf("gathered %v", s.Data)
+	}
+}
+
 // A Secret of the bouncer's name that the operator did not write is not
 // filled with every realm's secret.
 func TestExchangeSecretsAreNotWrittenIntoAForeignSecret(t *testing.T) {

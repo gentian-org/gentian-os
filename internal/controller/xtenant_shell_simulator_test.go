@@ -237,9 +237,6 @@ func tenantSpecFromXR(spec map[string]interface{}) gentianov1alpha1.TenantSpec {
 				*target = &parsed
 			}
 		}
-		if v, ok := raw["maxApps"].(int64); ok {
-			q.MaxApps = int32(v)
-		}
 		if v, ok := raw["maxPods"].(int64); ok {
 			q.MaxPods = int32(v)
 		}

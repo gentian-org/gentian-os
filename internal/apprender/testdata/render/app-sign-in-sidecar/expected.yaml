@@ -107,31 +107,6 @@ spec:
   providerConfigRef:
     name: kubernetes
 ---
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: demo-app-entitlement-group
-  labels:
-    crossplane.io/composite: render-demo-app-fixture
-  name: gentian-tenant-demo-app-demo-app
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XApp
-    name: render-demo-app-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    attributes:
-      gentianos.io/managed-by: platform
-    name: gentian:tenant:demo:app:demo-app
-    realmId: demo
-  providerConfigRef:
-    name: keycloak
----
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
@@ -398,45 +373,14 @@ spec:
     name: tenant-apps
   rollbackLimit: 3
 ---
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Roles
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: demo-app-sign-in-admin-grant
-  labels:
-    crossplane.io/composite: render-demo-app-fixture
-  name: demo-demo-app-sign-in-admin-grant
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XApp
-    name: render-demo-app-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    exhaustive: false
-    groupIdRef:
-      name: gentian-tenant-demo-app-admins
-      policy:
-        resolve: Always
-    realmId: demo
-    roleIdsRefs:
-    - name: demo-demo-app-sign-in-admin-role
-      policy:
-        resolve: Always
-  providerConfigRef:
-    name: keycloak
----
 apiVersion: client.keycloak.crossplane.io/v1alpha1
 kind: ProtocolMapper
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: demo-app-sign-in-admin-mapper
+    crossplane.io/composition-resource-name: demo-app-sign-in-roles-mapper
   labels:
     crossplane.io/composite: render-demo-app-fixture
-  name: demo-demo-app-sign-in-admin-mapper
+  name: demo-demo-app-sign-in-roles-mapper
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -449,39 +393,12 @@ spec:
   forProvider:
     config:
       attribute.name: Role
-      attribute.nameformat: Basic
-      single: "true"
-    name: app-admin
+      gentian.app: demo-app
+      gentian.roles: '{"demo-app":{"admin":["gentian-app-admin"]}}'
+      gentian.tenant: demo
+    name: app-roles
     protocol: saml
-    protocolMapper: saml-role-list-mapper
-    realmId: demo
-    samlClientIdRef:
-      name: demo-demo-app-sign-in-client
-      policy:
-        resolve: Always
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: role.keycloak.crossplane.io/v1alpha1
-kind: Role
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: demo-app-sign-in-admin-role
-  labels:
-    crossplane.io/composite: render-demo-app-fixture
-  name: demo-demo-app-sign-in-admin-role
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XApp
-    name: render-demo-app-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    description: 'Administers demo-app: held by the tenant''s app administrators'
-    name: gentian-app-admin
+    protocolMapper: gentian-saml-app-roles
     realmId: demo
     samlClientIdRef:
       name: demo-demo-app-sign-in-client

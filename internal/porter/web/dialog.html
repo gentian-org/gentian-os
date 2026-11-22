@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Files</title>
+<link rel="stylesheet" href="/dialog.css">
+</head>
+<body>
+<header>
+  <h1 id="title">Choose a file</h1>
+  <p id="for" hidden></p>
+</header>
+<nav id="crumbs" aria-label="Folder"></nav>
+<main>
+  <p id="note" role="status"></p>
+  <ul id="entries" role="listbox" aria-label="Files"></ul>
+</main>
+<footer>
+  <button id="cancel" type="button">Cancel</button>
+  <button id="choose" type="button" class="primary" disabled>Choose</button>
+</footer>
+<script src="/dialog.js"></script>
+</body>
+</html>

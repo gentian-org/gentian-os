@@ -61,6 +61,8 @@ func TestATableThatIsNotOneIsRefused(t *testing.T) {
 		"an own run at a tag":                func(t *Table) { t.Callers[0].Own[0].Digest = "" },
 		"a tenant named twice":               func(t *Table) { t.Tenants = append(t.Tenants, t.Tenants[0]) },
 		"a pull Secret that is not a name":   func(t *Table) { t.Tenants[0].Actions[0].PullSecrets = []string{"../other"} },
+		"credentials that are not a name":    func(t *Table) { t.Tenants[0].Actions[0].Credentials = "../other" },
+		"an own run with credentials":        func(t *Table) { t.Callers[0].Own[0].Credentials = "run-credentials-ocr" },
 	} {
 		changed := table()
 		change(&changed)
@@ -84,5 +86,29 @@ func TestWhatANameMeansToACaller(t *testing.T) {
 	}
 	if _, _, found := tbl.Runnable(caller, "nothing"); found {
 		t.Fatal("a name nothing has was found")
+	}
+}
+
+// A run of an installed action finds the hosts outside the action was
+// granted in its host table. A caller's own run was granted none, whatever
+// its entry says.
+func TestARunOfAnActionHasItsGrantedHostsInItsHostTable(t *testing.T) {
+	tenant := &Tenant{Tenant: "acme", Namespace: "tenant-acme-runs"}
+	caller := &Caller{Callback: Callback{Service: "flow", Namespace: "tenant-acme", Port: 80}}
+	caller.Tenant, caller.Component, caller.KeyHash = "acme", "flow", hash
+	action := step("ocr")
+	action.HostAliases = []HostAlias{{IP: "10.152.183.32", Hostname: "api.example.org"}, {IP: "10.152.183.40", Hostname: "auth.example.org"}}
+
+	pod := Pod(tenant, caller, action, false, Start{ID: "run-1", Deadline: 60, Attempt: 1}, "registry.example/run:1")
+	got := pod.Spec.HostAliases
+	if len(got) != 2 || got[0].IP != "10.152.183.32" || len(got[0].Hostnames) != 1 || got[0].Hostnames[0] != "api.example.org" ||
+		got[1].IP != "10.152.183.40" || got[1].Hostnames[0] != "auth.example.org" {
+		t.Fatalf("the host table of an action's run: %+v", got)
+	}
+	if own := Pod(tenant, caller, action, true, Start{ID: "run-2", Deadline: 60, Attempt: 1}, "registry.example/run:1"); len(own.Spec.HostAliases) != 0 {
+		t.Fatalf("a caller's own run has a host table: %+v", own.Spec.HostAliases)
+	}
+	if plain := Pod(tenant, caller, step("plain"), false, Start{ID: "run-3", Deadline: 60, Attempt: 1}, "registry.example/run:1"); len(plain.Spec.HostAliases) != 0 {
+		t.Fatalf("an action with no granted host has a host table: %+v", plain.Spec.HostAliases)
 	}
 }

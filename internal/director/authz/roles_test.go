@@ -12,72 +12,23 @@ package authz
 
 import (
 	"context"
-	"reflect"
 	"testing"
 )
 
-func TestTheClaimsRoleFieldsBecomeTheModelsRelations(t *testing.T) {
-	roles, unknown := RolesFromClaim(map[string]string{
-		"admin":      "gentian:platform:admin",
-		"breakGlass": "gentian:platform:break-glass",
-	})
-	want := map[string]string{
-		"admin":       "gentian:platform:admin",
-		"break_glass": "gentian:platform:break-glass",
-	}
-	if !reflect.DeepEqual(roles, want) {
-		t.Errorf("roles = %v, want %v", roles, want)
-	}
-	if len(unknown) != 0 {
-		t.Errorf("unknown = %v, want none", unknown)
-	}
-
-	// Every relation a group or a holder holds is one ReconcileClusterRoles
-	// accepts, and every one it accepts is held one way or the other, never
-	// both, but for break_glass, which a person also holds for a stated time:
-	// the lists cannot drift apart.
-	for field, rel := range ClaimRoles {
-		if !knownClusterRole(rel) {
-			t.Errorf("ClaimRoles[%q] = %q, which is not a cluster relation", field, rel)
-		}
-		if _, both := HolderRoles[field]; both && field != "breakGlass" {
-			t.Errorf("%s is held by a group and by name", field)
-		}
-	}
-	// auditor and tenantAuditor are one relation, on the cluster and on a
-	// tenant: one way, held by name.
+// Every cluster relation is held by name, and every role a holder may hold
+// is a cluster relation: the two lists cannot drift apart.
+func TestEveryClusterRoleIsHeldByName(t *testing.T) {
 	byName := map[string]bool{}
-	for _, r := range HolderRoles {
-		byName[r] = true
+	for field, rel := range HolderRoles {
+		if !knownClusterRole(rel) {
+			t.Errorf("HolderRoles[%q] = %q, which is not a cluster relation", field, rel)
+		}
+		byName[rel] = true
 	}
 	for _, rel := range ClusterRoles {
-		found := 0
-		for _, r := range ClaimRoles {
-			if r == rel {
-				found++
-			}
+		if !byName[rel] {
+			t.Errorf("relation %q is held by nobody's name", rel)
 		}
-		if byName[rel] {
-			found++
-		}
-		if found != 1 && rel != "break_glass" {
-			t.Errorf("relation %q is held %d ways", rel, found)
-		}
-	}
-}
-
-func TestAFieldTheClaimShouldNotHaveIsReportedNotTranslated(t *testing.T) {
-	roles, unknown := RolesFromClaim(map[string]string{
-		"admin":           "gentian:platform:admin",
-		"securityOfficer": "gentian:platform:security", // held by name, not by a group
-		"break_glass":     "gentian:platform:x",        // the relation's spelling is not a field
-		"auditer":         "gentian:platform:auditor",  // a typo
-	})
-	if want := map[string]string{"admin": "gentian:platform:admin"}; !reflect.DeepEqual(roles, want) {
-		t.Errorf("roles = %v, want %v", roles, want)
-	}
-	if want := []string{"auditer", "break_glass", "securityOfficer"}; !reflect.DeepEqual(unknown, want) {
-		t.Errorf("unknown = %v, want %v", unknown, want)
 	}
 }
 
@@ -95,11 +46,7 @@ func TestARoleHolderIsKeyedByTheRealmThatHoldsTheAccount(t *testing.T) {
 			t.Errorf("%q is not a cluster relation", rel)
 		}
 	}
-	for _, never := range []string{"admin"} {
-		if _, ok := HolderRoles[never]; ok {
-			t.Errorf("%s must not be a role held by name", never)
-		}
-	}
+
 }
 
 // How far a role reaches follows from the role and the holder's tenant.
@@ -116,7 +63,8 @@ func TestARoleHoldersScopeFollowsTheRoleAndTheTenant(t *testing.T) {
 		{"sharedAppsAdmin", "acme", "cluster", false},
 		{"perimeterApprover", PlatformTenant, "cluster", true},
 		{"perimeterApprover", "acme", "tenant:acme", true},
-		{"admin", PlatformTenant, "", false},
+		{"admin", PlatformTenant, "cluster", true},
+		{"admin", "acme", "cluster", false},
 	} {
 		scope, ok := HolderScope(c.role, c.tenant)
 		if ok != c.ok || (ok && scope != c.scope) {

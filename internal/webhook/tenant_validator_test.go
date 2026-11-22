@@ -150,3 +150,47 @@ func TestATenantNameLongerThan38IsRefusedOnCreateOnly(t *testing.T) {
 		t.Fatalf("an existing 39-character name was refused on update: %q", resp.Result.Message)
 	}
 }
+
+// A dry run stores nothing: one for a tenant whose profile is not on the
+// cluster yet is admitted with a warning, so that the GitOps engine's
+// comparison sees the difference; the write itself stays refused. Any other
+// refusal holds for a dry run too.
+func TestADryRunForAProfileOnItsWayIsAdmittedWithAWarning(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add scheme: %v", err)
+	}
+	validator := &TenantValidator{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	dry := true
+	ask := func(dryRun *bool, apps ...string) admission.Response {
+		tenant := &gentianov1alpha1.Tenant{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "gentianos.io/v1alpha1", Kind: "Tenant"},
+			ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
+		}
+		for _, app := range apps {
+			tenant.Spec.Apps = append(tenant.Spec.Apps, gentianov1alpha1.TenantApp{Profile: app})
+		}
+		raw, err := json.Marshal(tenant)
+		if err != nil {
+			t.Fatalf("marshal tenant: %v", err)
+		}
+		return validator.Handle(context.Background(), admission.Request{AdmissionRequest: admissionv1.AdmissionRequest{
+			Operation: admissionv1.Update, DryRun: dryRun, Object: runtime.RawExtension{Raw: raw},
+		}})
+	}
+
+	resp := ask(&dry, "on-its-way")
+	if !resp.Allowed || len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], `ComponentProfile "on-its-way" not found`) {
+		t.Fatalf("a dry run for a profile on its way: allowed %v, warnings %v", resp.Allowed, resp.Warnings)
+	}
+	wet := false
+	for name, dryRun := range map[string]*bool{"no dry run": nil, "dryRun false": &wet} {
+		if resp := ask(dryRun, "on-its-way"); resp.Allowed {
+			t.Errorf("%s: the write was admitted", name)
+		}
+	}
+	// Another refusal is one for a dry run as well.
+	if resp := ask(&dry, "twice", "twice"); resp.Allowed {
+		t.Fatal("a dry run with a profile named twice was admitted")
+	}
+}

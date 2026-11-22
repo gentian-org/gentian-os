@@ -34,11 +34,18 @@ import org.junit.jupiter.api.io.TempDir;
 class WireFormatTest {
 
     @Test
-    void aGroupNameCannotBreakOutOfItsString() {
-        String json = Payload.userMemberships("demo", "u-1", List.of("a\"],\"realm\":\"kernel", "b\\", "c\nd"));
-        assertTrue(json.contains("\"groups\":[\"a\\\"],\\\"realm\\\":\\\"kernel\",\"b\\\\\",\"c\\nd\"]"), json);
+    void aProviderNameCannotBreakOutOfItsString() {
+        String json = Payload.userEntered("demo", "u-1", "a\"},\"realm\":\"kernel");
+        assertTrue(json.contains("\"provider\":\"a\\\"},\\\"realm\\\":\\\"kernel\"}"), json);
         assertTrue(json.startsWith("{\"id\":\""), json);
-        assertTrue(json.contains("\"realm\":\"demo\",\"type\":\"user.memberships\",\"user\":\"u-1\""), json);
+        assertTrue(json.contains("\"realm\":\"demo\",\"type\":\"user.entered\",\"user\":\"u-1\""), json);
+    }
+
+    @Test
+    void onlyASignInThroughAProviderIsAnEntry() {
+        assertEquals("kernel", DirectorEventListenerProvider.providerOf(java.util.Map.of("identity_provider", "kernel")));
+        assertEquals(null, DirectorEventListenerProvider.providerOf(java.util.Map.of("username", "anna")));
+        assertEquals(null, DirectorEventListenerProvider.providerOf(null));
     }
 
     @Test

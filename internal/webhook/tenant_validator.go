@@ -27,7 +27,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/handover"
-	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
@@ -35,7 +34,6 @@ import (
 //
 // Checks performed:
 //  1. Every app in spec.apps references a ComponentProfile that exists.
-//  2. The number of apps does not exceed spec.quotas.maxApps (when set).
 //
 // +kubebuilder:webhook:path=/validate-gentianos-io-v1alpha1-tenant,mutating=false,failurePolicy=fail,sideEffects=None,groups=gentianos.io,resources=tenants,verbs=create;update,versions=v1alpha1,name=vtenant.gentianos.io,admissionReviewVersions=v1
 type TenantValidator struct {
@@ -128,9 +126,29 @@ func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) adm
 	}
 
 	if err := v.Validate(ctx, tenant); err != nil {
+		// A dry run stores nothing, and the one that matters is the GitOps
+		// engine's comparison: a profile and the tenant's entry for it are
+		// committed together and applied by two applications, so the tenant
+		// is compared before the profile is there. Refusing that comparison
+		// leaves the engine with no difference to act on, and the tenant
+		// without the app. The dry run is admitted with a warning; the
+		// write itself is refused until the profile is there, and the
+		// engine tries it again.
+		var missing *ProfileNotFoundError
+		if req.DryRun != nil && *req.DryRun && errors.As(err, &missing) {
+			return admission.Allowed("").WithWarnings(err.Error() + ": the tenant is refused until the profile is there")
+		}
 		return admission.Denied(err.Error())
 	}
 	return admission.Allowed("")
+}
+
+// ProfileNotFoundError is a tenant that names a profile the cluster does not
+// hold.
+type ProfileNotFoundError struct{ Tenant, Profile string }
+
+func (e *ProfileNotFoundError) Error() string {
+	return fmt.Sprintf("tenant %q: ComponentProfile %q not found; install the app catalog first", e.Tenant, e.Profile)
 }
 
 // validateHandover refuses a new tenant while the write path is unproven.
@@ -173,23 +191,11 @@ func (v *TenantValidator) validateHandover(ctx context.Context, tenant *gentiano
 // Validate runs all validation checks and returns a human-readable error if any fail.
 // Exported so tests can exercise the same code path the webhook does.
 func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	// Check maxApps quota. It counts the apps the tenant installed: a
-	// component the platform places takes no place of the tenant's.
-	if tenant.Spec.Quotas != nil && tenant.Spec.Quotas.MaxApps > 0 {
-		installed, err := placement.Installed(ctx, v.Client, tenant.Spec.Apps)
-		if err != nil {
-			return fmt.Errorf("tenant %q: reading which apps are installed: %w", tenant.Name, err)
-		}
-		if int32(len(installed)) > tenant.Spec.Quotas.MaxApps {
-			return fmt.Errorf(
-				"tenant %q: app count %d exceeds maxApps quota %d",
-				tenant.Name, len(installed), tenant.Spec.Quotas.MaxApps,
-			)
-		}
-	}
-
 	// Check each referenced ComponentProfile exists, the components the
-	// platform places among them.
+	// platform places among them. A profile that is not there is reported
+	// last, after every other check: a caller that admits a dry run for a
+	// profile on its way must not admit anything else with it.
+	var missing *ProfileNotFoundError
 	seen := make(map[string]struct{}, len(tenant.Spec.Apps))
 	for _, app := range tenant.Spec.Apps {
 		if _, dup := seen[app.Profile]; dup {
@@ -200,10 +206,10 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		profile := &gentianov1alpha1.ComponentProfile{}
 		err := v.Client.Get(ctx, types.NamespacedName{Name: app.Profile}, profile)
 		if k8serrors.IsNotFound(err) {
-			return fmt.Errorf(
-				"tenant %q: ComponentProfile %q not found; install the app catalog first",
-				tenant.Name, app.Profile,
-			)
+			if missing == nil {
+				missing = &ProfileNotFoundError{Tenant: tenant.Name, Profile: app.Profile}
+			}
+			continue
 		}
 		if err != nil {
 			return fmt.Errorf("tenant %q: looking up ComponentProfile %q: %w", tenant.Name, app.Profile, err)
@@ -214,6 +220,9 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		return fmt.Errorf("tenant %q: %w", tenant.Name, err)
 	}
 
+	if missing != nil {
+		return missing
+	}
 	return nil
 }
 

@@ -154,6 +154,12 @@ spec:
             pkg.crossplane.io/provider: provider-vault
             pkg.crossplane.io/revision: provider-vault-7fe7f487ba59
         spec:
+          # The account the vault knows the provider by (role
+          # crossplane-provider). B-04 makes it; named here, Crossplane runs
+          # the provider as it and binds the provider's rights to it, where
+          # an account of Crossplane's own making is renamed at every provider
+          # upgrade and would stop matching the role.
+          serviceAccountName: crossplane-provider-vault
           containers:
             - name: package-runtime
               env:

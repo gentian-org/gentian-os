@@ -6,11 +6,48 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: eso-secret-store, keycloak-browser-config-admin-is,
-      keycloak-browser-config-other-is-not, and 36 more'
+    message: 'Unready resources: edge-devices-password, eso-secret-store, keycloak-browser-config-admin-is,
+      and 36 more'
     reason: Creating
     status: "False"
     type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-devices-password
+  labels:
+    crossplane.io/composite: user
+  name: user-edge-devices-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-devices-realm: user
+        name: edge-user-devices
+        namespace: kernel-edge
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - client-secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
@@ -329,7 +366,7 @@ spec:
     config:
       attribute_expected_value: "true"
       attribute_name: gentianRequiresMFA
-      include_group_attributes: "true"
+      include_group_attributes: "false"
       not: "false"
     executionIdRef:
       name: user-browser-exec-admin-is
@@ -359,7 +396,7 @@ spec:
     config:
       attribute_expected_value: "true"
       attribute_name: gentianRequiresMFA
-      include_group_attributes: "true"
+      include_group_attributes: "false"
       not: "true"
     executionIdRef:
       name: user-browser-exec-other-is-not
@@ -682,6 +719,141 @@ spec:
     name: keycloak
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-default-scopes
+  labels:
+    crossplane.io/composite: user
+  name: user-door-devices-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: user-door-devices-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - basic
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-door-audience
+  labels:
+    crossplane.io/composite: user
+  name: user-door-devices-door-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: user-door-devices-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: https://sync.platform.example.test
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: door-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-exchange-audience
+  labels:
+    crossplane.io/composite: user
+  name: user-door-devices-exchange-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: user-door-devices-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.custom.audience: gentian-edge-exchange
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: exchange-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-door-devices-ways
+  labels:
+    crossplane.io/composite: user
+  name: user-door-devices-ways
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: user
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: user-door-devices-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      claim.name: gentian_ways
+      id.token.claim: "false"
+      introspection.token.claim: "true"
+      jsonType.label: String
+      user.session.note: gentian.device_password.ways
+      userinfo.token.claim: "false"
+    name: ways
+    protocol: openid-connect
+    protocolMapper: oidc-usersessionmodel-note-mapper
+    realmId: user
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
 metadata:
   annotations:
@@ -979,142 +1151,6 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-user-admins
-  labels:
-    crossplane.io/composite: user
-  name: gentian-tenant-user-admins
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: user
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    attributes:
-      gentianPartnerRole: tenant-admin
-      gentianRequiresMFA: "true"
-      gentianos.io/managed-by: platform
-    name: gentian:tenant:user:admins
-    realmId: user
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-user-app-admins
-  labels:
-    crossplane.io/composite: user
-  name: gentian-tenant-user-app-admins
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: user
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    name: gentian:tenant:user:app-admins
-    realmId: user
-  initProvider:
-    attributes:
-      gentianos.io/managed-by: platform
-  managementPolicies:
-  - Observe
-  - Create
-  - Update
-  - Delete
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-user-members
-  labels:
-    crossplane.io/composite: user
-  name: gentian-tenant-user-members
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: user
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    attributes:
-      gentianos.io/managed-by: platform
-    name: gentian:tenant:user:members
-    realmId: user
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-user-platform-admins
-  labels:
-    crossplane.io/composite: user
-  name: gentian-tenant-user-platform-admins
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: user
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    attributes:
-      gentianPartnerRole: cluster-admin
-      gentianRequiresMFA: "true"
-      gentianos.io/managed-by: platform
-    name: gentian:tenant:user:platform-admins
-    realmId: user
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-kind: ClientScope
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-groups-scope
-    crossplane.io/external-name: groups
-  labels:
-    crossplane.io/composite: user
-  name: user-groups-scope
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: user
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    name: groups
-    realmId: user
-  managementPolicies:
-  - Observe
-  providerConfigRef:
-    name: keycloak
----
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: ClientScope
 metadata:
@@ -1230,6 +1266,8 @@ spec:
     eventsListeners:
     - jboss-logging
     - gentian-director
+    - gentian-device-passwords
+    - gentian-home-links
     realmId: user
   providerConfigRef:
     name: keycloak
@@ -1458,6 +1496,14 @@ spec:
       - config:
           max: "255"
         name: length
+    - displayName: Second factor required
+      multiValued: false
+      name: gentianRequiresMFA
+      permissions:
+      - edit:
+        - admin
+        view:
+        - admin
     group:
     - displayDescription: Attributes, which refer to user metadata
       displayHeader: User metadata
@@ -1626,6 +1672,14 @@ spec:
       }
       path "secret/metadata/gentian-os/tenants/user/*" {
         capabilities = ["list", "delete"]
+      }
+      # Not what components keep for the tenant's people: only
+      # the confidant holds that.
+      path "secret/data/gentian-os/tenants/user/people/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/tenants/user/people/*" {
+        capabilities = ["deny"]
       }
   providerConfigRef:
     name: openbao

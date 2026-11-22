@@ -24,6 +24,9 @@ check() {
         # The name it answers for, not merely that it is installed.
         [[ "$(kubectl get configmap envoy-gateway-config -n "$(ns_kernel edge)" -o jsonpath='{.data.envoy-gateway\.yaml}' 2>/dev/null | grep -c "${GENTIAN_GATEWAY_CONTROLLER_NAME}")" != "0" ]] &&
         kubectl get envoyproxy gentian-edge -n "$(ns_kernel edge)" >/dev/null 2>&1 &&
+        # The class for outgoing connections and the EnvoyProxy it points at.
+        kubectl get envoyproxy gentian-outgoing -n "$(ns_kernel edge)" >/dev/null 2>&1 &&
+        [[ "$(kubectl get gatewayclass gentian-envoy-out -o jsonpath='{.spec.parametersRef.name}' 2>/dev/null)" == "gentian-outgoing" ]] &&
         # The session filter ahead of the bouncer, which is what the operator's
         # policies and the bouncer assume.
         edge_filter_order_ok &&

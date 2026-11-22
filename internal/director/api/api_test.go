@@ -637,7 +637,7 @@ var facts = dt.Table{
 	"user:tenant-demo/tom can_approve_privilege tenant:demo": true,
 	// 7d0f3c2e is an administrator of demo, as the store holds its admins
 	// group's members: whom the cluster's administrator may name from demo.
-	"user:7d0f3c2e member group:gentian/tenant/demo/admins": true,
+	"user:7d0f3c2e admin tenant:demo": true,
 	// petra of the kernel realm is the cluster's perimeter approver, which
 	// reaches every tenant: she approves and sees, and administers nothing.
 	"user:gentian/petra can_expose tenant:demo":            true,

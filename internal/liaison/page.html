@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connections</title>
+<style>
+  :root { color-scheme: light dark; --line: #d6d6dc; --muted: #6b6b76; --accent: #4a3f8f; }
+  @media (prefers-color-scheme: dark) { :root { --line: #3a3a44; --muted: #a0a0ac; --accent: #b3a8f0; } }
+  body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 32px 16px; }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  p.lead { color: var(--muted); margin: 0 0 24px; }
+  ul { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--line); }
+  li { display: flex; align-items: center; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  li div { flex: 1; min-width: 0; }
+  li strong { display: block; overflow-wrap: anywhere; }
+  li span { color: var(--muted); font-size: .875rem; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+  button.primary { background: var(--accent); color: Canvas; }
+  button:disabled { opacity: .5; cursor: default; }
+  #note { margin: 0 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; }
+  #note:empty { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1 data-t="title"></h1>
+  <p class="lead" data-t="lead"></p>
+  <p id="note" role="status"></p>
+  <ul id="list"></ul>
+</main>
+<script>
+const texts = {
+  en: {
+    title: "Connections",
+    lead: "Services outside this workspace that your agents may reach as you. You sign in at the service; what it hands back is kept for you alone, and you can take it away here at any time.",
+    connect: "Connect", disconnect: "Disconnect", connected: "Connected", notConnected: "Not connected",
+    none: "No installed app names a service to connect to.",
+    done: "Connected to {name}.", failed: "The sign-in did not complete. Start it again.",
+    declined: "The service did not grant access.", error: "That did not work: {detail}",
+  },
+  de: {
+    title: "Verbindungen",
+    lead: "Dienste ausserhalb dieses Arbeitsbereichs, die Ihre Agenten in Ihrem Namen erreichen dürfen. Sie melden sich beim Dienst an; was er zurückgibt, wird nur für Sie aufbewahrt, und Sie können es hier jederzeit entziehen.",
+    connect: "Verbinden", disconnect: "Trennen", connected: "Verbunden", notConnected: "Nicht verbunden",
+    none: "Keine installierte App nennt einen Dienst, mit dem Sie sich verbinden können.",
+    done: "Mit {name} verbunden.", failed: "Die Anmeldung wurde nicht abgeschlossen. Starten Sie sie erneut.",
+    declined: "Der Dienst hat keinen Zugriff gewährt.", error: "Das hat nicht geklappt: {detail}",
+  },
+};
+const lang = (navigator.language || "en").slice(0, 2) in texts ? navigator.language.slice(0, 2) : "en";
+const t = (key, vars = {}) => texts[lang][key].replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? "");
+document.documentElement.lang = lang;
+document.title = t("title");
+for (const el of document.querySelectorAll("[data-t]")) el.textContent = t(el.dataset.t);
+const note = document.getElementById("note");
+const list = document.getElementById("list");
+
+const said = new URLSearchParams(location.search);
+if (said.has("connected")) note.textContent = t("done", { name: said.get("connected") });
+else if (said.get("failed") === "declined") note.textContent = t("declined");
+else if (said.has("failed")) note.textContent = t("failed");
+if (location.search) history.replaceState(null, "", location.pathname);
+
+async function ask(method, path) {
+  const answer = await fetch(path, { method, headers: { "X-Liaison-Request": "1" } });
+  if (answer.status === 204) return null;
+  const body = await answer.json().catch(() => ({}));
+  if (!answer.ok) throw new Error(body.detail || answer.status);
+  return body;
+}
+
+async function show() {
+  const { connections } = await ask("GET", "/api/v1/connections/");
+  list.replaceChildren();
+  if (!connections.length) {
+    const li = document.createElement("li");
+    li.textContent = t("none");
+    list.append(li);
+    return;
+  }
+  for (const c of connections) {
+    const li = document.createElement("li");
+    const about = document.createElement("div");
+    const name = document.createElement("strong");
+    name.textContent = c.name;
+    const state = document.createElement("span");
+    state.textContent = c.service + " · " + t(c.connected ? "connected" : "notConnected");
+    about.append(name, state);
+    const button = document.createElement("button");
+    button.textContent = t(c.connected ? "disconnect" : "connect");
+    if (!c.connected) button.className = "primary";
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const base = "/api/v1/connections/" + encodeURIComponent(c.name);
+        if (c.connected) { await ask("POST", base + "/disconnect"); await show(); }
+        else { location.assign((await ask("POST", base + "/connect")).url); }
+      } catch (e) {
+        note.textContent = t("error", { detail: e.message });
+        button.disabled = false;
+      }
+    };
+    li.append(about, button);
+    list.append(li);
+  }
+}
+show().catch((e) => { note.textContent = t("error", { detail: e.message }); });
+</script>
+</body>
+</html>

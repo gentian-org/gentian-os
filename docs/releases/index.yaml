@@ -43,3 +43,13 @@ releases:
       adminConsole: 0.1.1-v0.5.0
       concierge: 0.1.0-v0.5.0
     catalogue: https://gentian-org.github.io/gentian-apps
+  - version: v0.5.1
+    line: "0.5"
+    date: 2026-11-16
+    notes: https://github.com/gentian-org/gentian-os/releases/tag/v0.5.1
+    upgradesFrom: ["0.5"]
+    ui:
+      desktop: 0.1.0-v0.5.1
+      adminConsole: 0.1.1-v0.5.1
+      concierge: 0.1.0-v0.5.1
+    catalogue: https://gentian-org.github.io/gentian-apps

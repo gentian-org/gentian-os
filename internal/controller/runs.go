@@ -177,6 +177,12 @@ type installedAction struct {
 	comp     *gentianov1alpha1.Component
 	profile  *gentianov1alpha1.ComponentProfile
 	runnable dispatcher.Runnable
+	// preApproved are its egress requests the cluster's policy answers
+	// (answeredEgress).
+	preApproved map[string]struct{}
+	// outgoing is the way to the hosts outside it was granted: the fleet's
+	// pods on those hosts' listeners (outgoing_hosts.go). Nil with none.
+	outgoing *networkingv1.NetworkPolicyEgressRule
 }
 
 // tenantRuns is everything about runs in one tenant.
@@ -184,6 +190,9 @@ type tenantRuns struct {
 	tenant  *gentianov1alpha1.Tenant
 	callers []runCaller
 	actions []installedAction
+	// asking are the installed actions, Ready or not, whose profile asks a
+	// person for credentials (run_credentials.go).
+	asking []installedAction
 }
 
 // RunsReconciler keeps what a run needs before it starts: each tenant's
@@ -213,6 +222,8 @@ type RunsReconciler struct {
 // +kubebuilder:rbac:groups=kyverno.io,resources=policies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=bind,resourceNames=gentian-dispatcher-runs
+// +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=credentialrequirements,verbs=get;list;watch;create;update;patch;delete
 
 var runsRequest = reconcile.Request{NamespacedName: types.NamespacedName{Name: dispatcher.TableConfigMap}}
 
@@ -310,8 +321,7 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 	}
 	for i := range components.Items {
 		comp := &components.Items[i]
-		if comp.Spec.Class != gentianov1alpha1.ComponentClassAction || comp.DeletionTimestamp != nil ||
-			!meta.IsStatusConditionTrue(comp.Status.Conditions, "Ready") {
+		if comp.Spec.Class != gentianov1alpha1.ComponentClassAction || comp.DeletionTimestamp != nil {
 			continue
 		}
 		holder := gentianov1alpha1.TenantInNamespace(tenants.Items, comp.Namespace)
@@ -334,7 +344,36 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 		if runnable.PullSecrets, err = pulledWith(holder.Name, profile); err != nil {
 			return nil, err
 		}
-		of(holder).actions = append(of(holder).actions, installedAction{comp: comp, profile: profile, runnable: runnable})
+		if runnable.Credentials = credentialsOf(comp, profile); runnable.Credentials != "" {
+			of(holder).asking = append(of(holder).asking, installedAction{comp: comp, profile: profile, runnable: runnable})
+		}
+		// Only a Ready action runs: one that waits for an approval or for
+		// its credentials is installed and not in the table.
+		if !meta.IsStatusConditionTrue(comp.Status.Conditions, "Ready") {
+			continue
+		}
+		// The hosts outside it was granted, for its runs' host table and
+		// their policy. A Ready action's hosts are all carried: its install
+		// waits until they are (OutgoingGatewayPending).
+		ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range ways.aliases {
+			runnable.HostAliases = append(runnable.HostAliases, dispatcher.HostAlias{IP: a.IP, Hostname: a.Hostname})
+		}
+		// The egress the cluster's policy answers itself -- its catalog's,
+		// or hosts in a trusted domain: an action is given it as if it had
+		// been granted.
+		answered, err := answeredEgress(ctx, r.Client, profile, holder)
+		if err != nil {
+			return nil, err
+		}
+		of(holder).actions = append(of(holder).actions, installedAction{
+			comp: comp, profile: profile, runnable: runnable,
+			preApproved: answered,
+			outgoing:    ways.rule,
+		})
 	}
 	for _, runs := range out {
 		sort.Slice(runs.actions, func(i, j int) bool { return runs.actions[i].runnable.Name < runs.actions[j].runnable.Name })
@@ -380,6 +419,10 @@ func (r *RunsReconciler) callbackPort(ctx context.Context, callback dispatcher.C
 func (r *RunsReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Result, error) {
 	gathered, err := r.gather(ctx)
 	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	if err := r.ensureActionRequirements(ctx, gathered); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -435,12 +478,26 @@ func (r *RunsReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 		if err := r.ensureRunNamespace(ctx, runs, namespace); err != nil {
 			return ctrl.Result{}, fmt.Errorf("the namespace for runs of %s: %w", tenant.Name, err)
 		}
+		if err := r.ensureRunCredentials(ctx, runs, namespace); err != nil {
+			return ctrl.Result{}, fmt.Errorf("the credentials of the actions of %s: %w", tenant.Name, err)
+		}
 		if len(runs.callers) == 0 {
 			continue
 		}
 		entry := dispatcher.Tenant{Tenant: tenant.Name, Namespace: namespace}
 		for _, action := range runs.actions {
-			entry.Actions = append(entry.Actions, action.runnable)
+			// What a run takes and returns goes into the table as the
+			// profile states it, once for every tenant that installed it.
+			runnable := action.runnable
+			var inputs, outputs []byte
+			if schema := action.profile.Spec.Action.Inputs; schema != nil {
+				inputs = schema.Raw
+			}
+			if schema := action.profile.Spec.Action.Outputs; schema != nil {
+				outputs = schema.Raw
+			}
+			runnable.Schemas = table.Hold(inputs, outputs)
+			entry.Actions = append(entry.Actions, runnable)
 		}
 		table.Tenants = append(table.Tenants, entry)
 		for _, caller := range runs.callers {
@@ -780,7 +837,7 @@ func runPolicy(name, namespace string, labels map[string]string, pods map[string
 // let in. Every pod may ask the cluster's DNS and nothing else; a run of an
 // installed action is given the egress granted to that action; and a run is
 // let through to the component that started it, on the port it calls back
-// to. No rule reaches an adapter, an engine or the kernel.
+// to. No rule reaches an agent bridge, an engine or the kernel.
 func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, labels map[string]string, now time.Time) []*networkingv1.NetworkPolicy {
 	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
 	dns := intstr.FromInt32(53)
@@ -792,7 +849,10 @@ func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, l
 	out := []*networkingv1.NetworkPolicy{deny}
 
 	for _, action := range runs.actions {
-		granted := security.GrantedEgressRules(action.profile, action.comp, now)
+		granted := security.GrantedEgressRulesUnder(action.profile, action.comp, now, action.preApproved)
+		if action.outgoing != nil {
+			granted = append(granted, *action.outgoing)
+		}
 		if len(granted) == 0 {
 			continue
 		}

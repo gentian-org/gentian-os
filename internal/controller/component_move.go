@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
 )
 
@@ -124,13 +125,33 @@ func (r *ComponentReconciler) beginMove(ctx context.Context, comp *gentianov1alp
 	retried := (ro.Phase == gentianov1alpha1.RolloutRolledBack || ro.Phase == gentianov1alpha1.RolloutFailed) &&
 		comp.Spec.MovedAt != "" && comp.Spec.MovedAt != ro.MovedAt
 	if newTarget || retried {
+		mode, skip, err := r.moveExportMode(ctx, comp, ro.Digest, requested)
+		if err != nil {
+			return "", nil, err
+		}
+		if skip != "" {
+			// Nothing to export: the pinned build rolls out at once, under
+			// the same deadline and verification as one that waited.
+			now := metav1.Now()
+			comp.Status.Rollout = &gentianov1alpha1.RolloutStatus{
+				Digest: ro.Digest, Previous: ro.Previous, Target: requested,
+				Phase: gentianov1alpha1.RolloutRolling, StartedAt: &now,
+				MovedAt: comp.Spec.MovedAt, MovedBy: comp.Spec.MovedBy,
+			}
+			if err := r.Status().Update(ctx, comp); err != nil {
+				return "", nil, err
+			}
+			logger.Info("move started without an export: "+skip,
+				"component", comp.Name, "namespace", comp.Namespace, "from", profilebundle.Short(ro.Digest), "to", profilebundle.Short(requested))
+			return requested, nil, nil
+		}
 		comp.Status.Rollout = &gentianov1alpha1.RolloutStatus{
 			Digest: ro.Digest, Previous: ro.Previous, Target: requested,
 			Phase:   gentianov1alpha1.RolloutExporting,
 			Export:  moveExportName(comp.Name, requested, comp.Spec.MovedAt),
 			MovedAt: comp.Spec.MovedAt, MovedBy: comp.Spec.MovedBy,
 		}
-		if err := r.ensureMoveExport(ctx, comp); err != nil {
+		if err := r.ensureMoveExport(ctx, comp, mode == gentianov1alpha1.BeforeMoveTenant); err != nil {
 			return "", nil, err
 		}
 		logger.Info("move started: exporting before the pinned build rolls out",
@@ -147,7 +168,11 @@ func (r *ComponentReconciler) beginMove(ctx context.Context, comp *gentianov1alp
 			if !errors.IsNotFound(err) {
 				return "", nil, err
 			}
-			if err := r.ensureMoveExport(ctx, comp); err != nil {
+			mode, _, err := r.moveExportMode(ctx, comp, ro.Digest, requested)
+			if err != nil {
+				return "", nil, err
+			}
+			if err := r.ensureMoveExport(ctx, comp, mode == gentianov1alpha1.BeforeMoveTenant); err != nil {
 				return "", nil, err
 			}
 			res, err := r.status(ctx, comp, metav1.ConditionFalse, conditionReasonExporting,
@@ -301,7 +326,7 @@ func (r *ComponentReconciler) rollBack(ctx context.Context, comp *gentianov1alph
 }
 
 // ensureMoveExport creates the export a move takes first, once.
-func (r *ComponentReconciler) ensureMoveExport(ctx context.Context, comp *gentianov1alpha1.Component) error {
+func (r *ComponentReconciler) ensureMoveExport(ctx context.Context, comp *gentianov1alpha1.Component, tenantCore bool) error {
 	export := &gentianov1alpha1.TenantExport{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      comp.Status.Rollout.Export,
@@ -310,6 +335,8 @@ func (r *ComponentReconciler) ensureMoveExport(ctx context.Context, comp *gentia
 		},
 		Spec: gentianov1alpha1.TenantExportSpec{
 			Apps: []string{comp.Name},
+			// The app alone holds only the app: moves of other apps run beside it.
+			TenantCore: &tenantCore,
 			// The platform's own storage whatever the tenant's policy says: a
 			// backup taken just before a risky operation.
 			Destination: &gentianov1alpha1.ExportDestination{Mode: gentianov1alpha1.ExportDestinationPlatform},
@@ -322,6 +349,86 @@ func (r *ComponentReconciler) ensureMoveExport(ctx context.Context, comp *gentia
 		return fmt.Errorf("create the export before the move: %w", err)
 	}
 	return nil
+}
+
+// moveExportMode is what is exported before this move, by the tenant's backup
+// policy (spec.beforeMove), and skip says why nothing is, when nothing is: the
+// policy says none, or the app holds no data in the build it runs nor in the
+// one it moves to.
+func (r *ComponentReconciler) moveExportMode(
+	ctx context.Context, comp *gentianov1alpha1.Component, from, to string,
+) (mode gentianov1alpha1.BeforeMoveExport, skip string, err error) {
+	tenant, err := tenantInNamespace(ctx, r.Client, comp.Namespace)
+	if err != nil {
+		return "", "", err
+	}
+	if tenant == nil {
+		return "", "", fmt.Errorf("no tenant runs in namespace %q", comp.Namespace)
+	}
+	cluster, override, err := backupPolicies(ctx, r.Client, tenant)
+	if err != nil {
+		return "", "", err
+	}
+	eff, err := backup.ResolveEffective(tenant, cluster, override)
+	if err != nil {
+		// The tenant's own policy is refused (the cluster allows none): the
+		// cluster's applies, as it does to the tenant's backups.
+		if eff, err = backup.ResolveEffective(tenant, cluster, nil); err != nil {
+			return "", "", err
+		}
+	}
+	if eff.BeforeMove == gentianov1alpha1.BeforeMoveNone {
+		return eff.BeforeMove, "the tenant's backup policy asks for no export before a move", nil
+	}
+	holds, err := r.appHoldsData(ctx, tenant, comp.Name, from, to)
+	if err != nil {
+		return "", "", err
+	}
+	if !holds {
+		return eff.BeforeMove, "the app holds no data: no database, no bucket, no volume", nil
+	}
+	return eff.BeforeMove, "", nil
+}
+
+// appHoldsData reports whether an export of the app would capture anything:
+// a database, a bucket or a volume, in the build it runs or the one it moves
+// to. The same stores and claims an export reads (tenantexport_controller.go
+// captureUnits).
+func (r *ComponentReconciler) appHoldsData(
+	ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, digests ...string,
+) (bool, error) {
+	var profiles []*gentianov1alpha1.ComponentProfile
+	for _, digest := range digests {
+		profile, err := getProfileFor(ctx, r.Client, app, digest)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				// No profile to say what it holds: as if it held something.
+				return true, nil
+			}
+			return false, err
+		}
+		if stores := backup.ProfileStores(profile); stores.Database != "" || stores.S3 {
+			return true, nil
+		}
+		if len(profileBackupSpec(profile).IncludedVolumes()) > 0 {
+			return true, nil
+		}
+		profiles = append(profiles, profile)
+	}
+	reader := client.Reader(r.Client)
+	if r.VolumeReader != nil {
+		reader = r.VolumeReader
+	}
+	pvcs := &corev1.PersistentVolumeClaimList{}
+	if err := reader.List(ctx, pvcs, client.InNamespace(backup.TenantNamespace(tenant))); err != nil {
+		return false, fmt.Errorf("list claims in %s: %w", backup.TenantNamespace(tenant), err)
+	}
+	for _, profile := range profiles {
+		if claims, _ := backup.AppVolumes(pvcs.Items, tenant, app, profile); len(claims) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // moveEnded reports whether no move is under way: done, rolled back or failed.

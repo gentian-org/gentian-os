@@ -66,6 +66,25 @@ A run as it is told:
 (`DeadlineExceeded`, `Error`, `OOMKilled`). A finished run's pod is kept ten
 minutes, and after that the caller's own record is what there is.
 
+What the caller may run, one entry per name:
+
+```json
+{"actions": [
+  {"name": "runner", "version": "2.0.0", "own": true, "deadlineSeconds": 900},
+  {"name": "ocr", "version": "1.0.0", "own": false, "deadlineSeconds": 120,
+   "inputs": {"type": "object", "required": ["page"], "properties": {"page": {"type": "string"}}},
+   "outputs": {"type": "object", "properties": {"text": {"type": "string"}}}}
+]}
+```
+
+| Field | Is |
+| --- | --- |
+| `name` | what a run to start names as `action` |
+| `version` | the version of the profile that declares it |
+| `own` | whether it is one of the caller's own runs |
+| `deadlineSeconds` | the longest one attempt may take |
+| `inputs`, `outputs` | the JSON Schemas of what a run of an installed action takes and returns, as its profile states them (`spec.action.inputs`, `spec.action.outputs`). Left out where the profile states none, and for a caller's own run. They are for a caller that lets a person configure a step; the dispatcher checks nothing against them |
+
 Refusals:
 
 | Status | When |
@@ -92,6 +111,13 @@ One pod in `tenant-<t>-runs`, deleted ten minutes after it ended:
   ([store-contract.md §2](../concepts/store-contract.md)): those of the whole
   tenant, or the one bound to the action's profile. The kubelet reads them;
   the pod does not;
+- for an installed action whose profile asks a person for credentials
+  (`spec.secrets.supplied`), those credentials as files it can read and not
+  write, under `/run/credentials`: one file per credential, `<name>.env`, a
+  line `NAME='value'` per field, quoted as a shell reads it. They are one
+  Secret of the namespace for runs, which the kubelet mounts; the dispatcher
+  reads no Secret. A run of another action, and a caller's own run, has none
+  of them;
 - `activeDeadlineSeconds` set to the run's deadline, and no restart;
 - the platform's run program as the first process, around the action's
   `command`.
@@ -127,6 +153,6 @@ caller twice, each time with `Authorization: Bearer $RUN_TOKEN`:
 A caller that refuses the first call ends the run before the command starts.
 
 A command that wants more (progress, a file of evidence, a person's answer, a
-call to an adapter) asks the caller itself, at `RUN_CALLBACK_URL` with
+call to a bridge) asks the caller itself, at `RUN_CALLBACK_URL` with
 `RUN_TOKEN`: the variables are the command's too. What paths a caller offers
 beyond the two above is the caller's own interface.

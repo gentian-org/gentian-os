@@ -9,7 +9,7 @@ spec:
   adminEmail: admin-render@example.test
   # The tenant lets the platform's administrators enter it
   # (Tenant spec.platformAccess.adminsEnter): the identity provider "kernel",
-  # for members of gentian:platform:admin only, mapped into the admins group.
+  # for the cluster's administrators only.
   kernelBroker: true
   kernelDomain: platform.example.test
   # Every field of TenantQuotas, set so the ResourceQuota is rendered and every
@@ -62,7 +62,6 @@ spec:
     cpu: "8"
     memory: 8Gi
     storage: 50Gi
-    maxApps: 10
     maxPods: 100
   compositeDeletePolicy: Background
   resourceRefs: []

@@ -152,16 +152,23 @@ func APIExtensionDigest(req *gentianov1alpha1.APIExtensionRequest) (string, erro
 }
 
 // LiveGrants are the grants that answer the profile's requests now: live
-// (GrantedSet), and, for an API extension, pinned to the request as it is. An
+// (GrantedSet), naming hosts where the request's hosts are named at
+// approval, and, for an API extension, pinned to the request as it is. An
 // approval of definitions that have since changed answers nothing, so the
 // install waits for somebody to approve what the profile now asks.
 func LiveGrants(profile *gentianov1alpha1.ComponentProfile, grants []gentianov1alpha1.PrivilegeGrant, now time.Time) map[string]struct{} {
 	out := map[string]struct{}{}
 	digests := map[string]string{}
+	atApproval := map[string]bool{}
 	if p := profile.Privileges(); p != nil {
 		for i := range p.APIExtensions {
 			if d, err := APIExtensionDigest(&p.APIExtensions[i]); err == nil {
 				digests[PrivilegeRef(PrivilegeAPIExtensions, p.APIExtensions[i].Name)] = d
+			}
+		}
+		for i := range p.Egress {
+			if p.Egress[i].HostsAtApproval {
+				atApproval[PrivilegeRef(PrivilegeEgress, p.Egress[i].Name)] = true
 			}
 		}
 	}
@@ -174,6 +181,12 @@ func LiveGrants(profile *gentianov1alpha1.ComponentProfile, grants []gentianov1a
 			if want, ok := digests[g.Privilege]; !ok || g.Digest != want {
 				continue
 			}
+		}
+		// A request whose hosts are named at approval is answered by a
+		// grant that names them; one that names none opens nothing, and the
+		// install waits for an approval that does.
+		if atApproval[g.Privilege] && len(g.Hosts) == 0 {
+			continue
 		}
 		out[g.Privilege] = struct{}{}
 	}

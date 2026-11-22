@@ -166,7 +166,7 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 	entry := tokenEntryOf(comp, profile)
 	host := exposureHost(zone, comp, entry)
 
-	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, true, false); err != nil {
+	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, nil, true, false); err != nil {
 		t.Fatal(err)
 	}
 	route := &gatewayv1.HTTPRoute{}
@@ -254,17 +254,19 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 	var said struct {
 		Resource string   `json:"resource"`
 		Servers  []string `json:"authorization_servers"`
+		Scopes   []string `json:"scopes_supported"`
 	}
 	if err := json.Unmarshal([]byte(body), &said); err != nil {
 		t.Fatal(err)
 	}
 	if said.Resource != ann[bouncerTokenAudienceAnnotation] || len(said.Servers) != 1 ||
-		said.Servers[0] != "https://id.k.example/auth/realms/"+zone.realm {
+		said.Servers[0] != "https://id.k.example/auth/realms/"+zone.realm ||
+		len(said.Scopes) != 1 || said.Scopes[0] != "openid" {
 		t.Fatalf("metadata = %s", body)
 	}
 
 	// The approval ends.
-	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, false, false); err != nil {
+	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: comp.Namespace, Name: doc.Name}, doc); !apierrors.IsNotFound(err) {
@@ -281,7 +283,7 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 	}
 	// And a component with no token entry at all is asked the same, and
 	// nothing fails.
-	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, nil, false, false); err != nil {
+	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, nil, nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -289,6 +291,33 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 // A tenant's word that its token entries need no approval counts only where
 // the cluster's claim lets tenants say so, and then the entry is served
 // without one, and says that nobody approved it.
+func TestATenantExtendsItsTokenEntrySessionsOnlyWhereTheClusterAllowsIt(t *testing.T) {
+	tenant := acmeTenantFixture()
+	if got := tokenEntrySessionMaxAge(tenant, true); got != 4*time.Hour {
+		t.Fatalf("a tenant that says nothing: %s, want 4h", got)
+	}
+	twelve, thirty := int32(12), int32(24)
+	tenant.Spec.TokenEntries = &gentianov1alpha1.TenantTokenEntries{SessionMaxHours: &twelve}
+	if got := tokenEntrySessionMaxAge(tenant, false); got != 4*time.Hour {
+		t.Fatalf("the tenant's word alone extends the sessions to %s", got)
+	}
+	if got := tokenEntrySessionMaxAge(tenant, true); got != 12*time.Hour {
+		t.Fatalf("extended to 12h where the cluster allows it: %s", got)
+	}
+	// Never past the tenant's own sign-in.
+	tenant.Spec.TokenEntries.SessionMaxHours = &thirty
+	if got := tokenEntrySessionMaxAge(tenant, true); got != time.Duration(tenant.SessionMaxHours())*time.Hour {
+		t.Fatalf("extended past the tenant's own sign-in: %s", got)
+	}
+	tenant.Spec.Security = &gentianov1alpha1.TenantSecurity{Session: &gentianov1alpha1.SessionPolicy{MaxHours: 2}}
+	if got := tokenEntrySessionMaxAge(tenant, true); got != 2*time.Hour {
+		t.Fatalf("a tenant whose sign-in lasts 2h: the entry's lasts %s", got)
+	}
+	if got := tokenEntrySessionMaxAge(nil, true); got != 4*time.Hour {
+		t.Fatalf("no tenant: %s", got)
+	}
+}
+
 func TestATenantWaivesTheApprovalOnlyWhereTheClusterAllowsIt(t *testing.T) {
 	tenant := acmeTenantFixture()
 	if tokenEntryApprovalWaived(tenant, true) {

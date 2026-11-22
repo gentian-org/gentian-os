@@ -228,6 +228,10 @@ type TenantReconciler struct {
 	// repository, which a bundle records as the cluster it was taken on.
 	Rights    RightsStore
 	ClusterID string
+	// FirstAdministratorID answers the id of a realm's account by its
+	// username, for giving a tenant's first administrator the position
+	// (first_administrator.go). Nil asks the identity provider.
+	FirstAdministratorID accountID
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
 	Exec AppExecer
@@ -237,10 +241,6 @@ type TenantReconciler struct {
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
 	APIReader client.Reader
-	// DefaultGrant gives every member of a tenant access to one of its apps,
-	// for an app entry declaring defaultGrant. Nil when the operator runs
-	// without its app-lifecycle service, which is what holds the means.
-	DefaultGrant AppDefaultGranter
 	// PlanEventStore opens a tenant's usage store for the plan event a landed
 	// plan change is recorded as. Nil opens the tenant's own database.
 	PlanEventStore planEventStoreFor
@@ -1146,9 +1146,6 @@ func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
 	if q.RequestsMemory != nil {
 		quotas["requestsMemory"] = q.RequestsMemory.String()
 	}
-	if q.MaxApps > 0 {
-		quotas["maxApps"] = int64(q.MaxApps)
-	}
 	if q.MaxPods > 0 {
 		quotas["maxPods"] = int64(q.MaxPods)
 	}
@@ -1249,13 +1246,6 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	}
 	if kernelBroker {
 		spec["kernelBroker"] = true
-	}
-	if len(tenant.Spec.Groups) > 0 {
-		groups := make([]interface{}, 0, len(tenant.Spec.Groups))
-		for _, g := range tenant.Spec.Groups {
-			groups = append(groups, g.Name)
-		}
-		spec["groups"] = groups
 	}
 	// The tenant's partners (partners.go), within what the claim allows.
 	claimPartners, err := readClusterPartners(ctx, r.Client)

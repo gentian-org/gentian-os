@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -215,6 +216,54 @@ func TestExchangeProfilesFollowTheComponentsThatAsk(t *testing.T) {
 	}
 }
 
+// An installed agent bridge's app is handed tokens by the components that
+// vouch for people, so it has a scope whether or not an entry of its own
+// asks: by the connected profile's name, and only for a bridge that is
+// called.
+func TestABridgedAppHasAnExchangeScope(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := platformTenantFixture()
+	agentWay := func(endpoint *gentianov1alpha1.ContractEndpoint) []gentianov1alpha1.BridgeWay {
+		return []gentianov1alpha1.BridgeWay{{Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents,
+			Callee: gentianov1alpha1.BridgeCalleeApp, Protocol: gentianov1alpha1.BridgeProtocolMCP,
+			SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson, Endpoint: endpoint}}
+	}
+	app := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger"}}
+	bridge := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "ledger-adapter"}}
+	bridge.Spec.Bridge = &gentianov1alpha1.BridgeSpec{
+		App:  &gentianov1alpha1.BridgedApp{Profile: "ledger"},
+		Ways: agentWay(&gentianov1alpha1.ContractEndpoint{Service: "ledger-adapter", Port: 8765, Path: "/mcp"}),
+	}
+	// Connects nothing of the tenant: calls through it are for itself.
+	partner := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "store-adapter"}}
+	partner.Spec.Bridge = &gentianov1alpha1.BridgeSpec{
+		Ways: agentWay(&gentianov1alpha1.ContractEndpoint{Service: "store-adapter", Port: 8765, Path: "/mcp"}),
+	}
+	partner.Spec.Bridge.Ways[0].Callee = gentianov1alpha1.BridgeCalleePartner
+	quiet := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "quiet-adapter"}}
+	quiet.Spec.Bridge = &gentianov1alpha1.BridgeSpec{App: &gentianov1alpha1.BridgedApp{Profile: "quiet"}, Ways: agentWay(nil)}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: tenant.NamespaceName()}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), app, bridge, partner, quiet,
+		comp("ledger"), comp("ledger-adapter"), comp("store-adapter"), comp("quiet-adapter"),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := exchangeProfilesOf(t, r, tenant.Name); len(got) != 2 || got[0] != "ledger" || got[1] != "store-adapter" {
+		t.Fatalf("exchange profiles = %v, want the connected app and the bridge that connects none", got)
+	}
+}
+
 func vouchingProfilesOf(t *testing.T, r *TileProjectionReconciler, tenant string) []string {
 	t.Helper()
 	cm := &corev1.ConfigMap{}
@@ -385,4 +434,256 @@ func keyless(name string) *gentianov1alpha1.ComponentProfile {
 func exchanging(p *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.ComponentProfile {
 	p.Spec.Requires.Services.Vouching.Exchange = true
 	return p
+}
+
+// A certified app that calls a home as the person is projected as narrow,
+// with the homes granted to it: a binding of its contract marked asPerson
+// whose grant is in full. A grant taken back, or a contract it does not call
+// as the person, names no home. The homes' scopes are projected beside.
+func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := acmeTenantFixture()
+	ns := tenant.NamespaceName()
+	odoo := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "odoo"}}
+	odoo.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
+	odoo.Spec.Integrations = []gentianov1alpha1.IntegrationRef{
+		{Contract: "calendar-store", AsPerson: true},
+		{Contract: "contacts-store", AsPerson: true},
+		{Contract: "file-store"},
+	}
+	odoo.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{Keys: &gentianov1alpha1.VouchingKeys{Service: "odoo-keys", Port: 8069, Path: "/jwks"}},
+	}}
+	home := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	binding := func(contract string, granted bool) *gentianov1alpha1.IntegrationBinding {
+		ib := &gentianov1alpha1.IntegrationBinding{ObjectMeta: metav1.ObjectMeta{Name: "odoo-" + contract, Namespace: ns}}
+		ib.Spec.Contract = contract
+		ib.Spec.Consumer.App = "odoo"
+		ib.Spec.Provider.App = "nextcloud"
+		status := metav1.ConditionFalse
+		if granted {
+			status = metav1.ConditionTrue
+		}
+		ib.Status.Conditions = []metav1.Condition{{Type: conditionBindingGranted, Status: status, Reason: "x"}}
+		return ib
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&gentianov1alpha1.IntegrationBinding{}).WithObjects(
+		tenant.DeepCopy(), odoo, home, comp("odoo"), comp("nextcloud"),
+		binding("calendar-store", true),
+		// Not granted: no home by it.
+		binding("contacts-store", false),
+		// Granted, and not called as the person: no home by it either.
+		binding("file-store", true),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo odoo-keys 8069 /jwks narrow,home=nextcloud" {
+		t.Fatalf("vouching profiles = %q", got)
+	}
+
+	// The grant is taken back: the app is still narrow, and has no home.
+	ib := &gentianov1alpha1.IntegrationBinding{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: "odoo-calendar-store", Namespace: ns}, ib); err != nil {
+		t.Fatal(err)
+	}
+	ib.Status.Conditions[0].Status = metav1.ConditionFalse
+	if err := c.Status().Update(context.Background(), ib); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo odoo-keys 8069 /jwks narrow" {
+		t.Fatalf("vouching profiles after the grant was taken back = %q", got)
+	}
+}
+
+// A certified app that names no keys calls its home only while the person is
+// present: it is projected with no keys, exchanging and narrow, with the
+// homes granted to it. The Composition makes it a client that exchanges and
+// no issuer.
+func TestAnAppThatCallsItsHomeOnlyWhileThePersonIsPresent(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := acmeTenantFixture()
+	ns := tenant.NamespaceName()
+	editor := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "editor"}}
+	editor.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
+	editor.Spec.Integrations = []gentianov1alpha1.IntegrationRef{{Contract: "file-store", AsPerson: true}}
+	editor.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{Exchange: true},
+	}}
+	editor.Spec.Expose = []gentianov1alpha1.ExposureSpec{{
+		Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: "oidc", ExchangeToken: true,
+	}}
+	home := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	ib := &gentianov1alpha1.IntegrationBinding{ObjectMeta: metav1.ObjectMeta{Name: "editor-file-store", Namespace: ns}}
+	ib.Spec.Contract = "file-store"
+	ib.Spec.Consumer.App = "editor"
+	ib.Spec.Provider.App = "nextcloud"
+	ib.Status.Conditions = []metav1.Condition{{Type: conditionBindingGranted, Status: metav1.ConditionTrue, Reason: "x"}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&gentianov1alpha1.IntegrationBinding{}).WithObjects(
+		tenant.DeepCopy(), editor, home, comp("editor"), comp("nextcloud"), ib,
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "editor - 0 - exchange,narrow,home=nextcloud" {
+		t.Fatalf("vouching profiles = %q", got)
+	}
+
+	// The grant is taken back: the realm no longer allows the home's scope.
+	ib.Status.Conditions[0].Status = metav1.ConditionFalse
+	if err := c.Status().Update(context.Background(), ib); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range vouchingProfilesOf(t, r, tenant.Name) {
+		if strings.Contains(line, "home=") {
+			t.Fatalf("after the grant was taken back the realm still allows a home: %q", line)
+		}
+	}
+}
+
+// A home's scope is its own sign-in's token: projected only while some
+// component is granted the home, from the home's OIDC pack.
+func TestHomeTokenScopeIsNamedForTheHome(t *testing.T) {
+	if got := HomeTokenScope("nextcloud-base-ce"); got != "home-nextcloud-base-ce" {
+		t.Fatalf("HomeTokenScope = %q", got)
+	}
+}
+
+// The Secret the Composition wrote once follows the profile: a component
+// that starts to publish keys is told its issuer, one that stops is no
+// longer, and the client secret beside it is never touched. A Secret not
+// made yet is left to the Composition.
+func TestTheVouchingIssuerFollowsTheProfile(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := platformTenantFixture()
+	ns := tenant.NamespaceName()
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	secret := func(name string, data map[string]string) *corev1.Secret {
+		s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: VouchingSecretName(name), Namespace: ns}, Data: map[string][]byte{}}
+		for k, v := range data {
+			s.Data[k] = []byte(v)
+		}
+		return s
+	}
+	signer := keyless("signer")
+	signer.Spec.Requires.Services.Vouching.Keys = &gentianov1alpha1.VouchingKeys{Service: "signer", Port: 8080}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(),
+		// Wrote no issuer when it was made: the profile named no keys then.
+		signer, comp("signer"),
+		secret("signer", map[string]string{VouchingClientSecretKey: "s1", VouchingClientIDKey: "vouch-signer"}),
+		// Named keys once and no longer does.
+		keyless("stopped"), comp("stopped"),
+		secret("stopped", map[string]string{VouchingClientSecretKey: "s2", VouchingIssuerKey: VouchingIssuer(ns, "stopped")}),
+		// Its Secret is not made yet.
+		keyless("new"), comp("new"),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) map[string][]byte {
+		s := &corev1.Secret{}
+		if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: VouchingSecretName(name)}, s); err != nil {
+			t.Fatal(err)
+		}
+		return s.Data
+	}
+	got := read("signer")
+	if string(got[VouchingIssuerKey]) != VouchingIssuer(ns, "signer") || string(got[VouchingClientSecretKey]) != "s1" || string(got[VouchingClientIDKey]) != "vouch-signer" {
+		t.Fatalf("signer's Secret = %q", got)
+	}
+	got = read("stopped")
+	if _, ok := got[VouchingIssuerKey]; ok || string(got[VouchingClientSecretKey]) != "s2" {
+		t.Fatalf("stopped's Secret = %q", got)
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: VouchingSecretName("new")}, &corev1.Secret{}); !errors.IsNotFound(err) {
+		t.Fatalf("a Secret not made yet was made: %v", err)
+	}
+}
+
+// The porter, which the platform places in every tenant, calls the tenant's
+// file home as the person at its address with nobody asked: no binding is
+// granted to it, and it is projected as a certified app that is present-only
+// is -- no keys, exchanging, narrow, with the home. Its plan names the scope
+// (porter_plan.go). Without a file home it is given none.
+func TestThePlacedPorterIsGivenTheTenantsFileHome(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+
+	tenant := acmeTenantFixture()
+	ns := tenant.NamespaceName()
+	porter := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: gentianov1alpha1.PorterProfile}}
+	porter.Spec.TrustTier = gentianov1alpha1.TrustTierPlatform
+	porter.Spec.Placement = &gentianov1alpha1.ComponentPlacement{Tenants: "every"}
+	porter.Spec.Integrations = []gentianov1alpha1.IntegrationRef{{Contract: "file-store", AsPerson: true}}
+	porter.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+		Vouching: &gentianov1alpha1.VouchingRequirement{Exchange: true},
+	}}
+	porter.Spec.Expose = []gentianov1alpha1.ExposureSpec{{
+		Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: "oidc", SubDomain: "files", ExchangeToken: true,
+	}}
+	home := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}}
+	home.Spec.Provides = []gentianov1alpha1.ContractRef{{Name: "file-store"}}
+	comp := func(name string) *gentianov1alpha1.Component {
+		c := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}}
+		c.Spec.ProfileRef.Name = name
+		c.Spec.Class = gentianov1alpha1.ComponentClassApp
+		return c
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), porter, home, comp(porter.Name), comp("nextcloud"),
+	).Build()
+	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "porter - 0 - exchange,narrow,home=nextcloud" {
+		t.Fatalf("vouching profiles = %q", got)
+	}
+	// The file home is removed: the porter keeps its client and no home.
+	if err := c.Delete(context.Background(), comp("nextcloud")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "porter - 0 - exchange,narrow" {
+		t.Fatalf("without a file home: %q", got)
+	}
 }

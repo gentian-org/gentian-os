@@ -199,6 +199,11 @@ refused. A backup and a restore say what they did not do: the result of a
 backup names what the bundle does not hold, and a step that fails fails the
 whole act with its reason.
 
+A backup taken before an app update holds that app alone unless the tenant's
+backup policy says `tenant` ([versioning.md](versioning.md) §5). It names the
+tenant's own (realm, desktop database, mailboxes) as not held, and a restore
+of it puts back the app and nothing of the tenant's own.
+
 A restore into a tenant that exists is asked of the director by the tenant's
 administrator (`can_set_policy`, the right its backup policy is written
 under) or the cluster's (`can_configure`, the right an import needs), and the

@@ -156,6 +156,16 @@ const (
 	// usage history carry an actor at all. The commit has the same name as
 	// its author, which is how the two records are joined.
 	ResourcePlanSetByAnnotation = "gentianos.io/resource-plan-set-by"
+
+	// PlanRequestAnnotation names the plan a tenant's administrator asked
+	// the cluster's administrators to move the tenant to. Written by the
+	// director into the tenant's plan-request.yaml patch; removed when the
+	// request is withdrawn, declined, or answered by moving the tenant. The
+	// three beside it say who asked, when (RFC 3339) and why.
+	PlanRequestAnnotation       = "gentianos.io/plan-request"
+	PlanRequestByAnnotation     = "gentianos.io/plan-request-by"
+	PlanRequestAtAnnotation     = "gentianos.io/plan-request-at"
+	PlanRequestReasonAnnotation = "gentianos.io/plan-request-reason"
 )
 
 // QuotasEqual reports whether two quota sets impose the same limits.
@@ -163,13 +173,6 @@ const (
 // Compared by resolved quantity rather than by string, so 1Gi and 1024Mi are
 // one plan and not two. A nil field means "no ceiling for this resource", which
 // is distinct from a zero one and compares only with another nil.
-//
-// MaxApps is deliberately not compared. A plan is a quantity of capacity, and
-// the fields that make one are the fields that become ResourceQuota keys —
-// MaxApps becomes none. It is a policy limit the Tenant webhook enforces
-// against spec.apps, set per cluster or per tenant and orthogonal to what was
-// bought. Comparing it would make every tenant whose cluster defaults set an
-// app cap match no plan at all.
 func QuotasEqual(a, b *TenantQuotas) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil

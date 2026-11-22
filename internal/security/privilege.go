@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package security
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -176,8 +177,8 @@ func EgressRulesFor(profile *gentianov1alpha1.ComponentProfile, granted map[stri
 	var out []networkingv1.NetworkPolicyEgressRule
 	for i := range profile.Privileges().Egress {
 		e := &profile.Privileges().Egress[i]
-		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok {
-			out = append(out, e.Rule)
+		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok && e.Rule != nil {
+			out = append(out, *e.Rule)
 		}
 	}
 	return out
@@ -190,6 +191,12 @@ func EgressRulesFor(profile *gentianov1alpha1.ComponentProfile, granted map[stri
 // here and not applied anywhere: an uninstalled request cannot be dangerous,
 // and deleting the grant would destroy the record that somebody once said yes.
 func PendingPrivileges(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time) []string {
+	return PendingPrivilegesUnder(profile, comp, now, nil)
+}
+
+// PendingPrivilegesUnder is PendingPrivileges with the requests the cluster's
+// policy answers (PreApprovedEgress) counted as granted.
+func PendingPrivilegesUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []string {
 	requested := RequestedPrivileges(profile)
 	if len(requested) == 0 {
 		return nil
@@ -199,6 +206,9 @@ func PendingPrivileges(profile *gentianov1alpha1.ComponentProfile, comp *gentian
 		grants = comp.Spec.Privileges
 	}
 	granted := LiveGrants(profile, grants, now)
+	for ref := range policy {
+		granted[ref] = struct{}{}
+	}
 	var out []string
 	for _, ref := range requested {
 		if _, ok := granted[ref]; !ok {
@@ -217,7 +227,168 @@ func GrantedEgressRules(profile *gentianov1alpha1.ComponentProfile, comp *gentia
 	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
 		return nil
 	}
-	return EgressRulesFor(profile, GrantedPrivileges(comp, now))
+	return GrantedEgressRulesUnder(profile, comp, now, nil)
+}
+
+// GrantedEgressRulesUnder is GrantedEgressRules with the requests the
+// cluster's policy answers (PreApprovedEgress) counted as granted.
+func GrantedEgressRulesUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []networkingv1.NetworkPolicyEgressRule {
+	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
+		return nil
+	}
+	granted := GrantedPrivileges(comp, now)
+	if granted == nil {
+		granted = map[string]struct{}{}
+	}
+	for ref := range policy {
+		granted[ref] = struct{}{}
+	}
+	return EgressRulesFor(profile, granted)
+}
+
+// EgressHostsFor are the hosts of the egress requests in granted, as the
+// profile wrote them, in the profile's own order.
+func EgressHostsFor(profile *gentianov1alpha1.ComponentProfile, granted map[string]struct{}) []string {
+	if profile == nil || profile.Privileges() == nil {
+		return nil
+	}
+	var out []string
+	for i := range profile.Privileges().Egress {
+		e := &profile.Privileges().Egress[i]
+		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok {
+			out = append(out, e.Hosts...)
+		}
+	}
+	return out
+}
+
+// GrantedEgressHostsUnder are the hosts outside the cluster a component was
+// granted: those of its egress requests by host that a person granted or the
+// cluster's policy answers, and, for a request whose hosts are named at
+// approval, those its live grant names. The counterpart of
+// GrantedEgressRulesUnder for the requests that name hosts.
+func GrantedEgressHostsUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []string {
+	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
+		return nil
+	}
+	granted := GrantedPrivileges(comp, now)
+	if granted == nil {
+		granted = map[string]struct{}{}
+	}
+	for ref := range policy {
+		granted[ref] = struct{}{}
+	}
+	out := EgressHostsFor(profile, granted)
+	if comp == nil {
+		return out
+	}
+	for i := range profile.Privileges().Egress {
+		e := &profile.Privileges().Egress[i]
+		if e.HostsAtApproval {
+			out = append(out, ApprovalHosts(comp.Spec.Privileges, PrivilegeRef(PrivilegeEgress, e.Name), now)...)
+		}
+	}
+	return out
+}
+
+// ApprovalHosts are the hosts the live grant of ref names, for a request
+// whose hosts are named at approval.
+func ApprovalHosts(grants []gentianov1alpha1.PrivilegeGrant, ref string, now time.Time) []string {
+	for i := range grants {
+		g := &grants[i]
+		if g.Privilege != ref || (g.ExpiresAt != nil && !now.Before(g.ExpiresAt.Time)) {
+			continue
+		}
+		return g.Hosts
+	}
+	return nil
+}
+
+// TrustedEgress are the egress requests of profile that trusted domains
+// answer: each request by host whose every host is in one of domains, or
+// under one. A request with one host outside them is answered by a person,
+// who then sees all of its hosts. A request by address is never answered
+// here: an address is in no domain.
+func TrustedEgress(profile *gentianov1alpha1.ComponentProfile, domains []string) map[string]struct{} {
+	if profile == nil || len(domains) == 0 || profile.Privileges() == nil {
+		return nil
+	}
+	var out map[string]struct{}
+	for i := range profile.Privileges().Egress {
+		e := &profile.Privileges().Egress[i]
+		if len(e.Hosts) == 0 {
+			continue
+		}
+		all := true
+		for _, h := range e.Hosts {
+			if !InTrustedDomain(h, domains) {
+				all = false
+				break
+			}
+		}
+		if all {
+			if out == nil {
+				out = map[string]struct{}{}
+			}
+			out[PrivilegeRef(PrivilegeEgress, e.Name)] = struct{}{}
+		}
+	}
+	return out
+}
+
+// InTrustedDomain says whether host, as an egress request names it (a name
+// with an optional port), is one of domains or a name under one. A domain
+// covers whole labels: "example.org" covers "api.example.org" and not
+// "notexample.org".
+func InTrustedDomain(host string, domains []string) bool {
+	name := host
+	if i := strings.LastIndexByte(name, ':'); i >= 0 {
+		name = name[:i]
+	}
+	for _, d := range domains {
+		if d != "" && (name == d || strings.HasSuffix(name, "."+d)) {
+			return true
+		}
+	}
+	return false
+}
+
+// TenantTrustedDomains are the domains trusted for a tenant alone: its own
+// list while the cluster's administrator delegated one, none otherwise.
+func TenantTrustedDomains(tenant *gentianov1alpha1.Tenant) []string {
+	if tenant == nil || tenant.Spec.TrustedDomains == nil || !tenant.Spec.TrustedDomains.Delegated {
+		return nil
+	}
+	return tenant.Spec.TrustedDomains.Domains
+}
+
+// OriginAnnotation is where a materialized profile records the catalog it
+// was fetched from (profilebundle.OriginAnnotation, which the director
+// writes and a catalog source never states).
+const OriginAnnotation = "gentianos.io/catalogue-origin"
+
+// PreApprovedEgress are the egress requests of profile that the cluster's
+// policy answers: all of them where the profile's catalog is one of
+// catalogues (PlatformSecurityPolicy spec.preApprovedEgressCatalogs), none
+// otherwise. A profile with no recorded origin is of no listed catalog.
+func PreApprovedEgress(profile *gentianov1alpha1.ComponentProfile, catalogues []string) map[string]struct{} {
+	if profile == nil || len(catalogues) == 0 || profile.Privileges() == nil {
+		return nil
+	}
+	origin := profile.Annotations[OriginAnnotation]
+	if origin == "" || !slices.Contains(catalogues, origin) {
+		return nil
+	}
+	out := map[string]struct{}{}
+	for i := range profile.Privileges().Egress {
+		// A request whose hosts are named at approval has nothing to open
+		// until somebody names them.
+		if profile.Privileges().Egress[i].HostsAtApproval {
+			continue
+		}
+		out[PrivilegeRef(PrivilegeEgress, profile.Privileges().Egress[i].Name)] = struct{}{}
+	}
+	return out
 }
 
 // PrivilegeReason is what the profile said it needs the privilege for, which

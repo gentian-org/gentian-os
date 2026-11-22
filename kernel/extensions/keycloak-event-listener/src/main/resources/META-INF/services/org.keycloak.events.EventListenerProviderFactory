@@ -1,2 +1,4 @@
 io.gentianos.keycloak.events.DirectorEventListenerProviderFactory
 io.gentianos.keycloak.events.QuietClientLoginLoggingFactory
+io.gentianos.keycloak.devicepassword.DevicePasswordCleanupFactory
+io.gentianos.keycloak.homes.HomeLinkAtSignInFactory

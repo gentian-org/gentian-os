@@ -188,6 +188,11 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if wantsRightsCheck(profile) {
 		outside = append(outside, rightsCheckEgress())
 	}
+	// The confidant, for a component that keeps secrets of people: its one
+	// port in the control namespace.
+	if wantsPersonSecrets(profile) {
+		outside = append(outside, confidantEgress())
+	}
 	// The arbiter, for a component that declared an authorization store:
 	// its pods on its one port.
 	if wantsAuthorization(profile) {
@@ -198,7 +203,35 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if wantsRuns(profile) {
 		outside = append(outside, runsEgress())
 	}
-	rules := append(outside, security.GrantedEgressRules(profile, comp, time.Now())...)
+	// The realm's signing keys, for a component told the issuer that no
+	// exposure of its own takes to the edge: the edge Service's pods on the
+	// port its https port forwards to (issuer_keys.go). An edge that cannot
+	// be read leaves the rule out, as below.
+	if wantsIssuerKeys(profile) {
+		keys, err := r.issuerKeysRule(ctx)
+		if err != nil {
+			logf.FromContext(ctx).Info("the edge's Service could not be read; the policy leaves the issuer's keys out",
+				"component", comp.Name, "error", err.Error())
+			keys = nil
+		}
+		outside = append(outside, keys...)
+	}
+	preApproved, err := r.preApprovedEgress(ctx, profile, tenant)
+	if err != nil {
+		return err
+	}
+	rules := append(outside, security.GrantedEgressRulesUnder(profile, comp, time.Now(), preApproved)...)
+	// The hosts outside it was granted: the pods of the gateway for outgoing
+	// connections, on the listeners of those hosts (outgoing_hosts.go). A
+	// host the gateway does not carry yet opens nothing.
+	hosts, _ := grantedOutgoingHosts(profile, comp, preApproved)
+	ways, err := readOutgoingWays(ctx, r.Client, hosts)
+	if err != nil {
+		return fmt.Errorf("read where the granted hosts are carried: %w", err)
+	}
+	if ways.rule != nil {
+		rules = append(rules, *ways.rule)
+	}
 	// The cluster's own public address, where a rule to public addresses
 	// admits it -- the store's way out, or a granted one: from inside it is
 	// the edge's pods, which those rules do not name (own_public_address.go).

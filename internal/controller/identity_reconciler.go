@@ -356,7 +356,6 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, username string) *
 		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: username},
 		corev1.EnvVar{Name: "TENANT_ADMIN_REQUIRE_MFA", Value: requireMFA},
 		corev1.EnvVar{Name: "TENANT_SIGN_UP", Value: strconv.FormatBool(tenant.SignUpEnabled())},
-		corev1.EnvVar{Name: "TENANT_ADMINS_GROUP", Value: gentianTenantAdminsGroup(tenant.Name)},
 	)
 	return newKeycloakJob(adminJobName(tenant.Name), tenant, "", container)
 }
@@ -614,29 +613,10 @@ else
     "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/role-mappings/clients/${MGMT_CLIENT_ID}" \
     -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${ROLE_NAME}\"}]"
   echo "realm-admin role granted"
-fi
-
-# --- 4. Assign gentian:tenant:<t>:admins group membership ---
-GROUP_LIST=$(kc_curl -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/groups?search=${TENANT_ADMINS_GROUP}&exact=true")
-keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${TENANT_ADMINS_GROUP}"
-ADMINS_GROUP_ID="${_kj_id}"
-if [ -z "${ADMINS_GROUP_ID}" ]; then
-  echo "ERROR: tenant admins group ${TENANT_ADMINS_GROUP} not found in realm %s" >&2
-  exit 1
-fi
-MEMBER_GROUPS=$(kc_curl -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups")
-if echo "${MEMBER_GROUPS}" | grep -q "\"name\":\"${TENANT_ADMINS_GROUP}\""; then
-  echo "tenant admin already in group ${TENANT_ADMINS_GROUP}"
-else
-  kc_curl -X PUT -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups/${ADMINS_GROUP_ID}"
-  echo "tenant admin joined group ${TENANT_ADMINS_GROUP}"
 fi`,
 		realmName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName)
 }
 
 // buildRealmDeleteScript deletes the tenant's realm, and with it every

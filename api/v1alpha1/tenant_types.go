@@ -163,31 +163,77 @@ type TenantComponentRef struct {
 	Profile string `json:"profile"`
 }
 
-// TenantGroup is a group of the tenant's realm declared in git. The platform
-// makes it; people are put in it in the Admin Console, and an app's profile
-// or a TenantSignInFrom names it. It is not renamed or deleted from the
-// console: git holds it.
-type TenantGroup struct {
-	// Name is the group's name in the realm. Not one the platform's own
-	// groups take (gentian...).
+// TenantPosition is a position of the tenant: a named set of roles a kind of
+// person holds, "Sales intern" or "Engineering manager". What it is, is
+// declared here; who holds it is not, and lives in the rights store.
+//
+// Every tenant has three positions it does not declare: user, a person of
+// the tenant, with the apps installed for everyone; app-administrator, who
+// administers every installed app; and tenant-administrator, who administers
+// the tenant and holds no role on any app.
+type TenantPosition struct {
+	// Name is the position's name in the tenant. Not one of the three every
+	// tenant has.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	// +kubebuilder:validation:XValidation:rule="!self.startsWith('gentian')",message="names beginning with gentian are the platform's own groups"
+	// +kubebuilder:validation:XValidation:rule="!(self in ['user', 'app-administrator', 'tenant-administrator'])",message="user, app-administrator and tenant-administrator are positions every tenant has"
 	Name string `json:"name"`
+
+	// Title is the position as people read it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=80
+	Title string `json:"title,omitempty"`
+
+	// Description says who the position is for.
+	// +optional
+	// +kubebuilder:validation:MaxLength=400
+	Description string `json:"description,omitempty"`
+
+	// Includes are other positions of the tenant whose roles the holders of
+	// this one hold too: executive includes sales-manager. A circle of
+	// positions including each other is refused.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	Includes []string `json:"includes,omitempty"`
+
+	// Roles are the roles the position holds itself.
+	// +optional
+	// +kubebuilder:validation:MaxItems=200
+	Roles []TenantPositionRole `json:"roles,omitempty"`
+}
+
+// TenantPositionRole is one role a position holds: on an app of the tenant,
+// or on the tenant itself.
+type TenantPositionRole struct {
+	// App is the profile name of the app, or of the add-on, the role is
+	// held on. Empty for a role on the tenant itself.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	App string `json:"app,omitempty"`
+
+	// Role is user, admin, or a role the app's profile declares. On the
+	// tenant itself: user or admin.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Role string `json:"role"`
 }
 
 // TenantSignInFrom is another tenant of this cluster whose people sign in to
-// this one with their account there, and the groups of this tenant they are
-// in for it. It takes both tenants: this one names the other here, and the
+// this one with their account there, and the positions of this tenant they
+// are given for it. It takes both tenants: this one names the other here, and the
 // other names this one in its spec.signInTo. Either alone opens nothing.
 //
 // The platform makes, in the other tenant's realm, the client this realm
 // signs in with (authenticated by a JWT this realm signs: no secret), and in
 // this realm an identity provider, tenant-<other>, that trusts the other
-// realm's verified addresses and puts each person who arrives in the groups
-// named, at every sign-in. An account that is already here under the same
+// realm's verified addresses; the operator gives each person who arrives
+// the positions named. An account that is already here under the same
 // address is linked only once its owner proves it.
 type TenantSignInFrom struct {
 	// Tenant is the other tenant.
@@ -197,14 +243,15 @@ type TenantSignInFrom struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Tenant string `json:"tenant"`
 
-	// Groups are the groups of this tenant its people are in: a name of
-	// spec.groups, or members (the tenant's members, who may enter it). The
-	// tenant's administrators and its perimeter approvers are never given
-	// this way.
+	// Positions are the positions of this tenant its people are given when
+	// they arrive: user (a person of the tenant, who may enter it) or a
+	// name of spec.positions. The positions of the tenant's and of its
+	// apps' administrators are never given this way.
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	Groups []string `json:"groups,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self.all(p, !(p in ['app-administrator', 'tenant-administrator']))",message="an administrator's position is not given by a sign-in"
+	Positions []string `json:"positions,omitempty"`
 }
 
 // SignUpEnabled reports whether people make their own accounts in this
@@ -288,13 +335,13 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxItems=8
 	PartnerCommissioners []TenantComponentRef `json:"partnerCommissioners,omitempty"`
 
-	// Groups are groups of the tenant's realm declared in git; see
-	// TenantGroup.
+	// Positions are the tenant's own positions, beside the three every
+	// tenant has; see TenantPosition.
 	// +optional
-	// +kubebuilder:validation:MaxItems=50
+	// +kubebuilder:validation:MaxItems=100
 	// +listType=map
 	// +listMapKey=name
-	Groups []TenantGroup `json:"groups,omitempty"`
+	Positions []TenantPosition `json:"positions,omitempty"`
 
 	// SignInTo are other tenants of this cluster this tenant's people may
 	// sign in to with their account here: this tenant's half of the other's
@@ -366,6 +413,23 @@ type TenantSpec struct {
 	// Apps lists the applications to install for this tenant.
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
+
+	// Homes names, per contract, the installed app that is the tenant's home
+	// for that kind of data (file-store, calendar-store, contacts-store):
+	// the provider every consumer of the contract is bound to. A contract
+	// not named here is bound to an installed provider of it, the first by
+	// name; one named here whose app is not installed binds nobody.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=3
+	// +kubebuilder:validation:XValidation:rule="self.all(k, k in ['file-store', 'calendar-store', 'contacts-store'])",message="homes names file-store, calendar-store or contacts-store"
+	Homes map[string]string `json:"homes,omitempty"`
+
+	// ContactsBook is whose address book at the home the contacts an app
+	// keeps are kept equal to: each person's own, or one the tenant shares.
+	// +optional
+	// +kubebuilder:validation:Enum=person;shared
+	// +kubebuilder:default=person
+	ContactsBook string `json:"contactsBook,omitempty"`
 
 	// TokenEntries is how this tenant's token entries come to be served: a
 	// component's address that takes a token of the tenant's realm in place
@@ -441,6 +505,12 @@ type TenantSpec struct {
 	// +listMapKey=privilege
 	// +kubebuilder:validation:MaxItems=256
 	Privileges []TenantPrivilegeGrant `json:"privileges,omitempty"`
+
+	// TrustedDomains are domains outside the cluster trusted for this
+	// tenant alone, beside those the cluster trusts
+	// (PlatformSecurityPolicy spec.trustedDomains).
+	// +optional
+	TrustedDomains *TenantTrustedDomains `json:"trustedDomains,omitempty"`
 
 	// Grants are what each app of the tenant may consume from the others,
 	// and which of them may consume from it, as the tenant's administrators
@@ -652,11 +722,11 @@ type TenantPrivilegeGrant struct {
 
 	ApprovedAt metav1.Time `json:"approvedAt"`
 
-	// Reason in the approver's words, not the profile's. The profile already
-	// said why it wants the privilege; this is why somebody agreed.
-	// +kubebuilder:validation:MinLength=10
+	// Reason is a comment the approver may leave, in their own words. The
+	// profile already said why it wants the privilege.
+	// +optional
 	// +kubebuilder:validation:MaxLength=2000
-	Reason string `json:"reason"`
+	Reason string `json:"reason,omitempty"`
 
 	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
 	// reviews.
@@ -670,6 +740,16 @@ type TenantPrivilegeGrant struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	Digest string `json:"digest,omitempty"`
+
+	// Hosts are the hosts an egress grant opens, for a request whose hosts
+	// are named at approval (hostsAtApproval): each one name, lower case,
+	// with a port where it is not 443. Ignored for any other request.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=259
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$`
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // Grant is this entry as the Component carries it.
@@ -681,6 +761,7 @@ func (g *TenantPrivilegeGrant) Grant() PrivilegeGrant {
 		Reason:     g.Reason,
 		ExpiresAt:  g.ExpiresAt,
 		Digest:     g.Digest,
+		Hosts:      g.Hosts,
 	}
 }
 
@@ -804,11 +885,6 @@ type TenantLLMBudget struct {
 
 // TenantQuotas defines resource consumption limits for this tenant.
 type TenantQuotas struct {
-	// MaxApps is the maximum number of apps this tenant may install.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxApps int32 `json:"maxApps,omitempty"`
-
 	// Storage is the total storage quota (PVCs + S3 buckets).
 	// +optional
 	Storage *resource.Quantity `json:"storage,omitempty"`
@@ -982,11 +1058,50 @@ type TenantTokenEntries struct {
 	// +optional
 	// +kubebuilder:validation:Enum=required;waived
 	Approval string `json:"approval,omitempty"`
+
+	// SessionMaxHours is how long a sign-in through one of this tenant's
+	// token entries lasts before the person signs in again. Unset, it is 4
+	// hours (DefaultTokenEntrySessionHours). Longer takes effect only on a
+	// cluster whose claim allows tenants the choice
+	// (spec.tokenEntries.tenantsMayExtendSessions), and never past the
+	// tenant's own sign-in (spec.session.maxHours); a profile that states a
+	// shorter sessionMaxAge keeps it. A program keeps what renews its tokens
+	// on the person's computer, so this bounds what a copy of it is worth.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=24
+	SessionMaxHours *int32 `json:"sessionMaxHours,omitempty"`
 }
+
+// DefaultTokenEntrySessionHours is how long a sign-in through a token entry
+// lasts when the tenant states nothing, or the cluster does not let it.
+const DefaultTokenEntrySessionHours int32 = 4
 
 // TokenEntryApprovalWaived is spec.tokenEntries.approval of a tenant whose
 // token entries need no approval.
 const TokenEntryApprovalWaived = "waived"
+
+// TenantTrustedDomains is a tenant's own list of trusted domains and whether
+// the tenant may keep one.
+type TenantTrustedDomains struct {
+	// Delegated says the tenant's perimeter approver may add and remove
+	// domains for this tenant. Off unless the cluster's administrator turns
+	// it on; a tenant's administrator cannot. While it is off, Domains
+	// answers nothing.
+	// +optional
+	Delegated bool `json:"delegated,omitempty"`
+
+	// Domains are trusted for this tenant: an egress request of one of its
+	// installs that names hosts is granted without a further answer when
+	// every host is in a domain listed here or in the cluster's list, or
+	// under one.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`
+	Domains []string `json:"domains,omitempty"`
+}
 
 // TenantCatalogue is a tenant's own catalogs and who may add them.
 type TenantCatalogue struct {
@@ -1168,6 +1283,18 @@ type TenantApp struct {
 	// Absent or false, access is given per person.
 	// +optional
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
+
+	// Positions names the positions of the tenant whose holders use this
+	// app: each holds the app's role user. A name is one of the positions
+	// every tenant has or one the tenant declares (spec.positions); a name
+	// that is neither gives nothing. defaultGrant is the position user, and
+	// the two are read together.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Positions []string `json:"positions,omitempty"`
 
 	// Placed says the platform put this app here, because its profile is
 	// placeable (ComponentProfile spec.placement). The director's placement
@@ -1439,17 +1566,6 @@ type TenantStatus struct {
 	// ProvisionedApps lists apps that have been successfully provisioned.
 	// +optional
 	ProvisionedApps []string `json:"provisionedApps,omitempty"`
-
-	// DefaultGrantedApps lists the apps whose default grant
-	// (spec.apps[].defaultGrant) has been applied: the tenant's members at
-	// that moment were added to the app's group. An app listed here is not
-	// granted again, which is what keeps a person removed from the group
-	// since then removed. An entry leaves the list when the app is
-	// uninstalled or no longer declares the grant, so declaring it again
-	// applies it again.
-	// +optional
-	// +listType=set
-	DefaultGrantedApps []string `json:"defaultGrantedApps,omitempty"`
 
 	// AppCount is the total number of apps requested in spec.
 	// +optional

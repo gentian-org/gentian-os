@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"fmt"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -26,6 +27,9 @@ type TokenEntry struct {
 	// Exchangers are the realm clients that may exchange the entry's
 	// tokens, by client id.
 	Exchangers []string
+	// SessionMaxAge is how long a sign-in through the entry lasts, as the
+	// tenant and the cluster settle it; zero is tokenEntrySessionMaxAge.
+	SessionMaxAge time.Duration
 }
 
 // TokenEntryClientID is the realm client the programs that connect to a
@@ -34,12 +38,27 @@ type TokenEntry struct {
 func TokenEntryClientID(app string) string { return "token-entry-" + app }
 
 // tokenEntrySessionMaxAge is how long a sign-in through a token entry's
-// client may be used before the person signs in again.
+// client may be used before the person signs in again, where the tenant
+// settles nothing else (TokenEntry.SessionMaxAge).
 const tokenEntrySessionMaxAge = 4 * time.Hour
 
 // tokenEntryAudience is what the entry's tokens are made out to, and what the
 // bouncer holds them against: the entry's own address.
 func tokenEntryAudience(host string) string { return "https://" + host }
+
+// RenderTokenEntryClient renders the client programs sign people in through
+// to reach a token entry, and nothing else of an app: for a component that
+// installs nothing and still answers at an entry of its own, a bridge. With
+// no entry served (in.TokenEntry nil) it renders nothing, and what an
+// earlier render made goes.
+func RenderTokenEntryClient(in *Input) (*Rendered, error) {
+	if in.Profile == nil {
+		return nil, fmt.Errorf("no profile to render %s from", in.App)
+	}
+	out := &Rendered{}
+	out.add(newIdentityScope(in).tokenEntryClient()...)
+	return out, nil
+}
 
 // tokenEntryClient is the client a program signs a person in through to
 // reach the component's token entry, and what makes its tokens out to the
@@ -79,10 +98,13 @@ func (id *identityScope) tokenEntryClient() []*unstructured.Unstructured {
 	}
 	// A program keeps what renews its tokens on the person's computer, and
 	// the realm rotates that for no single client. So the client's sessions
-	// end after tokenEntrySessionMaxAge whatever the realm's own limit, or
-	// sooner where the profile says so: past it the realm refuses the
-	// renewal and the person signs in again.
+	// end after the entry's SessionMaxAge (4 hours unless the tenant extends
+	// it where the cluster allows), or sooner where the profile says so:
+	// past it the realm refuses the renewal and the person signs in again.
 	max := tokenEntrySessionMaxAge
+	if entry.SessionMaxAge > 0 {
+		max = entry.SessionMaxAge
+	}
 	if own := id.profile.SessionMaxAge; own != nil && own.Duration > 0 && own.Duration < max {
 		max = own.Duration
 	}
@@ -95,15 +117,18 @@ func (id *identityScope) tokenEntryClient() []*unstructured.Unstructured {
 			"providerConfigRef":  identityProvider,
 		}),
 		id.tokenEntryAudienceMapper(clientName, "token-entry-audience", "audience-entry", tokenEntryAudience(entry.Host)),
-		// The optional scopes Keycloak gives every client, without
-		// offline_access: a token of this client ends with the person's
-		// session, and none outlives it. Deleted with the client.
+		// The optional scopes Keycloak gives every client. offline_access
+		// among them: a connector such as claude.ai asks for it and is
+		// refused the whole sign-in without it. Its offline session ends
+		// after the realm's offline idle timeout without use, or when the
+		// person removes the access in their account. Deleted with the
+		// client.
 		identityObject("openidclient.keycloak.crossplane.io/v1alpha1", "ClientOptionalScopes", id.name("token-entry-optional-scopes"), map[string]interface{}{
 			"deletionPolicy": "Orphan",
 			"forProvider": map[string]interface{}{
 				"realmId":        id.realm,
 				"clientIdRef":    identityRef(clientName),
-				"optionalScopes": []interface{}{"address", "microprofile-jwt", "organization", "phone"},
+				"optionalScopes": []interface{}{"address", "microprofile-jwt", "offline_access", "organization", "phone"},
 			},
 			"providerConfigRef": identityProvider,
 		}),

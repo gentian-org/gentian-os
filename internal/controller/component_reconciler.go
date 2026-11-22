@@ -110,6 +110,10 @@ type ComponentReconciler struct {
 	// CRDReader gets CustomResourceDefinitions by name, uncached: the
 	// operator may not list or watch them (component_api_extensions.go).
 	CRDReader client.Reader
+	// VolumeReader lists a tenant's volume claims, uncached, for whether an
+	// app holds data before a move (component_move.go); nil reads through
+	// Client.
+	VolumeReader client.Reader
 	// Discovery tells which resources a group serves, for an API
 	// extension's check that its group is its own.
 	Discovery discovery.DiscoveryInterface
@@ -281,25 +285,25 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, err
 	}
-	// An app and an adapter run in their tenant's namespace from a release
-	// of their own, and are reconciled alike from here; what an adapter may
+	// An app and a bridge run in their tenant's namespace from a release of
+	// their own, and are reconciled alike from here; what an agent bridge may
 	// reach, and who may reach it, is the tenant's network rules' to say
-	// (netpolicy.AdapterNetworkPolicies), because it depends on what else the
-	// tenant has installed.
+	// (netpolicy.AgentBridgeNetworkPolicies), because it depends on what else
+	// the tenant has installed.
 	//
 	// An action is installed and never deployed: it is held and let through
 	// by the same checks, and stops where a release would begin
 	// (actionInstalled).
 	switch comp.Spec.Class {
-	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction:
+	case gentianov1alpha1.ComponentClassApp, gentianov1alpha1.ComponentClassAction, gentianov1alpha1.ComponentClassBridge:
 	default:
 		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
-			fmt.Sprintf("class %q is not reconciled yet; only apps, adapters and actions are", comp.Spec.Class), 0)
+			fmt.Sprintf("class %q is not reconciled yet; only apps, actions and bridges are", comp.Spec.Class), 0)
 	}
 	// The instance runs under one of the modes its profile is certified for.
 	// A Component written before its profile was on the cluster was given
 	// the class an install usually has, and the class cannot be changed
-	// afterwards: an adapter must not run as an app, where the tenant's
+	// afterwards: a bridge must not run as an app, where the tenant's
 	// rules would treat it as one.
 	if !classIncludes(profile, comp.Spec.Class) {
 		return r.status(ctx, comp, metav1.ConditionFalse, reasonClassMismatch, fmt.Sprintf(
@@ -483,11 +487,25 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	comp.Status.PendingPrivileges = security.PendingPrivileges(profile, comp, time.Now())
+	// Egress the cluster's policy answers for the profile's catalog counts as
+	// granted (PlatformSecurityPolicy spec.preApprovedEgressCatalogs).
+	preApproved, err := r.preApprovedEgress(ctx, profile, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	comp.Status.PendingPrivileges = security.PendingPrivilegesUnder(profile, comp, time.Now(), preApproved)
+	// The hosts outside it was granted, said before anything holds the
+	// install: the gateway for outgoing connections carries what is listed
+	// here, so a grant that went takes its host's listener with it at once.
+	var hostRefusal string
+	comp.Status.OutgoingHosts, hostRefusal = grantedOutgoingHosts(profile, comp, preApproved)
 	if len(comp.Status.PendingPrivileges) > 0 {
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
 			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
 			componentRequeue)
+	}
+	if hostRefusal != "" {
+		return r.status(ctx, comp, metav1.ConditionFalse, "EgressHostRefused", hostRefusal, componentRequeue)
 	}
 	// Granted and not installed: a component started without its types
 	// fails on its first read of them.
@@ -498,6 +516,24 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// on this cluster, and what it asked for is answered; there is nothing
 	// to roll out. A run of it is the dispatcher's.
 	if comp.Spec.Class == gentianov1alpha1.ComponentClassAction {
+		// Its credentials are files a run reads: a field that names no
+		// variable cannot be written, and one a person has not set yet
+		// holds every run (run_credentials.go).
+		if refusal := actionCredentialsRefusal(profile); refusal != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "ProfileInvalid", refusal, 0)
+		}
+		if awaits := actionAwaits(ctx, r.Client, tenant.Name, comp, profile); awaits != "" {
+			return r.status(ctx, comp, metav1.ConditionFalse, "CredentialsPending", awaits, componentRequeue)
+		}
+		// A granted host the gateway for outgoing connections does not
+		// carry yet holds every run, as it holds a component's chart.
+		ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("outgoing hosts: %w", err)
+		}
+		if len(ways.waiting) > 0 {
+			return r.status(ctx, comp, metav1.ConditionFalse, "OutgoingGatewayPending", outgoingGatewayPending(ways.waiting), componentRequeue)
+		}
 		return r.status(ctx, comp, metav1.ConditionTrue, "Ready", actionInstalled(profile), 0)
 	}
 
@@ -654,12 +690,30 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	mergeValues(operatorValues, placed)
+	// The scopes of the homes it calls as the person and is granted, for a
+	// profile that names keys for them (component_home_scope.go).
+	scopes, err := homeScopeValues(ctx, r.Client, comp, profile)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	mergeValues(operatorValues, scopes)
 	// The namespace is closed by default; the component's pods may reach
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.
 	// Whichever way the chart is delivered.
 	if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
 		return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
+	}
+	// A granted host the gateway for outgoing connections does not carry
+	// yet holds the chart: a pod started without the host in its host table
+	// resolves the host's real address, which its policy does not open, and
+	// fails with a timeout that says nothing of why.
+	ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("outgoing hosts: %w", err)
+	}
+	if len(ways.waiting) > 0 {
+		return r.status(ctx, comp, metav1.ConditionFalse, "OutgoingGatewayPending", outgoingGatewayPending(ways.waiting), componentRequeue)
 	}
 	// The certificate and the way in for the platform's log forwarder, for
 	// the component of the platform tenant that declares it, before the chart
@@ -700,6 +754,16 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	if err := r.ensureImagePins(ctx, comp, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("image pins: %w", err)
+	}
+	// A bridge is served by routing its door ways to the Service of the app
+	// it connects, or, for an agent bridge, by the tenant's network rules and
+	// the list its callers are told (agent_bridge_list.go). One with neither
+	// has nothing here that serves it: held, and said so, rather than
+	// deployed where no caller can reach it.
+	if isBridge(profile) && bridgeEntryOf(profile) == nil && profile.AgentWay() == nil {
+		return r.status(ctx, comp, metav1.ConditionFalse, "WayUnsupported",
+			"no way of this bridge is served yet: the platform serves a way from a program on a person's device to the app the bridge connects, in webdav, caldav or carddav, "+
+				"for a bridge packaged as an api that names the Service of that app (package.api.backend), and a way from the tenant's agents", 0)
 	}
 	switch {
 	case profile.Spec.Package.Chart != nil && appComposition(comp, profile) != "":
@@ -753,13 +817,18 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 		in.Placed = operatorPlaced(profile)
+		in.ModelAccessWithheld = models.withheld
 		in.Consumer = gentianov1alpha1.CredentialConsumer{Kind: "Component", Name: comp.Name}
 		// The realm client of the token entry, for as long as the entry is
 		// approved: without the approval the realm issues nobody a token
 		// for it.
 		if e := tokenEntryOf(comp, profile); e != nil && (tokenEntryApproved(comp, e, time.Now()) ||
 			tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))) {
-			in.TokenEntry = &apprender.TokenEntry{Host: exposureHost(zone, comp, e), RedirectURIs: e.ClientRedirectURIs}
+			in.TokenEntry = &apprender.TokenEntry{
+				Host:          exposureHost(zone, comp, e),
+				RedirectURIs:  e.ClientRedirectURIs,
+				SessionMaxAge: tokenEntrySessionMaxAge(tenant, clusterAllowsTokenEntrySessions(ctx, r.Client)),
+			}
 			for _, p := range e.ExchangedBy {
 				in.TokenEntry.Exchangers = append(in.TokenEntry.Exchangers, VouchingAlias(p))
 			}
@@ -818,6 +887,22 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				"an API entry with runtime portal-proxy needs a publishing proxy, which is not built yet", 0)
 		}
 		releaseMessage = "external service at " + profile.Spec.Package.API.BaseURL
+		// A bridge routed to the Service of the app it connects: nothing
+		// runs for it, and what is served of it is settled with its entry
+		// at the door, below.
+		if b := profile.Spec.Package.API.Backend; b != nil {
+			releaseMessage = fmt.Sprintf("routes to %s:%d", b.Service, b.Port)
+			// The one thing the realm holds for a bridge: the client a
+			// program signs a person in through, for as long as the bridge
+			// is approved.
+			ready, message, err := r.ensureBridgeClient(ctx, comp, profile, tenant, zone, pull, signIn, operatorValues)
+			if err != nil {
+				return ctrl.Result{}, fmt.Errorf("bridge client: %w", err)
+			}
+			if !ready {
+				releaseReady, releaseMessage = false, message
+			}
+		}
 
 	default:
 		// A composition package: the claim chooses the Composition and
@@ -864,6 +949,10 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.ensureZoneSecret(ctx, comp, tenant.Name, zone); err != nil {
 			return ctrl.Result{}, fmt.Errorf("zone secret: %w", err)
 		}
+		visitors, err := r.signInDesktops(ctx, tenant)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 		var oidcRoutes []string
 		forward := false
 		for _, e := range routable {
@@ -875,7 +964,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				authz.keepClientToken = kept[e.Name]
 				authz.idTokenSession = !kept[e.Name]
 			}
-			routeName, err := r.ensureExposureRoute(ctx, comp, tenant.Name, profile, zone, e, authz, signIn, held)
+			routeName, err := r.ensureExposureRoute(ctx, comp, tenant.Name, profile, zone, e, authz, signIn, held, visitors)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
 			}
@@ -902,7 +991,25 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// realm in place of a session, served once the tenant's perimeter
 	// approver approved it and removed when that ends. Asked of every
 	// component, so the condition and the route go when the declaration does.
+	//
+	// A bridge is served the same way, at the tenant's door (bridge.go):
+	// its entry is read from what it connects, and its route says what the
+	// bouncer asks under its paths.
 	tokenEntry := tokenEntryOf(comp, profile)
+	tokenWaived := false
+	var door *bridgeDoor
+	var bridgeWays []string
+	if bridge := bridgeEntryOf(profile); bridge != nil {
+		// Served under the paths of the ways approved; until one is, the
+		// entry is the whole bridge's, awaiting approval.
+		tokenWaived = tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
+		bridgeWays = approvedBridgeWays(comp, profile, tokenWaived, time.Now())
+		tokenEntry = bridge
+		if served := servedBridgeEntry(profile, bridgeWays); served != nil {
+			tokenEntry = served
+		}
+		door = bridgeDoorOf(tenant, profile, bridgeWays...)
+	}
 	tokenHost := ""
 	sessionHosts := map[string]bool{}
 	if tokenEntry != nil {
@@ -911,15 +1018,33 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			sessionHosts[exposureHost(zone, comp, e)] = true
 		}
 	}
+	bridgeOK, err := r.bridgeServable(ctx, comp, profile, tokenHost)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("bridge: %w", err)
+	}
 	// A component that declares none, never did and routes nothing has no
 	// such route to look for: an API entry, an addon. One whose profile
 	// stopped declaring it still carries the condition, and is asked once
 	// more so that the route goes.
 	hadTokenEntry := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry) != nil
-	tokenWaived := tokenEntry != nil && tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
-	tokenServed := servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, tokenWaived, time.Now())
+	var tokenServed bool
+	if door != nil {
+		byPerson := approvedBridgeWays(comp, profile, false, time.Now())
+		tokenServed = servedEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, len(byPerson) > 0, tokenWaived)
+		if cond := apimeta.FindStatusCondition(comp.Status.Conditions, ConditionTokenEntry); tokenServed && cond != nil {
+			cond.Message = fmt.Sprintf("the ways %s: %s", strings.Join(bridgeWays, ", "), cond.Message)
+		}
+	} else {
+		tokenWaived = tokenEntry != nil && tokenEntryApprovalWaived(tenant, clusterAllowsTokenEntryWaiver(ctx, r.Client))
+		tokenServed = servedTokenEntry(comp, profile, tokenEntry, tokenHost, sessionHosts, tokenWaived, time.Now())
+	}
+	// A bridge whose app is gone, or whose path is another's, has no route
+	// whatever was approved.
+	if door != nil && !bridgeOK {
+		tokenServed = false
+	}
 	if tokenEntry != nil || hadTokenEntry || len(routable) > 0 {
-		if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, tokenEntry, tokenServed, held); err != nil {
+		if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, tokenEntry, door, tokenServed, held); err != nil {
 			return ctrl.Result{}, fmt.Errorf("token entry: %w", err)
 		}
 	}
@@ -1516,10 +1641,13 @@ func componentTenant(tenant *gentianov1alpha1.Tenant, namespace string) string {
 // The entry a sign-in sidecar stands on carries its rules as well: the login
 // path, and the paths that lead to it. They are rules of this route and of
 // no other, so the session and the question of the route are theirs too.
-func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar, held bool) (string, error) {
+//
+// visitors are the desktops of the tenants whose people sign in to this one
+// (signInDesktops), which may frame the component too.
+func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenantName string, profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, signIn *signInSidecar, held bool, visitors []string) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
-	framers := componentFramers(zone, comp, profile, host)
+	framers := componentFramers(zone, comp, profile, host, visitors)
 	route := buildExposureRoute(comp, tenantName, routeName, host, zone, e, authz, r.KernelDomain, framers)
 	if signIn != nil && signIn.exposure.Name == e.Name {
 		route.Spec.Rules = append(signInRouteRules(comp.Namespace, signIn, frameAncestorsFilters(framers)...), route.Spec.Rules...)
@@ -1767,9 +1895,11 @@ func zoneDesktopHost(zone zoneNames) string {
 
 // componentFramers are the hosts that may put one of a component's pages in a
 // frame, besides the page's own: the desktop of the tenant the component
-// belongs to, which opens it in a window, and the component's own other
-// hosts, because a component may be several programs that embed one another
-// (a file store and the document editor it opens).
+// belongs to, which opens it in a window, the desktops of the tenants whose
+// people sign in to that tenant (visitors, from signInDesktops), whose tiles
+// open it in a window there, and the component's own other hosts, because a
+// component may be several programs that embed one another (a file store and
+// the document editor it opens).
 //
 // Named, each of them, and never as a wildcard over the zone's domain. The
 // user tenant of a single-tenancy cluster is under the cluster's own domain,
@@ -1782,7 +1912,7 @@ func zoneDesktopHost(zone zoneNames) string {
 // every page is a place from which all of them can be overlaid. The platform
 // tenant's own components are framed by the platform's desktop for the same
 // reason any tenant's are framed by its own: it is their zone's desktop.
-func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, host string) []string {
+func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, host string, visitors []string) []string {
 	seen := map[string]bool{"": true, host: true}
 	var framers []string
 	add := func(h string) {
@@ -1792,6 +1922,9 @@ func componentFramers(zone edgeZone, comp *gentianov1alpha1.Component, profile *
 		}
 	}
 	add(zoneDesktopHost(zone.zoneNames))
+	for _, h := range visitors {
+		add(h)
+	}
 	for _, h := range componentOwnHosts(zone.zoneNames, comp, profile) {
 		add(h)
 	}
@@ -1822,8 +1955,9 @@ func componentOwnHosts(zone zoneNames, comp *gentianov1alpha1.Component, profile
 // buildExposureRoute is one exposure as an HTTPRoute on the zone's Gateway.
 //
 // Every rule carries a frame policy: the component may be embedded by the
-// hosts in framers -- its tenant's desktop and its own other hosts
-// (componentFramers) -- and by nothing else. Without one a component is
+// hosts in framers -- its tenant's desktop, the desktops of the tenants
+// signing in to it, and its own other hosts (componentFramers) -- and by
+// nothing else. Without one a component is
 // embeddable by any origin, which is the clickjacking exposure the kernel
 // routes closed, and the desktop opens components in frames, so the policy
 // has to admit exactly that and no more. It is not the component's to choose:
@@ -2085,7 +2219,11 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
-		Watches(&gentianov1alpha1.Component{}, adaptersOfApp(mgr.GetClient())).
+		Watches(&gentianov1alpha1.Component{}, bridgesOfApp(mgr.GetClient())).
+		// A binding granted or withdrawn changes the home's scope its
+		// consumer is told (component_home_scope.go).
+		Watches(&gentianov1alpha1.IntegrationBinding{}, componentOfBinding(),
+			builder.WithPredicates(homeScopeChanged())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfModelCredentials()).
 		// A partner app's Secret arriving or changing rolls its pods
@@ -2106,10 +2244,21 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// (tenant_country.go).
 		Watches(&gentianov1alpha1.Tenant{}, componentsToldTheCountry(mgr.GetClient()),
 			builder.WithPredicates(countryChanged())).
+		// Which desktops may frame a tenant's apps turns on the sign-ins the
+		// tenant takes part in, declared on both tenants (signin_framers.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsFramedBySignIn(mgr.GetClient()),
+			builder.WithPredicates(signInFramersChanged(r.KernelDomain, r.TenancyMode, r.KernelRealm))).
+		// The domains a tenant trusts for itself answer its apps' egress
+		// (component_preapproved_egress.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsOfTenantAskingForEgress(mgr.GetClient()),
+			builder.WithPredicates(trustedDomainsChanged())).
 		// The edge's public address, which a component granted the internet
 		// reaches from inside through the edge's pods (own_public_address.go).
 		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),
 			builder.WithPredicates(edgeAddressChanged()))
+	// The catalogs whose egress the cluster answers are the policy's: a change
+	// there is a change to what each asking component may do.
+	b = b.Watches(&gentianov1alpha1.PlatformSecurityPolicy{}, componentsAskingForEgressPrivileges(mgr.GetClient()))
 	if len(r.clusterRoleSet()) > 0 {
 		// What the cluster permits is another object's: a role it stops
 		// permitting is unbound when the policy changes, not when something

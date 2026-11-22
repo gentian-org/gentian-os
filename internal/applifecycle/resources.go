@@ -97,6 +97,33 @@ type ResourceStateResult struct {
 	// administrators state it; absent when they state nothing, and the
 	// tenant asks them.
 	Ordering *OrderingNotice `json:"ordering,omitempty"`
+	// Request is the plan the tenant's administrator asked to be moved to,
+	// absent when nothing is pending.
+	Request *PlanRequest `json:"request,omitempty"`
+}
+
+// PlanRequest is a tenant administrator's pending request for another plan,
+// read from the Tenant's annotations (gentianov1alpha1.PlanRequestAnnotation).
+type PlanRequest struct {
+	Plan   string `json:"plan"`
+	By     string `json:"by,omitempty"`
+	At     string `json:"at,omitempty"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// planRequestOf reads the tenant's pending request, nil when there is none.
+func planRequestOf(tenant *gentianov1alpha1.Tenant) *PlanRequest {
+	a := tenant.GetAnnotations()
+	plan := strings.TrimSpace(a[gentianov1alpha1.PlanRequestAnnotation])
+	if plan == "" {
+		return nil
+	}
+	return &PlanRequest{
+		Plan:   plan,
+		By:     a[gentianov1alpha1.PlanRequestByAnnotation],
+		At:     a[gentianov1alpha1.PlanRequestAtAnnotation],
+		Reason: a[gentianov1alpha1.PlanRequestReasonAnnotation],
+	}
 }
 
 // OrderingNotice is the cluster's PlanOrdering as one tenant reads it: the
@@ -152,6 +179,7 @@ func (s *Service) ResourceState(ctx context.Context, tenantName string) (*Resour
 		Drifted:       resolution.Drifted,
 		Custom:        resolution.Custom,
 		InstalledApps: len(installed),
+		Request:       planRequestOf(tenant),
 	}
 	if resolution.Plan != nil {
 		result.Plan = resolution.Plan.Name

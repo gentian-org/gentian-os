@@ -601,14 +601,14 @@ func TestAReleaseNamesTheCredentialItWaitsFor(t *testing.T) {
 		{Name: "metering", DisplayName: "Usage reporting", Fields: []gentianov1alpha1.SuppliedField{{Key: "key", ValuePath: "metering.key"}}},
 	}}
 	comp := &gentianov1alpha1.Component{}
-	comp.Name = "fellwort-ee"
+	comp.Name = "voles-ee"
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "test"
-	msg := "Synced: create failed: Secret \"fellwort-ee-sensitive-values\" not found" + secretsOutlook
+	msg := "Synced: create failed: Secret \"voles-ee-sensitive-values\" not found" + secretsOutlook
 	r := &ComponentReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build()}
 
 	got := r.withCredentialHint(context.Background(), comp, tenant, profile, msg)
-	for _, want := range []string{"Usage reporting (metering)", "Credentials in the tenant's Admin Console", "fellwort-ee-sensitive-values"} {
+	for _, want := range []string{"Usage reporting (metering)", "Credentials in the tenant's Admin Console", "voles-ee-sensitive-values"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the hint lacks %q: %q", want, got)
 		}

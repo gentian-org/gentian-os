@@ -48,24 +48,34 @@ unmanaged:
 
 peers:
   envoy:
-    what: the Gateway's Envoy proxy pods
+    what: the Envoy proxy pods of the inbound Gateways, and of no other fleet Envoy Gateway runs
     namespace: kernel-edge
-    podLabels: {app.kubernetes.io/name: envoy}
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
     evidence:
       - "Envoy Gateway v1.9.3 internal/infrastructure/kubernetes/proxy/resource.go EnvoyAppLabel: app.kubernetes.io/name=envoy on every proxy pod"
+      - "Envoy Gateway v1.9.3 internal/gatewayapi/helpers.go OwningGatewayClassLabel: the class, on the proxy pods of merged Gateways"
       - kernel/manifests/gateway/chart/templates/envoyproxy.yaml:86
       - kernel/services/llm/manifests/templates/networkpolicy.yaml:106
-  edge:
-    what: every pod of the edge namespace (the Envoy proxies and the bouncer)
+  envoy-outgoing:
+    what: the Envoy proxy pods of the fleet for outgoing connections
     namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out}
+    evidence:
+      - kernel/manifests/gateway/chart/templates/outgoing.yaml:25
   bouncer:
     what: the bouncer, the Gateway's external authorization service
     namespace: kernel-edge
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: bouncer}
     evidence:
       - charts/gentian-os/templates/bouncer.yaml:12
+  keycloak:
+    what: Keycloak
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    evidence:
+      - kernel/services/keycloak-idp/manifests/values.yaml:1
   control-programs:
-    what: the programs of the operator's chart in the control namespace (operator, director, usher, custodian, registrar)
+    what: the programs of the operator's chart in the control namespace (operator, director, usher, custodian, confidant, registrar)
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os}
     evidence:
@@ -82,6 +92,12 @@ peers:
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: custodian}
     evidence:
       - charts/gentian-os/templates/custodian.yaml:1
+  confidant:
+    what: the confidant
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: confidant}
+    evidence:
+      - charts/gentian-os/templates/confidant.yaml:1
   vault-migrator:
     what: the Job that makes the vault what a release needs
     namespace: kernel-control
@@ -292,6 +308,9 @@ namespaces:
               - peer: custodian
                 why: relays a person's credential writes (BAO_ADDR)
                 evidence: [charts/gentian-os/templates/custodian.yaml:244, internal/custodian/openbao.go:166]
+              - peer: confidant
+                why: keeps and reads the secrets components hold for people (BAO_ADDR)
+                evidence: [charts/gentian-os/templates/confidant.yaml:105, internal/kernel/secrets/openbao.go:36]
               - peer: director
                 why: reads the credential of a repository a catalogue artifact is pulled with (DIRECTOR_BAO_ADDR)
                 evidence: [charts/gentian-os/templates/director.yaml:286, internal/kernel/secrets/openbao.go:246]
@@ -455,9 +474,12 @@ namespaces:
           - port: 8080
             what: every realm's endpoints and the administration API
             from:
-              - peer: edge
-                why: the Gateway routes id.<kernel> to it, and the bouncer reads the realms' keys
-                evidence: [internal/controller/kernel_gateway_routes.go:335, charts/gentian-os/templates/bouncer.yaml:118]
+              - peer: envoy
+                why: the Gateway routes id.<kernel> to it
+                evidence: [internal/controller/kernel_gateway_routes.go:335]
+              - peer: bouncer
+                why: the bouncer reads the realms' keys
+                evidence: [charts/gentian-os/templates/bouncer.yaml:118]
               - peer: control-programs
                 why: director, usher, custodian and registrar read the realms' keys; the operator and the registrar call the administration API
                 evidence:
@@ -619,6 +641,13 @@ namespaces:
                 evidence:
                   - internal/controller/component_reconciler.go:1537
                   - charts/gentian-os/templates/componentprofile-desktop.yaml:47
+          - port: 8083
+            what: answers which roles a person holds on the app they sign in to
+            from:
+              - peer: keycloak
+                why: the token hook asks when it issues an app's token
+                evidence:
+                  - kernel/appsets/raw/09-identity.yaml:86
       - name: custodian
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os
@@ -636,6 +665,19 @@ namespaces:
               - >-
                 the installer asks its /healthz through the API server's proxy and, where that is refused, by
                 port-forward (scripts/steps/E-03-revoke-bootstrap-token.sh:211)
+      - name: confidant
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: confidant}
+        ports:
+          - port: 9446
+            what: keeps secrets of a person for a component that presents its key
+            from:
+              - peer: tenants
+                why: a component that keeps secrets of people (requires.services.personSecrets)
+                evidence:
+                  - internal/controller/person_secrets.go:67
+                  - internal/kernel/netpolicy/kernel.go:206
       - name: registrar
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os
@@ -667,7 +709,7 @@ namespaces:
       - name: envoy
         installedBy: step:A-05-envoy-gateway
         readAt: envoy-gateway chart v1.9.3
-        podLabels: {app.kubernetes.io/name: envoy}
+        podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
         allIngress: >-
           The cluster's public listeners. A connection arrives from the
           internet through a load balancer or the tunnel, and from every pod
@@ -694,6 +736,20 @@ namespaces:
           - port: 19002
             what: shutdown manager
             open: see allIngress; the kubelet only
+      - name: envoy-outgoing
+        installedBy: step:A-05-envoy-gateway
+        readAt: envoy-gateway chart v1.9.3
+        podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out}
+        ports:
+          - port: 19001
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 19003
+            what: readiness
+            closed: the kubelet's probes only
+          - port: 19002
+            what: shutdown manager
+            closed: the kubelet only
       - name: envoy-gateway
         installedBy: step:A-05-envoy-gateway
         readAt: envoy-gateway chart v1.9.3
@@ -705,6 +761,9 @@ namespaces:
               - peer: envoy
                 why: every proxy pod fetches its configuration here
                 evidence: [scripts/steps/A-05-envoy-gateway.sh:52]
+              - peer: envoy-outgoing
+                why: the proxies of the outgoing fleet fetch theirs here too
+                evidence: [kernel/manifests/gateway/chart/templates/outgoing.yaml:25]
           - port: 18001
             what: configuration for a rate limit service
             closed: no rate limit service is installed

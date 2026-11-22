@@ -14,9 +14,11 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/componentkeys"
 )
 
@@ -43,16 +45,70 @@ const (
 // component runs: the registrar accepts the key for the links to
 // vouch-<profile> of this tenant's realm, and the realm's entry is named
 // after the profile (VouchingAlias).
-func vouchingKeys(ctx context.Context, c client.Reader) ([]componentkeys.Key, error) {
+//
+// An entry also names the component whose page collects people's consent,
+// where the profile names one that counts (vouchingConsent).
+func vouchingKeys(ctx context.Context, c client.Reader) ([]componentkeys.Vouching, error) {
 	keys, err := componentKeys(ctx, c, rightsCheckKeys, wantsVouching)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]componentkeys.Key, 0, len(keys))
+	out := make([]componentkeys.Vouching, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, componentkeys.Key{Tenant: k.Tenant, Component: k.Profile, KeyHash: k.KeyHash})
+		consent, err := vouchingConsent(ctx, c, k.holder, k.profile)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, componentkeys.Vouching{
+			Key:     componentkeys.Key{Tenant: k.Tenant, Component: k.Profile, KeyHash: k.KeyHash},
+			Consent: consent,
+		})
 	}
 	return out, nil
+}
+
+// vouchingConsent is the profile whose page collects people's consent to a
+// vouching component of the tenant, or "" where people are linked with the
+// platform's own token alone.
+//
+// The vouching profile names it (requires.services.vouching.consent), and
+// the name counts only while the tenant has that profile installed, at the
+// platform's trust, with an exposure the front door hands an exchanged
+// token (exchangeToken). The registrar accepts a token by its audience,
+// which is the profile's name, so a name nothing of the tenant is installed
+// under, or one whose pages are handed no such token, opens nothing: there
+// is no page a person could have said yes on. And a component below the
+// platform's trust is not one to take a person's consent to be spoken for
+// in every app.
+func vouchingConsent(
+	ctx context.Context, c client.Reader, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile,
+) (string, error) {
+	name := profile.Services().Vouching.Consent
+	if name == "" || name == profile.Name || tenant == nil {
+		return "", nil
+	}
+	for _, app := range tenant.Spec.Apps {
+		if app.Profile != name {
+			continue
+		}
+		named, err := getProfileFor(ctx, c, app.Profile, app.Digest)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return "", nil
+			}
+			return "", err
+		}
+		if named.Spec.TrustTier != gentianov1alpha1.TrustTierPlatform {
+			return "", nil
+		}
+		for i := range named.Spec.Expose {
+			if named.Spec.Expose[i].ExchangeToken {
+				return name, nil
+			}
+		}
+		return "", nil
+	}
+	return "", nil
 }
 
 // ensureRegistrarVouchingKeys keeps the registrar's list equal to the

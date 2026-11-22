@@ -108,9 +108,6 @@ func TestReChoosingTheRecordedPlanIsNotACommit(t *testing.T) {
 			t.Errorf("patch is missing %q:\n%s", want, patch)
 		}
 	}
-	if strings.Contains(patch, "maxApps") {
-		t.Error("a plan must not touch the app cap")
-	}
 }
 
 func TestAPlanForAnUnknownTenantOrWithoutANameIsRefused(t *testing.T) {
@@ -331,5 +328,48 @@ func TestConcurrentSecurityPolicySavesBothLand(t *testing.T) {
 	file := dt.RemoteFile(t, remote, "clusters/"+dt.Cluster+"/kernel/claims/"+gitops.PlatformSecurityFile)
 	if !strings.Contains(file, "headlamp") || !strings.Contains(file, "nextcloud") {
 		t.Fatalf("one save was lost:\n%s", file)
+	}
+}
+
+// The catalogs whose egress the cluster answers are written by hand, never by
+// the director; its writes of the other two lists carry them across.
+func TestTheDirectorKeepsThePreApprovedEgressCatalogs(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	path := "clusters/" + dt.Cluster + "/kernel/claims/" + gitops.PlatformSecurityFile
+	dt.Commit(t, remote, map[string]string{path: `apiVersion: gentianos.io/v1alpha1
+kind: PlatformSecurityPolicy
+metadata:
+  name: default
+spec:
+  allowedMacWaivers: []
+  preApprovedEgressCatalogs:
+  - cluster/acme
+  trustedDomains:
+  - github.com
+  - example.org
+`})
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	meta := gitops.Meta{Author: gitops.Person{Name: "Beth", Email: "beth@example.com"}, Subject: "beth"}
+
+	if _, err := g.SetPlatformSecurity(ctx, []gitops.MacWaiver{
+		{Profile: "element", Policy: "gentian-require-non-root", Scope: "synapse"},
+	}, meta); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.SetPlatformClusterRoles(ctx, []gitops.ClusterRoleAllowance{
+		{Profile: "dashboard", Role: "read-nodes"},
+	}, meta); err != nil {
+		t.Fatal(err)
+	}
+	written := dt.RemoteFile(t, remote, path)
+	if !strings.Contains(written, "preApprovedEgressCatalogs:\n  - \"cluster/acme\"") &&
+		!strings.Contains(written, "preApprovedEgressCatalogs:\n  - cluster/acme") {
+		t.Fatalf("the director's writes dropped the pre-approved catalogs:\n%s", written)
+	}
+	// The trusted domains are the cluster operator's in the same way.
+	if !strings.Contains(written, "trustedDomains:\n  - \"github.com\"\n  - \"example.org\"") &&
+		!strings.Contains(written, "trustedDomains:\n  - github.com\n  - example.org") {
+		t.Fatalf("the director's writes dropped the trusted domains:\n%s", written)
 	}
 }

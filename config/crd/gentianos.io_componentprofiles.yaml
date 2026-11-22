@@ -72,6 +72,16 @@ spec:
               with no browser session in front. That its host is no other entry's is the
               operator's to hold (ConditionTokenEntry, HostShared): the entries' hosts
               are known only in a tenant's zone.
+              Vouching at trustTier platform yields a person's token for any app of the
+              tenant. A certified component may vouch only to call the homes it consumes
+              as the person (integrations[].asPerson): its client is given the scopes of
+              the homes granted to it and no other. It does so in one of two ways. With
+              keys of its own and no exchange, it signs statements and acts for a person
+              who is away. With exchange and no keys, it swaps the token the edge hands
+              it for a person who is present (an entry that says exchangeToken), and can
+              do nothing for anybody else. A platform component that names no keys and
+              calls a home as the person is held to the same: the platform's file
+              dialog is one.
               A service may expose -- a console is not a contract surface -- but only on
               the gateway. The perimeter has no session, and a service console published
               there is never what anybody meant.
@@ -99,10 +109,12 @@ spec:
               link to a service hosted elsewhere -- it has no exposure to carry one, and
               counting exposures alone refused every such profile. `package` is a CEL
               reserved word, so the API server names the field __package__.
-              An adapter is reached by the platform's component that speaks as a person,
-              and by nothing else: no person opens it, nothing is exposed, no other app is
-              handed a contract to call it, and it holds no credential of an app of its
-              own -- vouching would be one for every app, a contract key one for its app.
+              A bridge is reached, or reaches out, only as its ways say, through what the
+              platform opens for them: no person opens it, it exposes nothing of its
+              own, no other app is handed a contract to call it, and it holds no
+              credential of the app it connects. An agent bridge -- a way whose caller is
+              the tenant's agents -- is reached by the component that speaks as a person
+              and by nothing else.
               An action is run and never deployed, opened or reached: it is one image at
               one build, and a run of it speaks to the component that started it and to
               nothing the platform provides.
@@ -115,11 +127,11 @@ spec:
                   Action is what an action takes, returns and runs. Present exactly when
                   the class is action.
                 properties:
-                  adapters:
+                  agentBridges:
                     description: |-
-                      Adapters names the adapters whose tools the calling component may call
-                      on a run's behalf, by their ComponentProfile. A run reaches no adapter
-                      itself. It is a statement for the administrator who installs the
+                      AgentBridges names the agent bridges whose tools the calling component may
+                      call on a run's behalf, by their ComponentProfile. A run reaches no
+                      bridge itself. It is a statement for the administrator who installs the
                       action; the caller enforces it.
                     items:
                       maxLength: 63
@@ -182,86 +194,6 @@ spec:
                     type: string
                 required:
                 - command
-                type: object
-              adapter:
-                description: |-
-                  Adapter is what an adapter adapts. Present exactly when the class is
-                  adapter.
-                properties:
-                  adapts:
-                    description: |-
-                      Adapts names the app whose interface this adapter uses: the app's
-                      ComponentProfile, which must be installed in the same tenant. Installing
-                      the adapter opens the way from its pods to that app's pods and nowhere
-                      else in the tenant; the app is not asked to cooperate. Absent for an
-                      adapter packaged as an API, which reaches a service outside the cluster
-                      and no app of the tenant.
-                    properties:
-                      profile:
-                        description: Profile is the ComponentProfile of the app.
-                        maxLength: 63
-                        minLength: 1
-                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                        type: string
-                      versions:
-                        description: |-
-                          Versions are the catalog versions of the app this adapter was
-                          reviewed against. Empty means the reviewer named none.
-                        items:
-                          maxLength: 64
-                          type: string
-                        maxItems: 64
-                        type: array
-                        x-kubernetes-list-type: set
-                    required:
-                    - profile
-                    type: object
-                  addonsValuesPath:
-                    description: |-
-                      AddonsValuesPath is the dot-separated Helm values path at which the
-                      adapter is told which add-ons are selected into the app it adapts in
-                      its tenant: a list of their IDs (package.addon.id), empty while none is
-                      selected or the app is not installed. The adapter is rendered again
-                      when that selection changes. Absent, it is told nothing about them.
-                    maxLength: 253
-                    minLength: 1
-                    pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
-                    type: string
-                  endpoint:
-                    description: |-
-                      Endpoint is where the adapter's tool server (MCP) answers inside the
-                      tenant: its Service, the port and the path. With it the platform tells
-                      the tenant's components that may call adapters that this one is there
-                      (the ConfigMap adapters-<component>). Absent, the adapter is installed
-                      and callers are not told of it.
-                    properties:
-                      path:
-                        description: |-
-                          Path is appended to the address the consumer is told, for an API
-                          served below the root.
-                        maxLength: 253
-                        pattern: ^/[A-Za-z0-9._~/-]*$
-                        type: string
-                      port:
-                        description: |-
-                          Port is the Service's port, and must be the port the provider's pods
-                          listen on: a network policy matches the port a pod listens on, and
-                          the way it opens is to this port and no other.
-                        format: int32
-                        maximum: 65535
-                        minimum: 1
-                        type: integer
-                      service:
-                        description: Service is the provider's Service, in the namespace
-                          it is installed in.
-                        maxLength: 63
-                        minLength: 1
-                        pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
-                        type: string
-                    required:
-                    - port
-                    - service
-                    type: object
                 type: object
               backup:
                 description: Backup declares what a consistent copy of this component
@@ -418,6 +350,331 @@ spec:
                         type: array
                     type: object
                 type: object
+              bridge:
+                description: |-
+                  Bridge is what a bridge connects and the ways its calls go. Present
+                  exactly when the class is bridge.
+                properties:
+                  addonsValuesPath:
+                    description: |-
+                      AddonsValuesPath is the dot-separated Helm values path at which the
+                      bridge is told which add-ons are selected into the app it connects in
+                      its tenant: a list of their IDs (package.addon.id), empty while none is
+                      selected or the app is not installed. The bridge is rendered again
+                      when that selection changes. Absent, it is told nothing about them.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
+                    type: string
+                  app:
+                    description: |-
+                      App is the app of the tenant the bridge connects: the app's
+                      ComponentProfile, which must be installed in the same tenant. A way
+                      whose caller or callee is app means this app. A person a call is made
+                      for is asked the question a person opening the app is asked.
+                    properties:
+                      profile:
+                        description: Profile is the ComponentProfile of the app.
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      versions:
+                        description: |-
+                          Versions are the catalog versions of the app this bridge was reviewed
+                          against. Empty means the reviewer named none.
+                        items:
+                          maxLength: 64
+                          type: string
+                        maxItems: 32
+                        type: array
+                        x-kubernetes-list-type: set
+                    required:
+                    - profile
+                    type: object
+                  ways:
+                    description: |-
+                      Ways are the directions the bridge's calls go, each in one protocol
+                      and each approved on its own. A bridge in both directions declares
+                      two ways.
+                    items:
+                      description: |-
+                        BridgeWay is one direction of a bridge's calls: who opens them, who answers
+                        them, in which protocol, and for whom.
+                      properties:
+                        callee:
+                          description: Callee is who answers them.
+                          enum:
+                          - app
+                          - agents
+                          - outside
+                          - partner
+                          type: string
+                        caller:
+                          description: Caller is who opens the calls.
+                          enum:
+                          - device
+                          - outside
+                          - agents
+                          - app
+                          type: string
+                        endpoint:
+                          description: |-
+                            Endpoint is where the bridge's tool server answers inside the tenant,
+                            for a way whose caller is the tenant's agents: its Service, the port
+                            and the path. With it the platform tells the tenant's components that
+                            call tools for a person that this bridge is there (the ConfigMap
+                            agent-bridges-<component>). Absent, the bridge is installed and its callers
+                            are not told of it; an agent bridge packaged as an api is reached at
+                            its baseUrl instead.
+                          properties:
+                            path:
+                              description: |-
+                                Path is appended to the address the consumer is told, for an API
+                                served below the root.
+                              maxLength: 253
+                              pattern: ^/[A-Za-z0-9._~/-]*$
+                              type: string
+                            port:
+                              description: |-
+                                Port is the Service's port, and must be the port the provider's pods
+                                listen on: a network policy matches the port a pod listens on, and
+                                the way it opens is to this port and no other.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                            service:
+                              description: Service is the provider's Service, in the
+                                namespace it is installed in.
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                              type: string
+                          required:
+                          - port
+                          - service
+                          type: object
+                        name:
+                          description: Name names the way within the bridge, and in
+                            the tenant's approvals.
+                          maxLength: 30
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        outside:
+                          description: |-
+                            Outside describes a tool server outside the platform, for a way from
+                            the tenant's agents to the outside in mcp, on a bridge packaged as an
+                            api whose baseUrl is the server's address. With it the platform tells
+                            the tenant's components that call tools for a person that this bridge
+                            is there, as it does for an endpoint, and hands them what is written
+                            here: the tools that may be called and where a person signs in.
+                          properties:
+                            signIn:
+                              description: |-
+                                SignIn is how a person the calls are made for is known to the server.
+                                Absent, the server is called without a credential of a person.
+                              properties:
+                                oauth:
+                                  description: |-
+                                    OAuth is a sign-in by OAuth 2.0 authorization code with PKCE: the
+                                    person is sent to the service, and the component that keeps people's
+                                    connections is handed a credential it presents for them afterwards.
+                                  properties:
+                                    issuer:
+                                      description: |-
+                                        Issuer is the authorization server: its metadata is read at
+                                        /.well-known/oauth-authorization-server below it (RFC 8414).
+                                      maxLength: 512
+                                      pattern: ^https://[^\s/]+(/[^\s]*)?$
+                                      type: string
+                                    scopes:
+                                      description: Scopes are the scopes asked for.
+                                      items:
+                                        maxLength: 128
+                                        pattern: ^[\x21\x23-\x5B\x5D-\x7E]+$
+                                        type: string
+                                      maxItems: 32
+                                      type: array
+                                      x-kubernetes-list-type: set
+                                  required:
+                                  - issuer
+                                  type: object
+                              required:
+                              - oauth
+                              type: object
+                            tools:
+                              description: Tools are the tools that may be called.
+                              items:
+                                description: OutsideTool is one tool of an outside
+                                  tool server.
+                                properties:
+                                  class:
+                                    description: |-
+                                      Class is read for a tool that changes nothing at the service, and
+                                      change for one that does.
+                                    enum:
+                                    - read
+                                    - change
+                                    type: string
+                                  description:
+                                    description: Description is what a person who
+                                      builds with the tool reads.
+                                    maxLength: 1024
+                                    minLength: 1
+                                    type: string
+                                  inputSchema:
+                                    description: |-
+                                      InputSchema is the JSON Schema of the tool's arguments. Absent, the
+                                      tool takes none.
+                                    x-kubernetes-preserve-unknown-fields: true
+                                  name:
+                                    description: |-
+                                      Name is the tool's name on the platform: with the bridge's name and
+                                      Version it is what a person allows and what a call names.
+                                    maxLength: 63
+                                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                                    type: string
+                                  tool:
+                                    description: Tool is the name the server knows
+                                      the tool by. Absent, it is Name.
+                                    maxLength: 128
+                                    minLength: 1
+                                    pattern: ^[A-Za-z0-9_.-]+$
+                                    type: string
+                                  version:
+                                    description: |-
+                                      Version is the version of what is written here: raised when the tool
+                                      is reviewed again because its inputs or what it does changed.
+                                    format: int32
+                                    minimum: 1
+                                    type: integer
+                                required:
+                                - class
+                                - description
+                                - name
+                                - version
+                                type: object
+                              maxItems: 64
+                              minItems: 1
+                              type: array
+                              x-kubernetes-list-map-keys:
+                              - name
+                              x-kubernetes-list-type: map
+                          required:
+                          - tools
+                          type: object
+                        paths:
+                          description: |-
+                            Paths are the path prefixes of the app a caller from outside the
+                            platform reaches. A caller asks for them as they are written here and
+                            the app is asked for the same: answers of these protocols name paths
+                            of their own, and a path rewritten on the way in would not match them.
+                            Nothing outside these paths is reached through the way, and none of
+                            them is the app's root: a way opens what its protocol needs and no
+                            more.
+                          items:
+                            maxLength: 128
+                            pattern: ^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$
+                            type: string
+                          maxItems: 8
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        protocol:
+                          description: Protocol is what the calls are made in.
+                          enum:
+                          - mcp
+                          - webdav
+                          - caldav
+                          - carddav
+                          type: string
+                        root:
+                          description: |-
+                            Root is where a calendar or contact program that found the door by
+                            its discovery address (RFC 6764: /.well-known/caldav,
+                            /.well-known/carddav) is sent, to ask there who the person is and
+                            where their calendars or address books are. Under one of Paths, and
+                            only for a way in caldav or carddav. The door answers the discovery
+                            address with a redirect to it, before anybody is asked who is
+                            calling: the redirect names a path and grants nothing.
+                          maxLength: 128
+                          pattern: ^/[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9][A-Za-z0-9._~-]*)*/?$
+                          type: string
+                        speaksAs:
+                          description: SpeaksAs is whom the calls are made for.
+                          enum:
+                          - person
+                          - tenant
+                          type: string
+                      required:
+                      - callee
+                      - caller
+                      - name
+                      - protocol
+                      - speaksAs
+                      type: object
+                      x-kubernetes-validations:
+                      - message: 'a way connects two different sides: its caller and
+                          its callee differ'
+                        rule: self.caller != self.callee
+                      - message: a program on a person's device speaks as that person
+                        rule: self.caller != 'device' || self.speaksAs == 'person'
+                      - message: 'paths are where a caller from outside the platform
+                          reaches the app: present exactly for a way from a device
+                          or an outside service to the app'
+                        rule: has(self.paths) == (self.callee == 'app' && (self.caller
+                          == 'device' || self.caller == 'outside'))
+                      - message: 'root is where a calendar or contact program is sent
+                          from the discovery address: only for a way in caldav or
+                          carddav, and under one of its paths'
+                        rule: '!has(self.root) || ((self.protocol == ''caldav'' ||
+                          self.protocol == ''carddav'') && has(self.paths) && self.paths.exists(p,
+                          self.root == p || self.root.startsWith(p.endsWith(''/'')
+                          ? p : p + ''/'')))'
+                      - message: 'outside describes a tool server outside the platform
+                          that the tenant''s agents call: only for a way from agents
+                          to outside in mcp'
+                        rule: '!has(self.outside) || (self.caller == ''agents'' &&
+                          self.callee == ''outside'' && self.protocol == ''mcp'')'
+                      - message: 'a way names where its tool server answers once:
+                          endpoint inside the tenant, or outside with the entry''s
+                          baseUrl'
+                        rule: '!has(self.outside) || !has(self.endpoint)'
+                      - message: 'endpoint is where the tenant''s agents reach the
+                          bridge''s tool server: only for a way whose caller is agents'
+                        rule: '!has(self.endpoint) || self.caller == ''agents'''
+                    maxItems: 16
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                required:
+                - ways
+                type: object
+                x-kubernetes-validations:
+                - message: 'a way''s name is its own within the bridge: it names the
+                    way in the tenant''s approvals'
+                  rule: self.ways.all(w, self.ways.filter(x, x.name == w.name).size()
+                    == 1)
+                - message: 'spec.bridge.app names the app of the tenant a way calls
+                    or is called by: present exactly when a way''s caller or callee
+                    is app'
+                  rule: has(self.app) == self.ways.exists(w, w.caller == 'app' ||
+                    w.callee == 'app')
+                - message: 'a protocol has one discovery address: at most one way
+                    per protocol names a root'
+                  rule: self.ways.filter(w, has(w.root) && w.protocol == 'caldav').size()
+                    <= 1 && self.ways.filter(w, has(w.root) && w.protocol == 'carddav').size()
+                    <= 1
+                - message: 'an agent bridge has one way from the tenant''s agents:
+                    the tool server its callers are told of'
+                  rule: self.ways.filter(w, w.caller == 'agents').size() <= 1
+                - message: 'addonsValuesPath tells the bridge the add-ons of the app
+                    it connects: it needs spec.bridge.app'
+                  rule: '!has(self.addonsValuesPath) || has(self.app)'
               classes:
                 description: |-
                   Classes lists the modes this component may be deployed under. It is a
@@ -437,8 +694,8 @@ spec:
                   - service
                   - app
                   - shared-app
-                  - adapter
                   - action
+                  - bridge
                   type: string
                 maxItems: 2
                 minItems: 1
@@ -453,7 +710,9 @@ spec:
                   comes with them too. An app the tenant installed itself is left as it
                   is, on install and on uninstall. An install is refused as a whole
                   when one of them cannot be found or may not be installed in the
-                  tenant.
+                  tenant. A move to a build installs what that build comes with and
+                  the tenant does not have, and is refused the same way; a tenant
+                  already at a build is brought what the build comes with.
 
                   Each of them is an app of its own for everything else: its own
                   requirements, entries, privileges and approvals, its own builds and
@@ -1357,13 +1616,11 @@ spec:
                           properties:
                             groups:
                               description: |-
-                                Groups "mirror" has the platform keep the tenant realm's group
-                                memberships in the store, as tuples
-                                group:<realm>/<group name>#member of user:<realm>/<subject>: every
-                                top-level group of the realm, kept equal to the realm as people join
-                                and leave. The model must define a type group with a relation member
-                                users are written with. A component's own key cannot write a tuple
-                                whose user or object is a group, mirrored or not.
+                                Groups "mirror" is accepted and has no effect. It had the platform
+                                keep the tenant realm's group memberships in the store; no group of
+                                the realm carries a right any more, so nothing is written for it. A
+                                component's own key still cannot write a tuple whose user or object
+                                is a group.
                               enum:
                               - mirror
                               type: string
@@ -1779,14 +2036,14 @@ spec:
                               description: |-
                                 Optional means the component runs without the gateway. While the
                                 cluster serves no models, or the component's key is not delivered yet,
-                                it is released all the same: without credentials, without a network
-                                path to the gateway, and told so through valueMapping.llm.availableKey.
-                                When the key arrives the component is rendered again with it.
+                                it is released all the same: without credentials and without a network
+                                path to the gateway. When the key arrives the component is rendered
+                                again with it.
 
-                                Honored for a component the platform places on tenants itself. For an
-                                app a tenant installs the requirement holds the release as if this
-                                were not set: its chart's values read the key from where it is kept,
-                                and its release cannot be rendered without it.
+                                A component the platform places on tenants itself is told so through
+                                valueMapping.llm.availableKey. An app a tenant installs is given
+                                neither valueMapping.llm.baseUrlKey nor apiKeyKey until then, so its
+                                chart's defaults for the two are what say there is no gateway.
                               type: boolean
                           type: object
                         logDestination:
@@ -1906,6 +2163,13 @@ spec:
                               maxLength: 63
                               pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                               type: string
+                          type: object
+                        personSecrets:
+                          description: |-
+                            PersonSecrets declares that the component keeps secrets that belong to
+                            one person each, with the confidant: the lasting credential of a
+                            sign-in a person gave it at a service outside the cluster, for example.
+                            See PersonSecretsRequirement.
                           type: object
                         rights:
                           description: |-
@@ -2095,6 +2359,20 @@ spec:
                             signs a short statement naming the person, and the tenant's realm
                             answers with a token of that person for one app.
                           properties:
+                            consent:
+                              description: |-
+                                Consent names the profile of the component whose page asks people
+                                whether this one may speak for them, where that is not this
+                                component's own page. A person is then linked to this component also
+                                on a request to the registrar that carries the token the front door
+                                made out to the named component for that person (exposure
+                                exchangeToken): the token the page holds while the person is on it.
+                                It links the person the token names and nobody else, and opens no
+                                other route. It counts while the named component is installed in the
+                                same tenant, at trustTier platform, with such an exposure.
+                              maxLength: 63
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
                             director:
                               description: |-
                                 Director names what a token the component obtains for a person may do
@@ -2124,6 +2402,21 @@ spec:
                                 (exchangedBy on the entry) names this one. So what the component can
                                 exchange is what came in through such an entry: a person present, who
                                 connected a program and need not be linked.
+
+                                A certified component that calls a home as the person
+                                (integrations[].asPerson) and names no keys exchanges too, and only
+                                this: the token the edge hands it on an entry that says exchangeToken
+                                also names its client, and its client is given the scopes of the homes
+                                granted to it and no other. It reaches a home for a person who is
+                                signed in and at its address, and for nobody else.
+                              type: boolean
+                            homes:
+                              description: |-
+                                Homes gives the component's client the scopes of the tenant's homes
+                                (home-<profile> for the provider of calendar-store, contacts-store and
+                                file-store), and has the people who sign in to an app that declares
+                                homeSync linked to it: what the platform's home sync acts with. It
+                                needs keys, and trustTier platform as all vouching for any app does.
                               type: boolean
                             keys:
                               description: |-
@@ -2164,6 +2457,13 @@ spec:
                               for the director is obtained with a signed statement'
                             rule: has(self.keys) || !has(self.director) || size(self.director)
                               == 0
+                          - message: 'vouching.homes needs vouching.keys: a person''s
+                              token for a home is obtained with a signed statement'
+                            rule: has(self.keys) || !has(self.homes) || !self.homes
+                          - message: 'vouching.consent needs vouching.keys: a person
+                              is linked to a component that signs statements'
+                            rule: has(self.keys) || !has(self.consent) || self.consent
+                              == ''
                       type: object
                     name:
                       description: |-
@@ -2232,6 +2532,155 @@ spec:
                   - name
                   type: object
                 type: array
+              homeSync:
+                description: |-
+                  HomeSync is how an app that keeps calendars or contacts of its own
+                  keeps them, so that the platform keeps them equal to the tenant's home.
+                properties:
+                  calendar:
+                    description: Calendar is how the app keeps calendar entries.
+                    properties:
+                      defaults:
+                        additionalProperties:
+                          x-kubernetes-preserve-unknown-fields: true
+                        description: |-
+                          Defaults are written onto a record made from the home, in the
+                          driver's form, with the same placeholders.
+                        maxProperties: 16
+                        type: object
+                      driver:
+                        description: Driver is the driver of the app's framework.
+                        enum:
+                        - odoo
+                        type: string
+                      fields:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          Fields maps a part of an entry to the app's field. The parts of a
+                          calendar entry are summary, description, location, start, end,
+                          startDate, endDate, allDay and rrule; of a contact name, email,
+                          phone, mobile, organization, title, note, street, city, zip, country
+                          and website.
+                        maxProperties: 16
+                        type: object
+                        x-kubernetes-validations:
+                        - message: a field is one of the parts of a calendar entry
+                            or a contact
+                          rule: self.all(k, k in ['summary', 'description', 'location',
+                            'start', 'end', 'startDate', 'endDate', 'allDay', 'rrule',
+                            'name', 'email', 'phone', 'mobile', 'organization', 'title',
+                            'note', 'street', 'city', 'zip', 'country', 'website'])
+                      filter:
+                        description: |-
+                          Filter selects a person's records, in the driver's form (for Odoo, a
+                          domain); "$user" and "$partner" stand for the person in the app.
+                        x-kubernetes-preserve-unknown-fields: true
+                      model:
+                        description: 'Model is the app''s record type (for Odoo, the
+                          model: calendar.event).'
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - driver
+                    - fields
+                    - model
+                    type: object
+                    x-kubernetes-validations:
+                    - message: a mapping names at least one field
+                      rule: self.fields.size() > 0
+                  contacts:
+                    description: Contacts is how the app keeps contacts.
+                    properties:
+                      defaults:
+                        additionalProperties:
+                          x-kubernetes-preserve-unknown-fields: true
+                        description: |-
+                          Defaults are written onto a record made from the home, in the
+                          driver's form, with the same placeholders.
+                        maxProperties: 16
+                        type: object
+                      driver:
+                        description: Driver is the driver of the app's framework.
+                        enum:
+                        - odoo
+                        type: string
+                      fields:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          Fields maps a part of an entry to the app's field. The parts of a
+                          calendar entry are summary, description, location, start, end,
+                          startDate, endDate, allDay and rrule; of a contact name, email,
+                          phone, mobile, organization, title, note, street, city, zip, country
+                          and website.
+                        maxProperties: 16
+                        type: object
+                        x-kubernetes-validations:
+                        - message: a field is one of the parts of a calendar entry
+                            or a contact
+                          rule: self.all(k, k in ['summary', 'description', 'location',
+                            'start', 'end', 'startDate', 'endDate', 'allDay', 'rrule',
+                            'name', 'email', 'phone', 'mobile', 'organization', 'title',
+                            'note', 'street', 'city', 'zip', 'country', 'website'])
+                      filter:
+                        description: |-
+                          Filter selects a person's records, in the driver's form (for Odoo, a
+                          domain); "$user" and "$partner" stand for the person in the app.
+                        x-kubernetes-preserve-unknown-fields: true
+                      model:
+                        description: 'Model is the app''s record type (for Odoo, the
+                          model: calendar.event).'
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                    required:
+                    - driver
+                    - fields
+                    - model
+                    type: object
+                    x-kubernetes-validations:
+                    - message: a mapping names at least one field
+                      rule: self.fields.size() > 0
+                  endpoint:
+                    description: |-
+                      Endpoint is where the app's API answers inside the tenant: its
+                      Service, the port and the path the driver's calls go under.
+                    properties:
+                      path:
+                        description: |-
+                          Path is appended to the address the consumer is told, for an API
+                          served below the root.
+                        maxLength: 253
+                        pattern: ^/[A-Za-z0-9._~/-]*$
+                        type: string
+                      port:
+                        description: |-
+                          Port is the Service's port, and must be the port the provider's pods
+                          listen on: a network policy matches the port a pod listens on, and
+                          the way it opens is to this port and no other.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                      service:
+                        description: Service is the provider's Service, in the namespace
+                          it is installed in.
+                        maxLength: 63
+                        minLength: 1
+                        pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - port
+                    - service
+                    type: object
+                required:
+                - endpoint
+                type: object
+                x-kubernetes-validations:
+                - message: homeSync keeps calendar, contacts or both
+                  rule: has(self.calendar) || has(self.contacts)
               hooks:
                 description: Hooks are lifecycle actions at install, upgrade and resync.
                 properties:
@@ -2295,8 +2744,10 @@ spec:
                     properties:
                       privilegedRole:
                         description: |-
-                          PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
-                          administrator role (for example the Nextcloud "admin" group).
+                          PrivilegedRole is the in-app administrator role the app's
+                          administrators -- whoever holds admin on it in the rights store -- are
+                          put in, for an app that cannot read its people's roles from a token
+                          (for example the Nextcloud "admin" group).
                         properties:
                           kind:
                             allOf:
@@ -2322,12 +2773,13 @@ spec:
                         type: object
                       syncJob:
                         description: |-
-                          SyncJob is how this app applies PrivilegedRole. The operator resolves
-                          app-admins membership, publishes it, and runs this Job; the script inside
-                          speaks whatever protocol the application happens to expose.
+                          SyncJob is how this app applies PrivilegedRole. The operator reads who
+                          administers and who uses the app from the rights store, publishes both
+                          lists, and runs this Job; the script inside speaks whatever protocol the
+                          application happens to expose.
 
-                          The division is deliberate and load-bearing: resolving a Keycloak group,
-                          detecting membership changes and running a Job to completion are platform
+                          The division is deliberate and load-bearing: reading the rights store,
+                          detecting changes and running a Job to completion are platform
                           concerns, so they live here. Knowing that one app wants a JSON-RPC call
                           and another an OCS POST is not, so it lives in the catalog entry that
                           owns that app. No application's protocol, endpoint or account model may
@@ -2422,6 +2874,26 @@ spec:
                   description: IntegrationRef identifies an optional integration contract
                     this app can consume.
                   properties:
+                    asPerson:
+                      description: |-
+                        AsPerson says the app calls the contract's provider -- the tenant's
+                        home for that kind of data -- as the person it acts for, with that
+                        person's rights there, for as long as the tenant's administrator
+                        grants the contract. The tenant's realm gives it a token valid at that
+                        provider and nowhere else, in one of two ways.
+
+                        An app that acts while the person is away signs statements as a
+                        vouching component does (requires.services.vouching.keys). A person is
+                        linked when they sign in to the app, and the app obtains their token
+                        from then on.
+
+                        An app that acts only while the person is present names no keys
+                        (requires.services.vouching.exchange): it exchanges the token the edge
+                        hands it for that person. Nobody is linked, and it obtains a token for
+                        nobody who is not signed in at its address at that moment.
+
+                        For file-store, calendar-store and contacts-store only.
+                      type: boolean
                     capabilities:
                       description: Capabilities lists the specific capabilities required
                         from the contract.
@@ -2432,6 +2904,28 @@ spec:
                       description: Contract is the name of the contract to consume.
                       minLength: 1
                       type: string
+                    dialog:
+                      description: |-
+                        Dialog says the app's pages ask the platform's file dialog (the
+                        porter) for files, and what for: pick, open, save. The person chooses
+                        in a window of the platform's, and the page is handed what they chose
+                        and nothing else: a picked file's name, id and address, or a handle
+                        for the one file to read or write. The app is given no token for the
+                        home and its server reaches no file. It holds while the tenant's
+                        administrator grants the contract.
+
+                        For file-store only.
+                      items:
+                        description: FileDialogUse is one thing an app asks the platform's
+                          file dialog for.
+                        enum:
+                        - pick
+                        - open
+                        - save
+                        type: string
+                      maxItems: 3
+                      type: array
+                      x-kubernetes-list-type: set
                     provider:
                       description: Provider is the expected provider app by profile
                         name.
@@ -2439,6 +2933,14 @@ spec:
                   required:
                   - contract
                   type: object
+                  x-kubernetes-validations:
+                  - message: 'asPerson is for a home''s contract: file-store, calendar-store
+                      or contacts-store'
+                    rule: '!has(self.asPerson) || !self.asPerson || self.contract
+                      in [''file-store'', ''calendar-store'', ''contacts-store'']'
+                  - message: dialog is for the contract file-store
+                    rule: '!has(self.dialog) || self.dialog.size() == 0 || self.contract
+                      == ''file-store'''
                 type: array
               launch:
                 description: |-
@@ -2483,11 +2985,37 @@ spec:
                     description: |-
                       API describes a component the platform routes to rather than runs. It
                       does not mean external: the catalog's own example points at a Service
-                      inside the cluster. Delivery: api.
+                      inside the cluster, and a bridge names the Service of the app it
+                      connects (api.backend). Delivery: api.
                     properties:
+                      backend:
+                        description: |-
+                          Backend is the Service of the tenant a bridge is answered by: the
+                          Service of the app it connects, which speaks the bridge's protocols
+                          itself. Runtime, TenantBinding and Tile say nothing of such an entry.
+                        properties:
+                          port:
+                            description: Port is the Service's port.
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                          service:
+                            description: Service is the Service's name in the tenant's
+                              namespace.
+                            maxLength: 63
+                            minLength: 1
+                            pattern: ^[a-z]([-a-z0-9]*[a-z0-9])?$
+                            type: string
+                        required:
+                        - port
+                        - service
+                        type: object
                       baseUrl:
-                        description: BaseURL is the external service origin (e.g.
-                          https://service.example).
+                        description: |-
+                          BaseURL is the external service origin (e.g. https://service.example).
+                          Every entry packaged as an api names one, except a bridge, which names
+                          a backend.
                         minLength: 1
                         pattern: ^https?://.+
                         type: string
@@ -2651,9 +3179,11 @@ spec:
                         - logo
                         - relation
                         type: object
-                    required:
-                    - baseUrl
                     type: object
+                    x-kubernetes-validations:
+                    - message: 'an api names where it is answered once: baseUrl, or
+                        backend for a bridge'
+                      rule: has(self.baseUrl) != has(self.backend)
                   chart:
                     description: 'Chart is the Helm chart or OCI artifact. Delivery:
                       workload.'
@@ -2808,6 +3338,14 @@ spec:
                             endpointKey:
                               description: EndpointKey is the Helm value key for the
                                 integration's service endpoint URL.
+                              type: string
+                            homeScopeKey:
+                              description: |-
+                                HomeScopeKey is the Helm value key for the scope the component asks
+                                the tenant's realm a person's token for the home with, for a contract
+                                it calls as the person (spec.integrations[].asPerson). The operator
+                                sets it while the tenant's administrator grants the contract, and
+                                leaves it out otherwise. A name, not a credential.
                               type: string
                             passwordKey:
                               description: PasswordKey is the Helm value key for the
@@ -3204,6 +3742,57 @@ spec:
                       - port
                       - service
                       type: object
+                    files:
+                      description: |-
+                        Files is what a provider of file-store says about itself beyond
+                        WebDAV, so that the platform's file dialog (the porter) can show a
+                        person their files and name one of them. Without it the dialog does
+                        not offer this provider.
+                      properties:
+                        idProperty:
+                          description: |-
+                            IDProperty is the WebDAV property that holds a file's id: one that
+                            stays the same when the file is moved or renamed, and is the same for
+                            everybody who may see the file. Written "{namespace}name".
+                          maxLength: 253
+                          minLength: 3
+                          pattern: ^\{[^{}\s]+\}[A-Za-z_][A-Za-z0-9._-]*$
+                          type: string
+                        open:
+                          description: Open is the address that opens a file by its
+                            id in a browser.
+                          properties:
+                            entry:
+                              description: Entry is the name of the provider's gateway
+                                entry (expose[].name).
+                              maxLength: 63
+                              minLength: 1
+                              type: string
+                            path:
+                              description: |-
+                                Path is the path on that entry, with "{id}" where the id goes. It
+                                carries the id and nothing else of the file.
+                              maxLength: 253
+                              pattern: ^/[A-Za-z0-9._~/?=&-]*\{id\}[A-Za-z0-9._~/?=&-]*$
+                              type: string
+                          required:
+                          - entry
+                          - path
+                          type: object
+                        root:
+                          description: |-
+                            Root is where a person's files start, as a path below the contract's
+                            endpoint. "{principal}" stands for the last part of the address the
+                            home names as the person's principal (DAV:current-user-principal).
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^[A-Za-z0-9._~/-]*(\{principal\}[A-Za-z0-9._~/-]*)?$
+                          type: string
+                      required:
+                      - idProperty
+                      - open
+                      - root
+                      type: object
                     name:
                       description: Name is the contract name (e.g., "file-store",
                         "project-management").
@@ -3217,6 +3806,9 @@ spec:
                   required:
                   - name
                   type: object
+                  x-kubernetes-validations:
+                  - message: files is for the contract file-store
+                    rule: '!has(self.files) || self.name == ''file-store'''
                 type: array
               requires:
                 description: |-
@@ -3422,11 +4014,45 @@ spec:
                       egress:
                         description: |-
                           Egress opens outbound network beyond the tenant baseline. Tenant scope:
-                          the traffic leaves the tenant's own namespace.
+                          the traffic leaves the tenant's own namespace. A profile names all its
+                          hosts in one request, so that they are answered once.
                         items:
-                          description: EgressRequest asks for outbound network beyond
-                            the tenant baseline.
+                          description: |-
+                            EgressRequest asks for outbound network beyond the tenant baseline: hosts
+                            outside the cluster by name, or a network rule by address.
+
+                            Hosts is the form for a destination that has a name. The connections pass
+                            the gateway for outgoing connections, which lets through the hosts that
+                            were granted and records each connection. HostsAtApproval is the same way
+                            for a component whose destinations its installation chooses: the approver
+                            names the hosts, and the grant carries them. Rule is for what that gateway
+                            cannot carry, a protocol that names no host, and the approver reads it as
+                            addresses and ports.
                           properties:
+                            hosts:
+                              description: |-
+                                Hosts are the hosts outside the cluster the component connects to, each
+                                one name, lower case, with a port where it is not 443:
+                                "graph.microsoft.com", "example.org:8443". A pattern is not a host. The
+                                connection is TLS and opens with the host's name.
+                              items:
+                                maxLength: 259
+                                pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$
+                                type: string
+                              maxItems: 64
+                              minItems: 1
+                              type: array
+                              x-kubernetes-list-type: set
+                            hostsAtApproval:
+                              description: |-
+                                HostsAtApproval says the hosts are named by whoever approves the
+                                request, for this install: for a component whose destinations its
+                                installation chooses, such as the operator's own ERP or a storage
+                                bucket. The grant carries the hosts the approver named, and the
+                                connections pass the gateway for outgoing connections like those of
+                                Hosts. No trusted domain answers such a request: no host is known
+                                before somebody names it.
+                              type: boolean
                             name:
                               description: Name is what a PrivilegeGrant refers to.
                                 Unique within the profile.
@@ -3437,7 +4063,7 @@ spec:
                               minLength: 10
                               type: string
                             rule:
-                              description: Rule is the egress to allow.
+                              description: Rule is the egress to allow by address.
                               properties:
                                 ports:
                                   description: |-
@@ -3623,13 +4249,20 @@ spec:
                           required:
                           - name
                           - reason
-                          - rule
                           type: object
+                          x-kubernetes-validations:
+                          - message: an egress request states hosts, hostsAtApproval
+                              or a rule, one of the three
+                            rule: '[has(self.rule), has(self.hosts), has(self.hostsAtApproval)
+                              && self.hostsAtApproval].filter(f, f).size() == 1'
                         maxItems: 32
                         type: array
                         x-kubernetes-list-map-keys:
                         - name
                         x-kubernetes-list-type: map
+                        x-kubernetes-validations:
+                        - message: a profile names its hosts in one egress request
+                          rule: self.filter(e, has(e.hosts)).size() <= 1
                       podSecurity:
                         description: |-
                           PodSecurity waives a named admission policy for a named part of the
@@ -3686,13 +4319,11 @@ spec:
                         properties:
                           groups:
                             description: |-
-                              Groups "mirror" has the platform keep the tenant realm's group
-                              memberships in the store, as tuples
-                              group:<realm>/<group name>#member of user:<realm>/<subject>: every
-                              top-level group of the realm, kept equal to the realm as people join
-                              and leave. The model must define a type group with a relation member
-                              users are written with. A component's own key cannot write a tuple
-                              whose user or object is a group, mirrored or not.
+                              Groups "mirror" is accepted and has no effect. It had the platform
+                              keep the tenant realm's group memberships in the store; no group of
+                              the realm carries a right any more, so nothing is written for it. A
+                              component's own key still cannot write a tuple whose user or object
+                              is a group.
                             enum:
                             - mirror
                             type: string
@@ -4107,14 +4738,14 @@ spec:
                             description: |-
                               Optional means the component runs without the gateway. While the
                               cluster serves no models, or the component's key is not delivered yet,
-                              it is released all the same: without credentials, without a network
-                              path to the gateway, and told so through valueMapping.llm.availableKey.
-                              When the key arrives the component is rendered again with it.
+                              it is released all the same: without credentials and without a network
+                              path to the gateway. When the key arrives the component is rendered
+                              again with it.
 
-                              Honored for a component the platform places on tenants itself. For an
-                              app a tenant installs the requirement holds the release as if this
-                              were not set: its chart's values read the key from where it is kept,
-                              and its release cannot be rendered without it.
+                              A component the platform places on tenants itself is told so through
+                              valueMapping.llm.availableKey. An app a tenant installs is given
+                              neither valueMapping.llm.baseUrlKey nor apiKeyKey until then, so its
+                              chart's defaults for the two are what say there is no gateway.
                             type: boolean
                         type: object
                       logDestination:
@@ -4233,6 +4864,13 @@ spec:
                             maxLength: 63
                             pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                             type: string
+                        type: object
+                      personSecrets:
+                        description: |-
+                          PersonSecrets declares that the component keeps secrets that belong to
+                          one person each, with the confidant: the lasting credential of a
+                          sign-in a person gave it at a service outside the cluster, for example.
+                          See PersonSecretsRequirement.
                         type: object
                       rights:
                         description: |-
@@ -4420,6 +5058,20 @@ spec:
                           signs a short statement naming the person, and the tenant's realm
                           answers with a token of that person for one app.
                         properties:
+                          consent:
+                            description: |-
+                              Consent names the profile of the component whose page asks people
+                              whether this one may speak for them, where that is not this
+                              component's own page. A person is then linked to this component also
+                              on a request to the registrar that carries the token the front door
+                              made out to the named component for that person (exposure
+                              exchangeToken): the token the page holds while the person is on it.
+                              It links the person the token names and nobody else, and opens no
+                              other route. It counts while the named component is installed in the
+                              same tenant, at trustTier platform, with such an exposure.
+                            maxLength: 63
+                            pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                            type: string
                           director:
                             description: |-
                               Director names what a token the component obtains for a person may do
@@ -4449,6 +5101,21 @@ spec:
                               (exchangedBy on the entry) names this one. So what the component can
                               exchange is what came in through such an entry: a person present, who
                               connected a program and need not be linked.
+
+                              A certified component that calls a home as the person
+                              (integrations[].asPerson) and names no keys exchanges too, and only
+                              this: the token the edge hands it on an entry that says exchangeToken
+                              also names its client, and its client is given the scopes of the homes
+                              granted to it and no other. It reaches a home for a person who is
+                              signed in and at its address, and for nobody else.
+                            type: boolean
+                          homes:
+                            description: |-
+                              Homes gives the component's client the scopes of the tenant's homes
+                              (home-<profile> for the provider of calendar-store, contacts-store and
+                              file-store), and has the people who sign in to an app that declares
+                              homeSync linked to it: what the platform's home sync acts with. It
+                              needs keys, and trustTier platform as all vouching for any app does.
                             type: boolean
                           keys:
                             description: |-
@@ -4489,6 +5156,112 @@ spec:
                             for the director is obtained with a signed statement'
                           rule: has(self.keys) || !has(self.director) || size(self.director)
                             == 0
+                        - message: 'vouching.homes needs vouching.keys: a person''s
+                            token for a home is obtained with a signed statement'
+                          rule: has(self.keys) || !has(self.homes) || !self.homes
+                        - message: 'vouching.consent needs vouching.keys: a person
+                            is linked to a component that signs statements'
+                          rule: has(self.keys) || !has(self.consent) || self.consent
+                            == ''
+                    type: object
+                type: object
+              roles:
+                description: |-
+                  Roles are the roles people hold on this app: user and admin, which
+                  every app has, and the further ones it declares, each with what it is
+                  called inside the app. What a person holds is in the rights store; the
+                  app reads it from the sign-in token (roles.claim), in its own names.
+                  An add-on declares its own, and they reach the token of the app it is
+                  activated in.
+                properties:
+                  admin:
+                    description: Admin is what the role admin is called inside the
+                      app.
+                    properties:
+                      inApp:
+                        description: |-
+                          InApp are the app's own names for the role: a group, a role, whatever
+                          the app reads from the claim.
+                        items:
+                          maxLength: 128
+                          minLength: 1
+                          type: string
+                        maxItems: 20
+                        type: array
+                        x-kubernetes-list-type: set
+                    type: object
+                  claim:
+                    default: gentian_app_roles
+                    description: |-
+                      Claim is the token claim the roles are written to. An add-on's is not
+                      read: its roles are written to the claim of the app it is activated in.
+                    maxLength: 64
+                    pattern: ^[A-Za-z][A-Za-z0-9_-]*$
+                    type: string
+                  declared:
+                    description: Declared are the roles of the app between user and
+                      admin.
+                    items:
+                      description: ProfileRole is a role an app declares beside user
+                        and admin.
+                      properties:
+                        description:
+                          description: Description says what the role is for.
+                          maxLength: 400
+                          type: string
+                        inApp:
+                          description: InApp are the app's own names for the role.
+                          items:
+                            maxLength: 128
+                            minLength: 1
+                            type: string
+                          maxItems: 20
+                          type: array
+                          x-kubernetes-list-type: set
+                        includes:
+                          description: |-
+                            Includes are other declared roles of the app whose holders the holders
+                            of this one are too: manager includes salesman.
+                          items:
+                            type: string
+                          maxItems: 20
+                          type: array
+                          x-kubernetes-list-type: set
+                        name:
+                          description: Name is the role's name on the platform.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                          x-kubernetes-validations:
+                          - message: user and admin are roles every app has
+                            rule: '!(self in [''user'', ''admin''])'
+                        title:
+                          description: Title is the role as people read it.
+                          maxLength: 80
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    maxItems: 40
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  user:
+                    description: User is what the role user is called inside the app.
+                    properties:
+                      inApp:
+                        description: |-
+                          InApp are the app's own names for the role: a group, a role, whatever
+                          the app reads from the claim.
+                        items:
+                          maxLength: 128
+                          minLength: 1
+                          type: string
+                        maxItems: 20
+                        type: array
+                        x-kubernetes-list-type: set
                     type: object
                 type: object
               secrets:
@@ -4581,7 +5354,8 @@ spec:
                         CredentialRequirement of the tenant the app is installed in, shown in that
                         tenant's Admin Console under Credentials and set there, and the app's
                         values carry the fields once they are. Until then the app waits, with the
-                        requirement listed as unsatisfied.
+                        requirement listed as unsatisfied. An action is not Ready until then, and
+                        a run of it reads the credential as a file.
 
                         Stored at gentian-os/tenants/{tenant}/apps/{app}/supplied/{name}, one
                         property per field, with the app's other credentials: purging the app
@@ -4637,7 +5411,9 @@ spec:
                               valuePath:
                                 description: |-
                                   ValuePath is the Helm value key that receives the value, as for a
-                                  generated secret.
+                                  generated secret. For an action, which has no chart, it is the name
+                                  the value has in the credential's file, /run/credentials/{name}.env
+                                  in a run's pod: letters, digits and underscores.
                                 minLength: 1
                                 type: string
                             required:
@@ -4752,10 +5528,34 @@ spec:
               rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.expose)
                 || !self.expose.exists(e, e.surface == ''gateway'' && e.authMode ==
                 ''bearer'')'
-            - message: 'requires.services.vouching requires trustTier platform: the
-                component can obtain a person''s token for any app of the tenant'
+            - message: 'requires.services.vouching requires trustTier platform, or
+                trustTier certified for a component that calls a home as the person
+                (integrations[].asPerson): with keys of its own and no exchange, or
+                with exchange, no keys and an entry that says exchangeToken; never
+                director or homes'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.vouching)
+                || self.trustTier == ''platform'' || (self.trustTier == ''certified''
+                && has(self.integrations) && self.integrations.exists(i, has(i.asPerson)
+                && i.asPerson) && !(has(self.requires.services.vouching.director)
+                && self.requires.services.vouching.director.size() > 0) && !(has(self.requires.services.vouching.homes)
+                && self.requires.services.vouching.homes) && (has(self.requires.services.vouching.keys)
+                ? !(has(self.requires.services.vouching.exchange) && self.requires.services.vouching.exchange)
+                : (has(self.expose) && self.expose.exists(e, has(e.exchangeToken)
+                && e.exchangeToken))))'
+            - message: 'requires.services.personSecrets requires trustTier platform:
+                a secret kept for a person opens what that person may reach elsewhere'
+              rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.personSecrets)
                 || self.trustTier == ''platform'''
+            - message: 'integrations[].asPerson needs requires.services.vouching:
+                keys, for a component that signs the statements a person''s token
+                is asked with, or exchange without keys and an entry that says exchangeToken,
+                for one that acts only while the person is present'
+              rule: '!has(self.integrations) || !self.integrations.exists(i, has(i.asPerson)
+                && i.asPerson) || (has(self.requires) && has(self.requires.services)
+                && has(self.requires.services.vouching) && (has(self.requires.services.vouching.keys)
+                || (has(self.requires.services.vouching.exchange) && self.requires.services.vouching.exchange
+                && has(self.expose) && self.expose.exists(e, has(e.exchangeToken)
+                && e.exchangeToken))))'
             - message: 'a service exposes on the gateway only: the perimeter has no
                 session'
               rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)
@@ -4843,47 +5643,54 @@ spec:
             - message: 'a tile means launch tile: say how a person reaches this'
               rule: self.launch == 'tile' || ((!has(self.expose) || !self.expose.exists(e,
                 has(e.tile))) && !(has(self.__package__.api) && has(self.__package__.api.tile)))
-            - message: 'adapter is exclusive: an adapter is a component of its own,
-                never also the app it adapts'
-              rule: '!has(self.classes) || !(''adapter'' in self.classes) || self.classes.size()
+            - message: 'bridge is exclusive: a bridge is a component of its own, never
+                also the app it connects'
+              rule: '!has(self.classes) || !(''bridge'' in self.classes) || self.classes.size()
                 == 1'
-            - message: spec.adapter is for class adapter, and class adapter needs
-                it
-              rule: (has(self.classes) && 'adapter' in self.classes) == has(self.adapter)
-            - message: 'an adapter has launch none: nobody opens it'
-              rule: '!has(self.adapter) || self.launch == ''none'''
-            - message: 'an adapter exposes nothing: only the component that speaks
-                as a person reaches it'
-              rule: '!has(self.adapter) || !has(self.expose) || self.expose.size()
-                == 0'
-            - message: 'an adapter provides no contract: another app reaching it through
-                one would call a tool past the component that checks every call'
-              rule: '!has(self.adapter) || !has(self.provides) || self.provides.size()
-                == 0'
-            - message: 'an adapter declares no integrations: it reaches the app it
-                adapts (spec.adapter.adapts), and a contract key would be a credential
-                of its own at that app'
-              rule: '!has(self.adapter) || !has(self.integrations) || self.integrations.size()
-                == 0'
-            - message: 'an adapter does not vouch for people: it speaks as the person
-                with the credential it is handed for one call'
-              rule: '!has(self.adapter) || !has(self.requires) || !has(self.requires.services)
+            - message: spec.bridge is for class bridge, and class bridge needs it
+              rule: (has(self.classes) && 'bridge' in self.classes) == has(self.bridge)
+            - message: 'a bridge has launch none: nobody opens it'
+              rule: '!has(self.bridge) || self.launch == ''none'''
+            - message: 'a bridge exposes, provides and integrates nothing: its callers
+                reach it only as its ways say, through the platform''s door or from
+                the component that checks every call for a person'
+              rule: '!has(self.bridge) || ((!has(self.expose) || self.expose.size()
+                == 0) && (!has(self.provides) || self.provides.size() == 0) && (!has(self.integrations)
+                || self.integrations.size() == 0))'
+            - message: 'a bridge does not vouch for people: the door hands it the
+                person''s own credential for the app'
+              rule: '!has(self.bridge) || !has(self.requires) || !has(self.requires.services)
                 || !has(self.requires.services.vouching)'
-            - message: 'an adapter is deployed or reached: a chart, a composition,
+            - message: 'a bridge is deployed or routed to: a chart, a composition,
                 or an api -- not an addon inside another component'
-              rule: '!has(self.adapter) || !has(self.__package__.addon)'
-            - message: spec.adapter.adapts names the app the adapter uses; only an
-                adapter packaged as an api, which reaches a service outside the cluster,
-                adapts none
-              rule: '!has(self.adapter) || has(self.adapter.adapts) || has(self.__package__.api)'
-            - message: 'an adapter is never placed by default: a tenant''s administrator
+              rule: '!has(self.bridge) || !has(self.__package__.addon)'
+            - message: a bridge packaged as an api names the Service of the app it
+                connects (package.api.backend), or, for an agent bridge to an outside
+                service, that service's baseUrl; it carries no tile
+              rule: '!has(self.bridge) || !has(self.__package__.api) || ((has(self.__package__.api.backend)
+                || self.bridge.ways.all(w, w.caller == ''agents'' && w.callee == ''outside''))
+                && !has(self.__package__.api.tile))'
+            - message: 'a way to an outside tool server needs the server''s address:
+                package.api.baseUrl, over https'
+              rule: '!has(self.bridge) || !self.bridge.ways.exists(w, has(w.outside))
+                || (has(self.__package__.api) && has(self.__package__.api.baseUrl)
+                && self.__package__.api.baseUrl.startsWith(''https://''))'
+            - message: 'package.api.backend is for a bridge: every other entry packaged
+                as an api names a baseUrl'
+              rule: has(self.bridge) || !has(self.__package__.api) || !has(self.__package__.api.backend)
+            - message: 'a way to a partner''s service needs the partner named: requires.services.partners.call'
+              rule: '!has(self.bridge) || !self.bridge.ways.exists(w, w.callee ==
+                ''partner'') || (has(self.requires) && has(self.requires.services)
+                && has(self.requires.services.partners) && has(self.requires.services.partners.call)
+                && self.requires.services.partners.call.size() > 0)'
+            - message: 'a bridge is never placed by default: a tenant''s administrator
                 installs it'
-              rule: '!has(self.adapter) || !((has(self.defaultForTenants) && self.defaultForTenants)
+              rule: '!has(self.bridge) || !((has(self.defaultForTenants) && self.defaultForTenants)
                 || (has(self.defaultForPlatform) && self.defaultForPlatform) || (has(self.defaultWhereStoreOffered)
                 && self.defaultWhereStoreOffered))'
-            - message: 'an adapter is never placed: a tenant''s administrator installs
+            - message: 'a bridge is never placed: a tenant''s administrator installs
                 it'
-              rule: '!has(self.adapter) || !has(self.placement)'
+              rule: '!has(self.bridge) || !has(self.placement)'
             - message: 'action is exclusive: an action is a component of its own,
                 never also the app that runs it'
               rule: '!has(self.classes) || !(''action'' in self.classes) || self.classes.size()

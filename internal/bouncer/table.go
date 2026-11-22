@@ -139,6 +139,109 @@ type Route struct {
 	// only a person with a valid session is refused that way; one without
 	// is answered as on any route.
 	DeniedRedirect string `json:"deniedRedirect,omitempty"`
+	// Paths make a route that takes a token a door: one host that serves
+	// several apps, each under path prefixes of its own, and nothing
+	// outside them. A request is asked the question of the prefix its path
+	// falls under (PathRoute), and one that falls under none is refused
+	// before anybody is asked who is calling.
+	//
+	// Relation and Object of the route itself are then asked of nobody:
+	// they name the door in the record of a request that reached no app.
+	Paths []PathRoute `json:"paths,omitempty"`
+
+	// behindDoor marks the route forPath returns: one app's, reached through
+	// a door. Its token was made out to the door, never to the app.
+	behindDoor bool
+	// ways are the ways that serve the path forPath matched, and redirect
+	// its discovery redirect.
+	ways     []string
+	redirect string
+}
+
+// PathRoute is one app behind a door (Route.Paths): the path prefix it is
+// reached under, the question its callers are asked, and the scope the
+// caller's token is exchanged for before the app sees the request.
+type PathRoute struct {
+	// Prefix is matched on segment boundaries, as DenyPaths are: "/dav"
+	// serves "/dav" and "/dav/files" and not "/davx". Never the root.
+	Prefix string `json:"prefix"`
+	// Relation and Object are the store question for a request under the
+	// prefix: user:<sub> Relation Object.
+	Relation string `json:"relation"`
+	Object   string `json:"object"`
+	// ExchangeScope makes the app's Authorization header a token of the
+	// person that is valid at that app alone: the token the caller
+	// presented at the door, exchanged at the realm for this one scope.
+	// The door's token is made out to the door and is no app's to read, so
+	// a prefix without a scope hands its app the identity headers and no
+	// token.
+	ExchangeScope string `json:"exchangeScope,omitempty"`
+	// Ways are the ways of the bridge that serve the prefix. A caller with
+	// a device password reaches it only if the password covers one of them;
+	// a caller with a token of the door's own sign-in is not asked.
+	Ways []string `json:"ways,omitempty"`
+	// Redirect makes the prefix a discovery address (RFC 6764): a request
+	// under it is answered with a redirect to this path, before anybody is
+	// asked who is calling. It names where the app answers and grants
+	// nothing.
+	Redirect string `json:"redirect,omitempty"`
+}
+
+// forPath is the route a request to a door is decided as: the door's own,
+// with the question and the exchange of the prefix the path falls under. The
+// longest prefix wins. Nil for a path under none, and for a path that could
+// be read two ways (ambiguousPath): what the Gateway routes and what is
+// decided here must be the same path.
+func (r *Route) forPath(path string) *Route {
+	path = pathOnly(path)
+	if ambiguousPath(path) {
+		return nil
+	}
+	var best *PathRoute
+	for i := range r.Paths {
+		p := &r.Paths[i]
+		if path != p.Prefix && !strings.HasPrefix(path, p.Prefix+"/") {
+			continue
+		}
+		if best == nil || len(p.Prefix) > len(best.Prefix) {
+			best = p
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	sub := *r
+	sub.Paths, sub.behindDoor, sub.ways, sub.redirect = nil, true, best.Ways, best.Redirect
+	sub.Relation, sub.Object, sub.ExchangeScope = best.Relation, best.Object, best.ExchangeScope
+	return &sub
+}
+
+// ambiguousPath reports a path whose prefix is not settled by reading it
+// once: a segment that climbs or stands still, an encoded slash, backslash
+// or dot, or an empty segment. The Gateway normalizes a path before it
+// routes and before it asks here, so none of these arrives from it; one
+// that does is refused and never guessed at.
+func ambiguousPath(path string) bool {
+	if !strings.HasPrefix(path, "/") || strings.Contains(path, "\\") {
+		return true
+	}
+	lower := strings.ToLower(path)
+	for _, enc := range []string{"%2f", "%5c", "%2e"} {
+		if strings.Contains(lower, enc) {
+			return true
+		}
+	}
+	segments := strings.Split(path[1:], "/")
+	for i, seg := range segments {
+		if seg == "." || seg == ".." {
+			return true
+		}
+		// A trailing slash leaves one empty segment at the end.
+		if seg == "" && i != len(segments)-1 {
+			return true
+		}
+	}
+	return false
 }
 
 // Denies reports whether a path is one the route refuses outright.
@@ -229,6 +332,32 @@ func ParseTable(b []byte) (*Table, error) {
 		}
 		if r.ExchangeScope != "" && (r.AuthMode != AuthModeOIDC || r.ForwardToken || r.KeepClientToken || r.IDTokenSession) {
 			return nil, fmt.Errorf("route table: entry %d (%q) exchanges a token only behind a session, and hands on one token", i, r.Host)
+		}
+		// A door is a route that takes a token, and each of its prefixes is
+		// a whole question. One that is not would be a path anybody with a
+		// token of the realm reaches.
+		if len(r.Paths) > 0 {
+			if r.AuthMode != AuthModeBearer {
+				return nil, fmt.Errorf("route table: entry %d (%q) serves paths of several apps only where it takes a token", i, r.Host)
+			}
+			prefixes := map[string]bool{}
+			for j, p := range r.Paths {
+				prefix := strings.TrimSuffix(strings.TrimSpace(p.Prefix), "/")
+				if prefix == "" || ambiguousPath(prefix) || strings.ContainsAny(prefix, "?#") {
+					return nil, fmt.Errorf("route table: entry %d (%q) path %d (%q) needs a prefix below the root that reads one way", i, r.Host, j, p.Prefix)
+				}
+				if p.Relation == "" || p.Object == "" {
+					return nil, fmt.Errorf("route table: entry %d (%q) path %q needs relation and object", i, r.Host, prefix)
+				}
+				if strings.ContainsAny(p.ExchangeScope, " \t") {
+					return nil, fmt.Errorf("route table: entry %d (%q) path %q exchanges for exactly one scope", i, r.Host, prefix)
+				}
+				if prefixes[prefix] {
+					return nil, fmt.Errorf("route table: entry %d (%q) lists path %q twice", i, r.Host, prefix)
+				}
+				prefixes[prefix] = true
+				t.Routes[i].Paths[j].Prefix = prefix
+			}
 		}
 		if seen[host] {
 			return nil, fmt.Errorf("route table: host %q listed twice", host)

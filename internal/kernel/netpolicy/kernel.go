@@ -35,10 +35,22 @@ func KernelAccessNetworkPolicy(
 	profile *gentianov1alpha1.ComponentProfile,
 	cfg Config,
 ) *networkingv1.NetworkPolicy {
+	return kernelAccessNetworkPolicy(tenantName, nsName, appName, profile, cfg, true)
+}
+
+// kernelAccessNetworkPolicy is KernelAccessNetworkPolicy for an app whose
+// path to the model gateway is opened only when models says so: an optional
+// requirement that is not met opens none.
+func kernelAccessNetworkPolicy(
+	tenantName, nsName, appName string,
+	profile *gentianov1alpha1.ComponentProfile,
+	cfg Config,
+	models bool,
+) *networkingv1.NetworkPolicy {
 	if profile == nil {
 		return nil
 	}
-	targets := kernelEgressTargets(profile, cfg)
+	targets := kernelEgressTargets(profile, cfg, models)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -117,13 +129,15 @@ func tcpPort(p int32) networkingv1.NetworkPolicyPort {
 //   - Identity: the edge and the identity provider, whole -- for an app that
 //     signs people in itself (OIDC or SAML). An app that declares the
 //     sign-in sidecar instead is opened to neither.
+//   - Partners: the identity provider, for a component that calls partners
+//     or accepts their assertions: both go through the realm.
 //   - Models: the model gateway's namespace on the gateway's port. The
 //     gateway's database, its cache and the model servers are in the same
 //     namespace on other ports, and are not an app's to reach.
 //
 // A namespace the profile's annotation names is opened whole, as before, and
 // that is the wider of the two when it names one a store also opens.
-func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config) []egressTarget {
+func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config, models bool) []egressTarget {
 	var out []egressTarget
 	index := map[string]int{}
 	add := func(ns string, ports ...int32) {
@@ -169,7 +183,7 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 			add(layout.System("mail"))
 			add(layout.System("mail-dmz"))
 		}
-		if kr.LLM != nil {
+		if kr.LLM != nil && models {
 			add(layout.System("llm"), provisioner.ModelGatewayPort)
 		}
 		// The rights check: the bouncer's listener for the one question,
@@ -185,6 +199,17 @@ func kernelEgressTargets(profile *gentianov1alpha1.ComponentProfile, cfg Config)
 			add(cfg.ServicesNamespace, RightsCheckPort)
 			add(layout.Namespace(layout.Control), RegistrarPort)
 			// And the realm, which it posts its statements to.
+			add(layout.Namespace(layout.Authentication))
+		}
+		// Secrets of people: the confidant's one port.
+		if kr.PersonSecrets != nil {
+			add(layout.Namespace(layout.Control), ConfidantPort)
+		}
+		// Partners: the realm, where the component exchanges a person's
+		// token for an assertion towards a partner, or hands in one it
+		// accepts. An app that signs people in reaches it already; an
+		// agent bridge that calls a partner does not sign anybody in.
+		if p := kr.Partners; p != nil && (len(p.Call) > 0 || p.Accept) {
 			add(layout.Namespace(layout.Authentication))
 		}
 		// An authorization store: the arbiter's pods on the arbiter's

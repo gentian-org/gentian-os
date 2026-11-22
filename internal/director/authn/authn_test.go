@@ -195,3 +195,58 @@ func with(c directortest.Claims, f func(*directortest.Claims)) directortest.Clai
 	f(&c)
 	return c
 }
+
+// Every refusal names its cause, and an expired token how long ago it expired:
+// the log counts causes without quoting a token.
+func TestARefusalNamesItsCause(t *testing.T) {
+	is := directortest.NewIssuer(t, "gentian")
+	v := verifier(t, is)
+	ok := directortest.Claims{Realm: "gentian", Subject: "u-1", Audience: audience}
+	expiry := time.Now().Add(-time.Hour)
+
+	cases := map[string]struct{ raw, cause string }{
+		"garbage":         {"not-a-token", authn.CauseMalformed},
+		"wrong audience":  {is.Token(t, with(ok, func(c *directortest.Claims) { c.Audience = "some-other-service" })), authn.CauseAudience},
+		"expired":         {is.Token(t, with(ok, func(c *directortest.Claims) { c.Expiry = expiry })), authn.CauseExpired},
+		"foreign issuer":  {is.Token(t, with(ok, func(c *directortest.Claims) { c.Issuer = "https://elsewhere.example/realms/gentian" })), authn.CauseIssuer},
+		"unknown realm":   {is.Token(t, with(ok, func(c *directortest.Claims) { c.Realm = "nope" })), authn.CauseIssuer},
+		"unpublished key": {is.Token(t, with(ok, func(c *directortest.Claims) { c.Key = directortest.OtherKey(t) })), authn.CauseSignature},
+		"unknown key id":  {is.Token(t, with(ok, func(c *directortest.Claims) { c.KeyID = "rotated-away" })), authn.CauseUnknownKey},
+		"no subject":      {is.Token(t, with(ok, func(c *directortest.Claims) { c.Subject = "" })), authn.CauseMalformed},
+		"an ID token":     {is.Token(t, with(ok, func(c *directortest.Claims) { c.Type = "ID" })), authn.CauseTokenType},
+	}
+	for name, c := range cases {
+		_, err := v.Verify(context.Background(), c.raw)
+		var refusal *authn.Refusal
+		if !errors.As(err, &refusal) || !errors.Is(err, authn.ErrUnauthenticated) {
+			t.Fatalf("%s: err = %v, want a Refusal of ErrUnauthenticated", name, err)
+		}
+		if refusal.Cause != c.cause {
+			t.Errorf("%s: cause = %q, want %q (%v)", name, refusal.Cause, c.cause, err)
+		}
+		if late := refusal.Late; (c.cause == authn.CauseExpired) != (late > 0) ||
+			(late > 0 && (late < time.Hour-time.Minute || late > time.Hour+time.Minute)) {
+			t.Errorf("%s: late = %v", name, late)
+		}
+	}
+}
+
+// Warm puts a realm's keys in the cache, so that a token of the realm is
+// checked while Keycloak is away; a realm it cannot fetch is an error.
+func TestWarmKeepsTheKeysForWhenKeycloakIsAway(t *testing.T) {
+	is := directortest.NewIssuer(t, "kernel")
+	v := verifier(t, is)
+	if err := v.Warm(context.Background(), "kernel"); err != nil {
+		t.Fatal(err)
+	}
+	for _, realm := range []string{"nope", "../admin"} {
+		if err := v.Warm(context.Background(), realm); err == nil {
+			t.Fatalf("warmed %q", realm)
+		}
+	}
+	token := is.Token(t, directortest.Claims{Realm: "kernel", Subject: "u-1", Audience: audience})
+	is.Close()
+	if _, err := v.Verify(context.Background(), token); err != nil {
+		t.Fatalf("a warmed realm needed Keycloak: %v", err)
+	}
+}

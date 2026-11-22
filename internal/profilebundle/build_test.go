@@ -97,3 +97,29 @@ func TestABuildThatIsNotWhatItSaysIsRefused(t *testing.T) {
 		t.Fatalf("a bundle that does not decode: %+v", r)
 	}
 }
+
+// A build an earlier release wrote, of a profile in a shape this one no
+// longer has, is refused rather than read: its spec could not be stored on
+// the status, and one an earlier operator stored there keeps the build's
+// object from being applied again. A field this release dropped and nothing
+// requires is no refusal: the API server drops it too.
+func TestABuildOfAProfileThisSchemaRefusesIsRefused(t *testing.T) {
+	oldBridge := strings.Replace(buildWiki, "classes: [app]", "classes: [bridge]", 1) + `  bridge:
+    kind: external
+    app: {profile: nextcloud-base-ce}
+    protocols:
+    - {name: caldav, paths: [/remote.php/dav/calendars/]}
+`
+	_, _, r := FromBuild(buildOf(t, oldBridge))
+	if r == nil || r.Reason != ReasonRefused || !strings.Contains(r.Message, "spec.bridge.ways: Required value") {
+		t.Fatalf("a bridge of the old shape: %+v", r)
+	}
+
+	dropped := strings.Replace(buildWiki, `  launch: none
+`, `  launch: none
+  somethingThisReleaseDropped: true
+`, 1)
+	if _, _, r := FromBuild(buildOf(t, dropped)); r != nil {
+		t.Fatalf("a profile with a dropped field: %s %s", r.Reason, r.Message)
+	}
+}

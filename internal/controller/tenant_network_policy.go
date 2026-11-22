@@ -139,7 +139,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	}
 
 	// The per-app policies (kernel access, in-app traffic, granted egress,
-	// adapters, the cache) are the installed apps'. A component the
+	// agent bridges, the cache) are the installed apps'. A component the
 	// platform places has its own written by its Component
 	// (component_network_policy.go), and is left out here.
 	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
@@ -147,24 +147,50 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		return err
 	}
 
+	// An app whose optional model gateway requirement is not met has no path
+	// to the gateway, as its release has no address and no key.
+	withheld := map[string]bool{}
+	for _, app := range installed {
+		profile := profiles[app.Profile]
+		if profile == nil {
+			continue
+		}
+		without, err := modelAccessWithheld(ctx, r.Client, nsName, app.Profile, profile, tenant)
+		if err != nil {
+			return fmt.Errorf("read whether %s holds a key at the model gateway: %w", app.Profile, err)
+		}
+		if without {
+			withheld[app.Profile] = true
+		}
+	}
+
 	in := netpolicy.BuildInput{
-		TenantName:    tenant.Name,
-		Namespace:     nsName,
-		Apps:          installed,
-		Placed:        placed,
-		Profiles:      profiles,
-		Bindings:      bindings,
-		Grants:        grants,
-		PodSelectors:  selectors,
-		Config:        r.tenantNetPolicyConfig(),
-		KubeAPIEndpts: loadKubeAPIEndpointSlice(ctx, r.Client),
+		TenantName:          tenant.Name,
+		Namespace:           nsName,
+		Apps:                installed,
+		Placed:              placed,
+		Profiles:            profiles,
+		Bindings:            bindings,
+		Grants:              grants,
+		PodSelectors:        selectors,
+		ModelAccessWithheld: withheld,
+		Config:              r.tenantNetPolicyConfig(),
+		KubeAPIEndpts:       loadKubeAPIEndpointSlice(ctx, r.Client),
 	}
 	desired := netpolicy.BuildDesired(in)
 	desiredNames := netpolicy.ManagedPolicyNames(in)
 
-	// Who may call the tenant's adapters is decided above; the same
-	// components are told which adapters there are.
-	if err := r.ensureAdapterLists(ctx, tenant, in); err != nil {
+	// Who may call the tenant's agent bridges is decided above; the same
+	// components are told which bridges there are.
+	if err := r.ensureAgentBridgeLists(ctx, tenant, in); err != nil {
+		return err
+	}
+	// What the tenant's home sync keeps equal follows the same installs.
+	if err := r.ensureHomeSyncPlan(ctx, tenant, in); err != nil {
+		return err
+	}
+	// And what the tenant's file dialog serves, and to which apps.
+	if err := r.ensurePorterPlan(ctx, tenant, in); err != nil {
 		return err
 	}
 

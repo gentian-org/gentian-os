@@ -12,6 +12,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/guard"
@@ -112,6 +114,89 @@ func (s *Server) setResourcePlan(w http.ResponseWriter, r *http.Request, c call)
 	}
 	answer["commit"] = res.Commit
 	answer["message"] = "committed to the deployments repository; Argo CD applies it on the next sync"
+	s.json(w, http.StatusAccepted, answer)
+}
+
+// requestResourcePlan records a tenant administrator's request for another
+// plan, replacing one the tenant had. The plan must exist and be offered:
+// retired is 409, the plan the tenant is on 409 too. One the tenant does not
+// fit under is accepted; whether to force it is the cluster's administrator's
+// decision when they answer.
+func (s *Server) requestResourcePlan(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Plan   string `json:"plan"`
+		Reason string `json:"reason"`
+	}
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Plan) == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"plan": "<name>", "reason": "<optional>"}`)
+		return
+	}
+	if len(body.Reason) > maxPlanRequestReason {
+		s.fail(w, r, http.StatusBadRequest, fmt.Sprintf("the reason is longer than %d characters", maxPlanRequestReason))
+		return
+	}
+	tenant := r.PathValue("t")
+	plans, err := s.cfg.Lifecycle.Plans(r.Context(), tenant)
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	var chosen *lifecycle.Plan
+	for i := range plans {
+		if plans[i].Name == body.Plan {
+			chosen = &plans[i]
+		}
+	}
+	switch {
+	case chosen == nil:
+		s.fail(w, r, http.StatusNotFound, "no such resource plan on this cluster")
+		return
+	case chosen.Current:
+		s.fail(w, r, http.StatusConflict, "the tenant is on this plan already")
+		return
+	case chosen.BlockedBy == "retired":
+		s.fail(w, r, http.StatusConflict, chosen.Blocked)
+		return
+	}
+	res, err := s.cfg.Repo.SetPlanRequest(r.Context(), tenant,
+		gitops.PlanRequest{Plan: chosen.Name, Reason: body.Reason, At: time.Now()}, c.meta)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	answer := map[string]any{"status": res.Status, "tenant": tenant, "plan": chosen.Name}
+	if !res.Changed {
+		s.json(w, http.StatusOK, answer)
+		return
+	}
+	answer["commit"] = res.Commit
+	answer["message"] = "requested; the cluster's administrators answer it"
+	s.json(w, http.StatusAccepted, answer)
+}
+
+// maxPlanRequestReason bounds what a request carries into an annotation.
+const maxPlanRequestReason = 500
+
+// clearResourcePlanRequest removes the tenant's request: withdrawn by its
+// administrator, declined by the cluster's. Which of the two is the commit's
+// message, from the relation that let the caller in.
+func (s *Server) clearResourcePlanRequest(w http.ResponseWriter, r *http.Request, c call) {
+	tenant := r.PathValue("t")
+	message := fmt.Sprintf("Withdraw the resource plan request of tenant %s", tenant)
+	if c.held == "can_configure "+authz.Cluster(s.cfg.Cluster) {
+		message = fmt.Sprintf("Decline the resource plan request of tenant %s", tenant)
+	}
+	res, err := s.cfg.Repo.ClearPlanRequest(r.Context(), tenant, message, c.meta)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	answer := map[string]any{"status": res.Status, "tenant": tenant}
+	if !res.Changed {
+		s.json(w, http.StatusOK, answer)
+		return
+	}
+	answer["commit"] = res.Commit
 	s.json(w, http.StatusAccepted, answer)
 }
 

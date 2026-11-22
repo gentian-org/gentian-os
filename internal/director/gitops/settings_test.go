@@ -372,7 +372,6 @@ func TestEverySettingsDefaultComesFromTheSchema(t *testing.T) {
 		"mail.ssl":                             "false",
 		"llm.enabled":                          "false",
 		"tenancyMode":                          "multi",
-		"platformRoles.admin":                  "gentian:platform:admin",
 		"tenantDefaults.limitRange.defaultCpu": "500m",
 		"tenantDefaults.limitRange.defaultRequestCpu": "100m",
 	} {

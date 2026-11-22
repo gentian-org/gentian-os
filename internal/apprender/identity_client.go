@@ -11,13 +11,13 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"encoding/json"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // appClient is the app's own OIDC client (requires.services.identity.oidc)
@@ -74,6 +74,26 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 		extraConfig["gentianos.io/request-parameter"] = rp.Name
 		extraConfig["gentianos.io/request-parameter-pattern"] = rp.Pattern
 		extraConfig["gentianos.io/request-parameter-redirect-uri"] = rp.RedirectURI
+	}
+	// The vouching entries a person who signs in here is linked to, by the
+	// platform's sign-in extension (gentian-home-links): the app's own where
+	// it calls a home as the person, and the home sync's where it keeps
+	// calendars or contacts the home sync keeps equal to the home. An entry
+	// links only while it says so itself. An app that names no keys has no
+	// entry: it acts for a person only while they are present, and nobody is
+	// linked to it.
+	var linkTo []string
+	for _, integration := range id.profile.Integrations {
+		if integration.AsPerson && signsStatements(id.profile) {
+			linkTo = append(linkTo, "vouch-"+id.in.ProfileName)
+			break
+		}
+	}
+	if id.profile.HomeSync != nil {
+		linkTo = append(linkTo, "vouch-"+gentianov1alpha1.HomeSyncProfile)
+	}
+	if len(linkTo) > 0 {
+		extraConfig["gentianos.io/link-to"] = strings.Join(linkTo, ",")
 	}
 	name := oidc.Name
 	if name == "" {
@@ -160,6 +180,38 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 			},
 			"providerConfigRef": identityProvider,
 		}))
+	}
+
+	// The person's roles on the app, in the app's own names. The platform's
+	// mapper asks the rights store at every token and writes two claims: the
+	// in-app names of the roles held, and every in-app name it decides
+	// (<claim>_mapped), so that the app can take away what is no longer
+	// held and leave alone what was never the platform's.
+	if roles := id.in.Roles; roles != nil && len(roles.InApp) > 0 {
+		inApp, err := json.Marshal(roles.InApp)
+		if err == nil {
+			objs = append(objs, identityObject("client.keycloak.crossplane.io/v1alpha1", "ProtocolMapper", id.name("oidc-app-roles"), map[string]interface{}{
+				"deletionPolicy": "Delete",
+				"forProvider": map[string]interface{}{
+					"realmId":        id.realm,
+					"clientIdRef":    identityRef(clientName),
+					"name":           "app-roles",
+					"protocol":       "openid-connect",
+					"protocolMapper": "gentian-app-roles",
+					"config": map[string]interface{}{
+						"claim.name":                roles.Claim,
+						"gentian.tenant":            id.tenant,
+						"gentian.app":               id.in.ProfileName,
+						"gentian.roles":             string(inApp),
+						"id.token.claim":            "true",
+						"access.token.claim":        "true",
+						"userinfo.token.claim":      "true",
+						"introspection.token.claim": "false",
+					},
+				},
+				"providerConfigRef": identityProvider,
+			}))
+		}
 	}
 
 	if hasPack {
@@ -267,7 +319,8 @@ func (id *identityScope) packObjects(pack gentianov1alpha1.OIDCPackSpec, clientN
 		}
 	}
 
-	// The client role the entitlement group is granted. No external-name: a
+	// The pack's client role. Nobody is granted it through a group: who may
+	// use the app is the rights store's to say. No external-name: a
 	// role is identified by its UUID, and the provider finds the existing
 	// one from the client and name it is given.
 	if pack.ClientRole != "" {
@@ -278,20 +331,6 @@ func (id *identityScope) packObjects(pack gentianov1alpha1.OIDCPackSpec, clientN
 				"realmId":     id.realm,
 				"clientIdRef": identityRef(clientName),
 				"name":        pack.ClientRole,
-			},
-			"providerConfigRef": identityProvider,
-		}))
-		// exhaustive: false, matching the Job, which adds the mapping and
-		// leaves anything else on the group alone.
-		objs = append(objs, identityObject("group.keycloak.crossplane.io/v1alpha1", "Roles", id.name("group-roles"), map[string]interface{}{
-			"deletionPolicy": "Orphan",
-			"forProvider": map[string]interface{}{
-				"realmId":    id.realm,
-				"exhaustive": false,
-				"groupIdRef": map[string]interface{}{
-					"name": identityGroupName(keycloak.TenantAppGroup(id.tenant, id.in.App)),
-				},
-				"roleIdsRefs": []interface{}{map[string]interface{}{"name": roleName}},
 			},
 			"providerConfigRef": identityProvider,
 		}))
@@ -340,4 +379,12 @@ func (id *identityScope) scopeMapper(mapper string, tmpl gentianov1alpha1.OIDCMa
 		},
 		"providerConfigRef": identityProvider,
 	})
+}
+
+// signsStatements reports whether a profile vouches with keys of its own
+// (requires.services.vouching.keys): the kind of component people are linked
+// to.
+func signsStatements(profile *gentianov1alpha1.ComponentProfileSpec) bool {
+	return profile.Requires != nil && profile.Requires.Services != nil &&
+		profile.Requires.Services.Vouching != nil && profile.Requires.Services.Vouching.Keys != nil
 }

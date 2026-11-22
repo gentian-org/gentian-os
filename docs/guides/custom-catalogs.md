@@ -317,7 +317,7 @@ like `notes` will collide sooner or later and `acme-notes` will not.
 its own name where an entry states no `subDomain`. These names are the platform's in every tenant,
 and no entry of an app or an add-on may use one, or anything below one (`x.admin`): `desktop`,
 `admin`, `store`, `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
-`account`, `accounts`. On a single-tenancy cluster, where the tenant's hosts are directly under the
+`account`, `accounts`, `sync`. On a single-tenancy cluster, where the tenant's hosts are directly under the
 cluster's domain, the kernel's own are refused as well: `argocd`, `corp`, `headlamp`, `imap`, `llm`,
 `mail`, `mail-egress`, `www`. The install is refused with `422`:
 
@@ -374,7 +374,8 @@ apps an app is installed together with. Installing the app also installs each of
 does not have yet, from the app's own catalog or another one the tenant sees, and marks the entry
 (`cameWith` in the tenant's `spec.apps`); uninstalling the app removes the entries so marked, unless
 another installed app comes with them too. An app the tenant installed itself is left as it is both
-times. The install is refused as a whole when one of them is offered nowhere or cannot be installed
+times. A build that drops a name from the list has the same effect for that one app: once the tenant
+runs the build, the app that came with the earlier one is uninstalled. The install is refused as a whole when one of them is offered nowhere or cannot be installed
 on the cluster. Each of them is otherwise an app of its own: it asks for its own privileges and
 approvals, moves to newer builds by itself, is not uninstalled by hand while the app it came with
 is installed, and keeps its data when removed until it is purged by name. What an app that came
@@ -446,8 +447,8 @@ restored as onto the same one, and the result says it could not tell.
 `Authorization: Bearer <token>`: a token of the signed-in person from the tenant's realm, good for a
 few minutes, whose audience (`aud`) is the app's profile name and nothing else. The app, or a
 sidecar in front of it, checks the signature against the realm's keys, the issuer, the audience and
-the expiry. Besides the person's id (`sub`) it carries their `groups` in the tenant's realm (names,
-not paths), their `email` and their `name`: what an app learns of a person signing in to it
+the expiry. Besides the person's id (`sub`) it carries the roles they hold on the app (`gentian_app_roles`:
+`user`, `admin`, the roles the profile declares, an add-on's as `<add-on>/<role>`), their `email` and their `name`: what an app learns of a person signing in to it
 directly. The identity headers are not set on such an entry, and any a client sent are removed: the
 token is all the app is told. Any profile may ask for this, since the token is worth nothing anywhere else. It is not
 `forwardToken`, which hands on the session's own token and is for a component of platform trust; a
@@ -475,7 +476,7 @@ refused (`403`) when it names a relation.
 A component of the platform tenant that hands a break-glass holder a short-lived credential declares
 `spec.requires.services.rights: {breakGlass: true}`, and its key asks one question more: `{"person":
 "<subject>", "relation": "break_glass"}`, does this person of the platform tenant hold `break_glass`
-on the cluster now, through the realm's break-glass group or by name until their entry's
+on the cluster now: held by name on the Cluster claim, until their entry's
 `expiresAt`. It is declared on its own: `audit` does not include it, and it does not include the
 audit questions. In any other tenant it is ignored, and a key without it is refused (`403`) when it
 asks.
@@ -490,13 +491,41 @@ cluster's `logForwarding.destination.endpoint` is then `https://<service>.tenant
 A cluster has one log destination: a second component that declares it is given nothing, and its
 `LogDestination` condition names the first. In any other tenant the declaration does nothing.
 
+**A component that keeps a secret of a person** declares
+`spec.requires.services.personSecrets: {}`, at `trustTier: platform`. Such a secret is the lasting
+credential of a sign-in the person gave the component at a service outside the cluster. The component
+does not keep it in its own database: it asks the confidant
+([control-plane.md §4.10](../concepts/control-plane.md)), with the key in the Secret
+`rights-check-<component>` (`RIGHTS_CHECK_KEY`) at the address in the same Secret (`CONFIDANT_URL`).
+
+- **The first secret for a person needs the person.** `PUT /v1/people/<person>/secrets/<name>` with
+  `{"value": "..."}` takes the component key as the bearer credential and, for the first entry the
+  component keeps for that person, the person's token in `Gentian-Person-Token`: the one the front
+  door hands the component's own page (an exposure with `exchangeToken: true`).
+- **Renewing needs the key alone.** While the component holds an entry for the person, a `PUT`
+  without the person's token replaces one or adds another.
+- **Reading and removing.** `GET` and `DELETE` on the same path; `DELETE /v1/people/<person>` removes
+  everything the component keeps for that person, and is what a component calls when the person
+  disconnects.
+- A value is at most 16 KiB, and one version is kept.
+
 **A component that obtains a person's token while the person is away** declares vouching
 (`spec.requires.services.vouching`, with `keys.service`, `keys.port` and optionally `keys.path`:
-where the component publishes its signing keys as a JWKS). It needs `trustTier: platform`. The
+where the component publishes its signing keys as a JWKS). It needs `trustTier: platform`, or
+`trustTier: certified` for a component that only calls the tenant's homes as the person
+(`integrations[].asPerson`, [app-customization.md §2.3](app-customization.md)): such a component
+names no `director`, and its client is given the scopes of the homes granted to it and no app
+scope. With keys it does not exchange; with no keys it only exchanges, the token of a person who
+is present at its own address. `homes: true` gives a component of the platform's trust the scopes of
+all the tenant's homes, and has the people who sign in to an app that declares `homeSync` linked to
+it: what the tenant's home sync acts with. The
 platform enters it in the tenant's realm as a trusted issuer under the alias `vouch-<profile>`,
 gives it a client of the same name to ask with, and tells it what it has to know in the Secret
 `vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`,
-`VOUCHING_TOKEN_URL`). The component signs a statement of at most a few minutes that names the
+`VOUCHING_TOKEN_URL`). The platform keeps that Secret current: the issuer follows the profile's
+`keys`, and a Secret made again carries a new client secret, which the realm's client follows. So
+the component mounts the Secret as files (without `subPath`) and reads them each time it asks for a
+token; read once from the environment, a change reaches it only at its next start. The component signs a statement of at most a few minutes that names the
 issuer, the person's subject (their id in the realm), an id of its own, and as its audience the
 realm's issuer as the realm's discovery document names it, and posts it to the token address with the grant `urn:ietf:params:oauth:grant-type:jwt-bearer` and one scope,
 `app-<profile of the app>`. The realm answers with a token of that person for that app and nothing
@@ -508,6 +537,14 @@ component's to decide:
 - **Linking needs the person's own token.** `POST /v1/tenants/<t>/vouching/<profile>/link` at the
   registrar, with the person's token as the bearer, links that person and nobody else. A component
   that shows a person a page asking for their consent holds that token while they are on it.
+- **A consent page of another component.** A vouching profile whose consent is asked at another
+  component's address names that component (`spec.requires.services.vouching.consent: <profile>`).
+  The link route for the vouching component then also takes the token the front door hands that
+  page (`exchangeToken`): made out to the named profile, issued to the front door's exchange
+  client, of the tenant's realm. It links the person the token names and opens no other route, so
+  the page is never handed a token that is good for more than giving consent. The name counts while
+  that component is installed in the same tenant at `trustTier: platform` with an `exchangeToken`
+  entry; it reaches the registrar by naming `valueMapping.platform.registrarUrlKey`.
 - **Unlinking only takes away.** `DELETE /v1/tenants/<t>/vouching/<profile>/people/<id>` is the
   person's, an administrator's of the tenant's people, and the component's own, presenting its key
   (`RIGHTS_CHECK_KEY`, which a vouching component is given as well) as the bearer. A component
@@ -552,63 +589,60 @@ provider, and the component holds no credential of the realm (docs/guides/identi
 **A component that calls apps of other clusters for the person**, or takes such calls, declares
 `spec.requires.services.partners` with `call` and `accept` (docs/guides/app-customization.md §1.1).
 
-**An adapter** turns one app's abilities into tools for a program that acts for a person. It is
-an entry of its own, never part of the app's, with `classes: [adapter]` (exclusive) and a block
-`spec.adapter`:
+**A bridge called by the tenant's agents** turns one app's abilities, or a service elsewhere,
+into tools for a program that acts for a person. It is an entry of its own, never part of the
+app's, with `classes: [bridge]` (exclusive) and a way from `agents` in `spec.bridge`:
 
 ```yaml
 spec:
-  classes: [adapter]
-  launch: none                      # nobody opens an adapter
+  classes: [bridge]
+  launch: none                      # nobody opens a bridge
   trustTier: certified
   package: {chart: {repository: oci://example/charts, name: openproject-tools, version: "1.0.0"}}
-  adapter:
-    adapts: {profile: openproject, versions: ["15.4.0"]}   # the app it uses, in the same tenant
+  bridge:
+    app: {profile: openproject, versions: ["15.4.0"]}   # the app it uses, in the same tenant
+    ways:
+    - {name: tools, caller: agents, callee: app, protocol: mcp, speaksAs: person,
+       endpoint: {service: openproject-tools, port: 8765, path: /mcp}}
 ```
 
-Installing the adapter opens the way from its pods to the pods of the app it adapts and nowhere
-else in the tenant. Admission refuses an adapter that anybody
-opens, that exposes anything, that provides a contract or declares integrations, that vouches for
-people, that is an addon, or that is placed by default.
+Installing it opens the way from its pods to the pods of the app it connects and nowhere else in
+the tenant. Admission refuses a bridge that anybody opens, that exposes anything, that provides a
+contract or declares integrations, that vouches for people, that is an addon, or that is placed by
+default.
 
 What the platform does with it, and nothing needs granting for:
 
-- The adapter's pods are left out of the tenant's baseline and admit only the tenant's components
-  that speak as a person (those that declare vouching, above); those may reach every adapter. Such
-  a component is admitted whether a tenant installed it or the platform placed it.
-- An adapter reaches the app it `adapts` and nothing else in the tenant, and that app admits it. The
-  app is not changed for this.
+- The bridge's pods are left out of the tenant's baseline and admit only the tenant's components
+  that speak as a person (those that declare vouching, above); those may reach every such bridge.
+  Such a component is admitted whether a tenant installed it or the platform placed it.
 - It keeps no credential of its app: the credential for a call arrives with the call. Egress beyond
   the tenant is a privilege like any other (`requires.privileges.egress`) and opens only once the
   tenant's approver granted it. Data it keeps about a person is its own and carries the duties of an
   app's.
-- An adapter may be an `api` instead of a chart: a tool server outside the cluster. It adapts no app
-  of the tenant and runs nothing in it, so the egress granted to it is given to the components that
-  call it.
+- A way to `outside` may be packaged as an `api` with a `baseUrl`: a tool server outside the
+  cluster. It connects no app of the tenant and runs nothing in it, so the egress granted to it is
+  given to the components that call it.
+- A way to `partner` runs in the tenant and names the partner's realm in
+  `requires.services.partners.call`. A call through it is for the bridge itself: the rights check
+  asks `can_use` on the bridge, and the token it is handed (scope `app-<bridge>`) names its partner
+  client, which exchanges it for an assertion towards the partner. Its pods reach the tenant's realm
+  for that exchange; the service itself is granted egress.
 
-An adapter that says where its tool server answers is made known to the components that may call
-it:
+A bridge whose way names an `endpoint` is made known to the components that may call it: each finds
+a ConfigMap `agent-bridges-<component>` in its namespace, whose one key `AGENT_BRIDGES` lists the agent bridges by
+install name with their address and the app a call is for
+([bridges.md §4.4](../concepts/bridges.md#44-ways-from-the-agents)). The list grants nothing: the
+way to a bridge is the network policy above.
 
-```yaml
-  adapter:
-    adapts: {profile: openproject}
-    endpoint: {service: openproject-tools, port: 8765, path: /mcp}
-```
-
-Each of those components finds a ConfigMap `adapters-<component>` in its namespace. Its one key,
-`ADAPTERS`, is a JSON object from an adapter's install name to its address inside the tenant and
-the app it adapts: `{"openproject-tools": {"url": "http://openproject-tools.tenant-acme.svc.cluster.local:8765/mcp", "app": "openproject"}}`.
-The list follows what is installed. It grants nothing: the way to an adapter is the network
-policy above, and an adapter without an `endpoint` is installed and on no list.
-
-An adapter whose tools depend on the app's add-ons names a chart value in
-`spec.adapter.addonsValuesPath` (for example `activeModules`). The platform writes there the IDs
-(`package.addon.id`) of the add-ons selected into the app it adapts in its tenant, as a list, and
+A bridge whose tools depend on the app's add-ons names a chart value in
+`spec.bridge.addonsValuesPath` (for example `activeModules`). The platform writes there the IDs
+(`package.addon.id`) of the add-ons selected into the app it connects in its tenant, as a list, and
 an empty list while there are none or the app is not installed. When that selection changes, the
-adapter is rendered again. It learns the IDs and nothing else of the tenant's configuration.
+bridge is rendered again. It learns the IDs and nothing else of the tenant's configuration.
 
-An install is an adapter when its profile says so. One made before its profile was on the cluster
-is made as an app; once the profile arrives and says adapter, that instance is replaced, and it has
+An install is a bridge when its profile says so. One made before its profile was on the cluster is
+made as an app; once the profile arrives and says bridge, that instance is replaced, and it has
 rolled out nothing in the meantime.
 
 **An app that opens mailboxes with the person's sign-in token** (IMAP XOAUTH2) declares
@@ -639,13 +673,34 @@ spec:
     resources: {cpu: 500m, memory: 256Mi}
     inputs: {type: object, properties: {file: {type: string}}}
     outputs: {type: object}
-    adapters: [nextcloud-files]         # what the caller may call on its behalf
+    agentBridges: [nextcloud-files]     # what the caller may call on its behalf
 ```
 
 Installing it deploys nothing. A component that declares `requires.services.runs` starts a run of
 it through the dispatcher; the run's pod reaches that component and, where the action's
 `requires.privileges.egress` was granted, what that names. The command's contract and what a run is
 told are in [reference/dispatcher-api.md](../reference/dispatcher-api.md).
+
+An action that calls a service outside the cluster declares the credential it needs under
+`spec.secrets.supplied`, as an app does, with one difference: a field's `valuePath` is the name
+the value has in the credential's file.
+
+```yaml
+  secrets:
+    supplied:
+    - name: cloud                       # the file /run/credentials/cloud.env
+      displayName: Cloud account
+      description: A token of the account the step works in.
+      fields:
+      - key: token
+        valuePath: CLOUD_TOKEN          # a line CLOUD_TOKEN='…' in that file
+        format: token
+```
+
+The tenant's Admin Console lists it under Credentials once the action is installed. Until it is
+set the action is not Ready (`CredentialsPending`) and no run of it starts. A run of that action,
+and of no other, reads the files; a value changed in the console reaches the next runs within the
+hour. Removing the action removes what was asked for.
 
 ### 4.1a An app with no single sign-on: declare the sign-in sidecar
 
@@ -1062,6 +1117,16 @@ stays on the cluster, and so does a profile after its last uninstall. That is de
 moved back to the older build finds its pieces, and the data of an uninstalled app is purged with
 its profile. What stays is no longer checked and no bundle owns it — and an `OIDCPackCatalog` left
 this way is still read.
+
+**One exception: what the platform's schema no longer takes.** A profile or a build that an earlier
+release wrote in a shape this one does not have (a class or a field it removed) can never be applied
+again, and while the catalog directory lists it, Argo CD's diff of the whole directory fails. The
+director takes such files out of git at start and every 30 minutes, as one commit by
+`platform:catalogue` that names each file. The objects stay on the cluster, so an installed app keeps
+running and retained data stays where its purge finds it; removing the profile from the cluster is
+the residue removal below, as for any profile. A build whose bundle carries a profile of such a
+shape stays in git; the operator refuses it (`Verified=False`, reason `BundleRefused`) and renders
+no tenant from it.
 
 The cluster's administrator sees what is left, and removes one piece at a time:
 

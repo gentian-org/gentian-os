@@ -8,8 +8,9 @@ file, You can obtain one at https://mozilla.org/MPL/2.0/.
 SPDX-License-Identifier: MPL-2.0
 */
 
-// Package registrar keeps the list of people: it invites them, puts them in
-// groups and removes them, at Keycloak, for the person entitled to ask
+// Package registrar keeps the list of people: it invites them, has the
+// operator give them positions and roles, and removes them, at Keycloak,
+// for the person entitled to ask
 // (control-plane.md §4.4).
 //
 // It is a process of its own for the reason the director and the custodian
@@ -67,31 +68,40 @@ type Identity interface {
 	Realm(name string) (identity.Realm, error)
 	People(ctx context.Context, r identity.Realm, search string, limit int) ([]identity.Person, error)
 	Person(ctx context.Context, r identity.Realm, id string) (identity.Person, error)
-	Groups(ctx context.Context, r identity.Realm) ([]identity.Group, error)
 	Invite(ctx context.Context, r identity.Realm, inv identity.Invitation) (identity.Person, error)
-	SetMembership(ctx context.Context, r identity.Realm, userID, groupPath string, member bool) error
 	ZoneLanding(ctx context.Context, r identity.Realm, clientID string) string
 	SendPasswordReset(ctx context.Context, r identity.Realm, userID, clientID, redirectURI string) error
 	UpdatePerson(ctx context.Context, r identity.Realm, id string, u identity.PersonUpdate) (identity.Person, error)
 	RemovePerson(ctx context.Context, r identity.Realm, id string) error
 	RequireTOTP(ctx context.Context, r identity.Realm, id string, mail bool, clientID, redirectURI string) error
 	RemoveTOTP(ctx context.Context, r identity.Realm, id string) error
-	CreateGroup(ctx context.Context, r identity.Realm, path string) (identity.Group, error)
-	DeleteGroup(ctx context.Context, r identity.Realm, path string) error
-	RenameGroup(ctx context.Context, r identity.Realm, path, newPath string) (identity.Group, error)
 	FindUser(ctx context.Context, r identity.Realm, username string) (identity.Person, error)
 	ActivateAccount(ctx context.Context, r identity.Realm, id, email string, requireMFA bool, clientID, redirectURI string) (identity.Activation, error)
-	GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error)
 	UserCount(ctx context.Context, r identity.Realm) (int, error)
 	VouchingLinked(ctx context.Context, r identity.Realm, id, profile string) (bool, error)
+	VouchingPeople(ctx context.Context, r identity.Realm, profile string) ([]string, error)
 	LinkVouching(ctx context.Context, r identity.Realm, id, profile string) error
 	UnlinkVouching(ctx context.Context, r identity.Realm, id, profile string) error
+	DevicePasswords(ctx context.Context, r identity.Realm, id string) ([]identity.DevicePassword, error)
+	CreateDevicePassword(ctx context.Context, r identity.Realm, id, name string, ways []string) (identity.NewDevicePassword, error)
+	RevokeDevicePassword(ctx context.Context, r identity.Realm, id, passwordID string) error
+	Sessions(ctx context.Context, r identity.Realm, id string) ([]identity.Session, error)
+	EndSession(ctx context.Context, r identity.Realm, id, sessionID string) error
+}
+
+// ConsentVerifier verifies a person's token that is made out to a component
+// and not to this API: the one a consent page holds (vouching.go).
+type ConsentVerifier interface {
+	VerifyFor(ctx context.Context, raw, audience string) (*authn.Identity, error)
 }
 
 // Config assembles a Server.
 type Config struct {
 	Authn Authenticator
-	Authz authz.Checker
+	// Consent verifies the token of a consent page, on the one route that
+	// takes one. Nil accepts none.
+	Consent ConsentVerifier
+	Authz   authz.Checker
 	// Tenants answers which realm a tenant's people live in. The director
 	// read that from git; the registrar has no git and reads the cluster.
 	Tenants Tenants
@@ -139,10 +149,15 @@ type Config struct {
 	// tried. Zero means the defaults.
 	InvitationExpiry   time.Duration
 	InvitationInterval time.Duration
-	// PlatformRoles answers which kernel-realm group holds each platform
-	// role (ClaimPlatformRoles). Optional: without it the cluster's
-	// platform-role members are not offered.
-	PlatformRoles func(ctx context.Context) ([]RoleGroup, error)
+	// RoleHolders answers who holds a cluster role by name
+	// (ClaimRoleHolders). Optional: without it the platform tenant's role
+	// holders are not offered.
+	RoleHolders func(ctx context.Context) ([]RoleHolder, error)
+	// Rights is the way to the operator, which gives and takes what a
+	// person holds in a tenant (assignments.go). Optional: without it
+	// positions and roles cannot be given here, an invitation makes a
+	// person who holds nothing, and a removal leaves what they held.
+	Rights Rights
 	// Now is the clock, for the tests. Nil means the real one.
 	Now func() time.Time
 }
@@ -233,6 +248,14 @@ type call struct {
 	// decision is the relation and object that permitted the call, in the
 	// form the director's commit trailer uses: "can_manage_users tenant:demo".
 	decision string
+	// signedIn is when the caller last signed in with their realm, as their
+	// token says, in Unix seconds; zero when it does not say. Read by an act
+	// that asks for a sign-in moments before.
+	signedIn int64
+	// session is the realm's session the caller's token belongs to (sid);
+	// empty when the token does not say. Read by the routes about the
+	// caller's own sessions (account.go).
+	session string
 }
 
 // object names what a route's relation is checked against.
@@ -278,7 +301,16 @@ func (s *Server) authorizeAs(
 	w http.ResponseWriter, r *http.Request, pattern string, relationFor func(*authn.Identity) string, obj object,
 ) (c call, ok bool) {
 	relations := func(ident *authn.Identity) []string { return []string{relationFor(ident)} }
-	g, ok := s.gate().Authorize(w, r, pattern, relations, obj)
+	return s.authorizeWith(s.gate(), w, r, pattern, relations, obj)
+}
+
+// authorizeWith is authorizeAs at a guard the caller made: the one route
+// that reads its caller's token itself hands it over (vouching.go).
+func (s *Server) authorizeWith(
+	gate *guard.Guard, w http.ResponseWriter, r *http.Request, pattern string,
+	relations func(*authn.Identity) []string, obj object,
+) (c call, ok bool) {
+	g, ok := gate.Authorize(w, r, pattern, relations, obj)
 	if !ok {
 		return call{}, false
 	}
@@ -286,7 +318,7 @@ func (s *Server) authorizeAs(
 	if name == "" {
 		name = g.Ident.Name
 	}
-	return call{subject: g.User[len("user:"):], name: name, realm: g.Ident.Realm, decision: g.Decision()}, true
+	return call{subject: g.User[len("user:"):], name: name, realm: g.Ident.Realm, decision: g.Decision(), signedIn: g.Ident.AuthTime, session: g.Ident.SessionID}, true
 }
 
 // gate is the guard of this registrar's routes.
@@ -315,8 +347,8 @@ func (s *Server) action(pattern, relation string, obj object, h func(http.Respon
 	s.guarded(pattern, relation, obj, h)
 }
 
-// routes registers what the registrar serves: people, groups and the realm's
-// settings.
+// routes registers what the registrar serves: people, what they hold and
+// the realm's settings.
 //
 // Every write is an ACTION and none is a PUT. A commit says what should be
 // true from now on and is reviewable in git for ever; inviting somebody
@@ -330,24 +362,25 @@ func (s *Server) routes() {
 
 	s.guarded("GET /v1/tenants/{t}/people", "can_manage_users", tenantObject, s.listPeople)
 	s.guarded("GET /v1/tenants/{t}/people/{id}", "can_manage_users", tenantObject, s.getPerson)
-	s.guarded("GET /v1/tenants/{t}/groups", "can_manage_users", tenantObject, s.listGroups)
 	s.guarded("GET /v1/tenants/{t}/identity", "can_manage_users", tenantObject, s.tenantIdentitySettings)
 
 	s.action("POST /v1/tenants/{t}/actions/invite-person", "can_manage_users", tenantObject, s.invitePerson)
-	s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
 	s.action("POST /v1/tenants/{t}/actions/send-password-reset", "can_manage_users", tenantObject, s.sendPasswordReset)
 
-	// Editing somebody, and the groups they are put in. can_manage_users
-	// throughout, like the invitation they extend.
-	s.guarded("GET /v1/tenants/{t}/group-members", "can_manage_users", tenantObject, s.listGroupMembers)
+	// What a person holds in the tenant: their positions, and the roles
+	// beside (assignments.go). Read and changed by whoever manages the
+	// tenant's people; the operator writes it.
+	s.guarded("GET /v1/tenants/{t}/people/{id}/assignments", "can_manage_users", tenantObject, s.listAssignments)
+	s.action("POST /v1/tenants/{t}/actions/give", "can_manage_users", tenantObject, s.give)
+	s.action("POST /v1/tenants/{t}/actions/take", "can_manage_users", tenantObject, s.take)
+
+	// Editing somebody. can_manage_users throughout, like the invitation
+	// they extend.
 	s.guarded("GET /v1/tenants/{t}/templates", "can_manage_users", tenantObject, s.listTemplates)
 	s.action("POST /v1/tenants/{t}/actions/update-person", "can_manage_users", tenantObject, s.updatePerson)
 	s.action("POST /v1/tenants/{t}/actions/remove-person", "can_manage_users", tenantObject, s.removePerson)
 	s.action("POST /v1/tenants/{t}/actions/require-totp", "can_manage_users", tenantObject, s.requireTOTP)
 	s.action("POST /v1/tenants/{t}/actions/remove-totp", "can_manage_users", tenantObject, s.removeTOTP)
-	s.action("POST /v1/tenants/{t}/actions/create-group", "can_manage_users", tenantObject, s.createGroup)
-	s.action("POST /v1/tenants/{t}/actions/delete-group", "can_manage_users", tenantObject, s.deleteGroup)
-	s.action("POST /v1/tenants/{t}/actions/rename-group", "can_manage_users", tenantObject, s.renameGroup)
 
 	// What became of the mailboxes of the people removed from the tenant,
 	// and the deletion of one that was archived. The relation that guards
@@ -377,8 +410,8 @@ func (s *Server) routes() {
 	// (role_candidates.go).
 	s.guarded("GET /v1/clusters/{c}/role-candidates", "can_configure", s.clusterObject, s.listRoleCandidates)
 
-	// Who holds each platform role through its kernel-realm group, for
-	// whoever may audit the cluster (platform_role_members.go).
+	// Who of the platform tenant holds each cluster role, for whoever may
+	// audit the cluster (platform_role_members.go).
 	s.guarded("GET /v1/clusters/{c}/platform-role-members", "can_audit", s.clusterObject, s.listPlatformRoleMembers)
 
 	// A person's link to a component that vouches for people, which is that
@@ -386,9 +419,24 @@ func (s *Server) routes() {
 	// enter the tenant and links the caller and nobody else. The link is read
 	// and taken away by that person, by whoever manages the tenant's people,
 	// and by the component itself.
-	s.guarded("POST /v1/tenants/{t}/vouching/{profile}/link", "can_enter", tenantObject, s.linkVouching)
+	s.linking("POST /v1/tenants/{t}/vouching/{profile}/link", s.linkVouching)
+	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people", s.vouchingPeople)
 	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people/{id}", s.vouchingLinked)
 	s.linkHolders("DELETE /v1/tenants/{t}/vouching/{profile}/people/{id}", s.unlinkVouching)
+
+	// A person's own device passwords (devicepasswords.go). Open to whoever
+	// may enter the tenant, about the caller and nobody else.
+	s.guarded("GET /v1/tenants/{t}/device-passwords", "can_enter", tenantObject, s.listDevicePasswords)
+	s.action("POST /v1/tenants/{t}/actions/create-device-password", "can_enter", tenantObject, s.createDevicePassword)
+	s.action("POST /v1/tenants/{t}/actions/revoke-device-password", "can_enter", tenantObject, s.revokeDevicePassword)
+
+	// A person's own account: names, sessions, second factor (account.go).
+	// Open to whoever may enter the tenant, about the caller and nobody else.
+	s.guarded("GET /v1/tenants/{t}/account", "can_enter", tenantObject, s.getOwnAccount)
+	s.guarded("GET /v1/tenants/{t}/account/sessions", "can_enter", tenantObject, s.listOwnSessions)
+	s.action("POST /v1/tenants/{t}/actions/update-own-profile", "can_enter", tenantObject, s.updateOwnProfile)
+	s.action("POST /v1/tenants/{t}/actions/end-own-session", "can_enter", tenantObject, s.endOwnSession)
+	s.action("POST /v1/tenants/{t}/actions/end-own-other-sessions", "can_enter", tenantObject, s.endOwnOtherSessions)
 }
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, code int, msg string) {

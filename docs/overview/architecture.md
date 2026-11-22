@@ -54,7 +54,7 @@ the same five with plain labels; here each carries its components.
 flowchart TB
     apps["<b>Your apps</b> — from a catalog, or your own<br/><small>Nextcloud · OpenProject · Element · XWiki · Odoo · Open WebUI · …</small>"]
     ui["<b>One desktop, one sign-in, one app store</b> — what people see<br/><small>gentian-ui: desktop · admin console · App Store · sign-in</small>"]
-    os["<b>The operating system</b> — onboards tenants, installs apps, enforces policy, routes traffic<br/><small>gentian-os: operator · director · usher · custodian · registrar · bouncer · arbiter</small>"]
+    os["<b>The operating system</b> — onboards tenants, installs apps, enforces policy, routes traffic<br/><small>gentian-os: operator · director · usher · custodian · confidant · registrar · bouncer · arbiter</small>"]
     shared["<b>Shared services</b> — identity, secrets, databases, storage, mail, AI models<br/><small>Keycloak · OpenFGA · OpenBao · Argo CD · Crossplane · Envoy Gateway · Kyverno · PostgreSQL · MariaDB · Valkey · SeaweedFS · Postfix · Dovecot · LiteLLM</small>"]
     ground["<b>Your servers, or any provider you choose</b><br/><small>Kubernetes, anywhere</small>"]
     apps ~~~ ui ~~~ os ~~~ shared ~~~ ground
@@ -96,7 +96,7 @@ graph TD
 | **Operator** (`kernel-control`) | Reconciles `Tenant`, `Component` and the other kinds of §4: seeds secrets in OpenBao, writes the tenant's composite, renders and applies what each app's chart is installed with, routes, policies, and status. Projects tenants, installs and group memberships into OpenFGA. | Writes to the cluster only; holds no git credential. |
 | **Crossplane** (`kernel-provisioning`) | Composes `XCluster` and `XTenant` into managed resources (namespaces, vault policies, Jobs, `ExternalSecret`s), and an `App` claim for a profile that brings its own Composition. Its providers reconcile the managed resources the operator renders for an app, Helm `Release`s among them. | Owns what can be written down before it happens (below). |
 | **OpenBao + ESO** (`kernel-secrets`) | The one secret store, synced into Kubernetes Secrets that charts read. | Secrets never touch git or a resource's spec. |
-| **Usher, custodian, registrar** (`kernel-control`) | The other three services people's requests reach: the usher answers reads (what is here, what may I open), the custodian sets credentials in the vault, the registrar manages people and groups at Keycloak. Each asks OpenFGA first and holds one credential only. | None of them writes git. |
+| **Usher, custodian, registrar** (`kernel-control`) | The other three services people's requests reach: the usher answers reads (what is here, what may I open), the custodian sets credentials in the vault, the registrar manages people at Keycloak and asks the operator to give or take what they hold. Each asks OpenFGA first and holds one credential only. | None of them writes git. |
 | **Arbiter** (`system-authorization`, on demand) | The one way into the app instance of OpenFGA, which holds the components' authorization stores. The operator deploys it when a component declares a store. | Serves the app stores only; the kernel's rights store is separate. |
 | **Bouncer** (`kernel-edge`, beside the Gateways) | Asks OpenFGA, per request, whether the signed-in person may reach the host. | Decides nothing else ([routing.md §4.1](../concepts/routing.md)). |
 
@@ -191,7 +191,7 @@ the kernel realm) and, on a single-tenancy cluster, the one user tenant
 
 | From | What | By |
 |---|---|---|
-| `gentian-os` | the bootstrap Applications (Reloader, CNPG, Kyverno, Headlamp, OpenBao and its seal, the kernel Postgres) and the platform's own chart, `charts/gentian-os` (operator, director, usher, custodian, registrar, bouncer) | `kernel/bootstrap/chart`, applied by the installer |
+| `gentian-os` | the bootstrap Applications (Reloader, CNPG, Kyverno, Headlamp, OpenBao and its seal, the kernel Postgres) and the platform's own chart, `charts/gentian-os` (operator, director, usher, custodian, confidant, registrar, bouncer) | `kernel/bootstrap/chart`, applied by the installer |
 | `gentian-os` | the system tier's data plane, identity (Keycloak, OpenFGA), and — where the claim asks — mail and the model gateway | the ApplicationSets of `kernel/appsets/raw/` |
 | deployments repository | `clusters/<cluster>/kernel/claims/` — the cluster's Crossplane claims | `gentian-claims` |
 | deployments repository | `clusters/<cluster>/catalogue/` — the profiles tenants have installed | `gentian-catalogue` |
@@ -352,7 +352,7 @@ Namespaces are named by tier and function; the list is
 | Authentication | Keycloak | `kernel-authentication` |
 | Authorization | OpenFGA | `kernel-authorization` |
 | Kernel data | CloudNativePG operator and the kernel's own Postgres | `kernel-data` |
-| Control | operator, director, usher, custodian, registrar | `kernel-control` |
+| Control | operator, director, usher, custodian, confidant, registrar | `kernel-control` |
 | Edge | Envoy Gateway and the two Gateways, the bouncer, cert-manager, external-dns | `kernel-edge` |
 | Admission | Kyverno and the baseline policies | `kernel-admission` |
 | Cluster view | Headlamp | `kernel-observability` |
@@ -445,8 +445,8 @@ certificates for multi-level hostnames. See
 The desktop opens apps in frames, so the operator sets the frame policy on
 every route it creates, at the edge and not in the app: it removes upstream
 `X-Frame-Options` and sets `Content-Security-Policy: frame-ancestors 'self'`
-plus, by name, the desktop of the component's own tenant and the component's
-own other hosts. No wildcard is used, and the platform's desktop frames no
+plus, by name, the desktop of the component's own tenant, the desktops of
+the tenants whose people sign in to it, and the component's own other hosts. No wildcard is used, and the platform's desktop frames no
 tenant's app. Keycloak's endpoints on `id.<kernelDomain>` may be framed by
 the desktops and by the hosts of components on more than one host. A frame only
 works where desktop and app are on the same site, because the session cookie
@@ -509,7 +509,7 @@ The path layout, the derivation, rotation and the recovery kit are in
 ```
 gentian-os/              # The OS itself
 ├── api/                 # The resource types (a Go module of its own)
-├── cmd/, internal/      # Operator, director, usher, custodian, registrar, bouncer, arbiter
+├── cmd/, internal/      # Operator, director, usher, custodian, confidant, registrar, bouncer, arbiter
 ├── charts/gentian-os/   # The chart that installs them, with the CRDs
 ├── crossplane/          # XRDs, Compositions, providers
 ├── kernel/              # What Argo CD applies that is not composed
@@ -594,7 +594,7 @@ See [data-lifecycle.md](../concepts/data-lifecycle.md),
 
 ### 11.1 The platform's own image
 
-Operator, director, usher, custodian, registrar, bouncer and arbiter are one image
+Operator, director, usher, custodian, confidant, registrar, bouncer and arbiter are one image
 and one chart, delivered by the `gentian-os` Argo CD Application
 (`kernel/bootstrap/chart/templates/gentian-os.yaml`). The installer pins the
 image to the build of the commit it is installing from
@@ -657,8 +657,9 @@ and [security/design.md](../security/design.md) §2.9.
 
 ## 13. Operational Roles
 
-A role is membership of a Keycloak group; what a role may do is a relation
-in OpenFGA, asked by the director, the custodian, the registrar, the usher
+A role is held in OpenFGA, by a person directly, through a position, or for
+a cluster role by name on the Cluster claim ([iam.md §1.2](../concepts/iam.md));
+what a role may do is a relation there, asked by the director, the custodian, the registrar, the usher
 and the bouncer before they act. Nobody is given Kubernetes RBAC on the
 platform's kinds to do their work.
 

@@ -191,7 +191,10 @@ var (
 	chart = func(component string) map[string]string {
 		return map[string]string{"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/instance": "gentian-os", "app.kubernetes.io/component": component}
 	}
-	envoyPod    = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway"}
+	envoyPod = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy"}
+	// A proxy pod of the fleet for outgoing connections: the label
+	// every proxy pod has, and not the inbound class.
+	otherFleet  = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy-out"}
 	openfgaPod  = map[string]string{"app.kubernetes.io/name": "openfga", "app.kubernetes.io/instance": "gentian-openfga"}
 	openbaoPod  = map[string]string{"app.kubernetes.io/name": "openbao", "app.kubernetes.io/instance": "openbao"}
 	transitPod  = map[string]string{"app.kubernetes.io/name": "openbao", "app.kubernetes.io/instance": "openbao-transit"}
@@ -216,6 +219,7 @@ func TestTheFlowsAClusterNeeds(t *testing.T) {
 	}{
 		{"Envoy asks the bouncer", at("kernel-edge", envoyPod), at("kernel-edge", chart("bouncer")), 9001},
 		{"Envoy fetches its configuration", at("kernel-edge", envoyPod), at("kernel-edge", map[string]string{"control-plane": "envoy-gateway"}), 18000},
+		{"the outgoing fleet fetches its configuration", at("kernel-edge", otherFleet), at("kernel-edge", map[string]string{"control-plane": "envoy-gateway"}), 18000},
 		{"the bouncer asks OpenFGA", at("kernel-edge", chart("bouncer")), at("kernel-authorization", openfgaPod), 8080},
 		{"the bouncer reads Keycloak's keys", at("kernel-edge", chart("bouncer")), at("kernel-authentication", keycloakPod), 8080},
 		{"Envoy routes id.<kernel> to Keycloak", at("kernel-edge", envoyPod), at("kernel-authentication", keycloakPod), 8080},
@@ -308,6 +312,12 @@ func TestWhatIsRefused(t *testing.T) {
 		{"the administration console reaches the operator on the registrar's port", adminConsole, at("kernel-control", chart("operator")), 9445},
 		{"a component reaches cert-manager on the rights check's port", tenantApp, certManager, 8082},
 		{"Envoy reaches cert-manager on the bouncer's port", at("kernel-edge", envoyPod), certManager, 9001},
+		// The edge is the inbound fleet. Another fleet in the edge namespace
+		// is admitted nowhere the edge is, and takes no connection as it.
+		{"another fleet asks the bouncer", at("kernel-edge", otherFleet), at("kernel-edge", chart("bouncer")), 9001},
+		{"another fleet reaches Keycloak", at("kernel-edge", otherFleet), at("kernel-authentication", keycloakPod), 8080},
+		{"another fleet reaches headlamp", at("kernel-edge", otherFleet), at("kernel-observability", map[string]string{"app.kubernetes.io/name": "headlamp"}), 4466},
+		{"a component reaches another fleet as a public listener", tenantApp, at("kernel-edge", otherFleet), 10443},
 	} {
 		if admitted(policies, f.src, f.dst, f.port) {
 			t.Errorf("admitted: %s (%s -> %s:%d)", f.what, f.src.namespace, f.dst.namespace, f.port)
@@ -376,6 +386,7 @@ type kernelAddress struct {
 // says so here, and the inventory must admit it.
 var inClusterAddressFiles = map[string][]kernelAddress{
 	"charts/gentian-os/templates/bouncer.yaml":    {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}},
+	"charts/gentian-os/templates/confidant.yaml":  {{"kernel-authentication", 8080}, {"kernel-secrets", 8200}},
 	"charts/gentian-os/templates/custodian.yaml":  {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}, {"kernel-secrets", 8200}},
 	"charts/gentian-os/templates/deployment.yaml": {{"kernel-authorization", 8080}, {"kernel-secrets", 8200}, {"kernel-authentication", 8080}},
 	"charts/gentian-os/templates/director.yaml":   {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}, {"kernel-control", 8082}},
@@ -424,7 +435,8 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/keycloak_tenant_smtp.go": {},
 	"internal/controller/mail_reconciler.go":      {{"kernel-authentication", 8080}},
 	// The address of the bouncer's rights check, handed to a component.
-	"internal/controller/rights_check.go": {{"kernel-edge", 8082}},
+	"internal/controller/person_secrets.go": {{"kernel-control", 9446}},
+	"internal/controller/rights_check.go":   {{"kernel-edge", 8082}},
 	// The arbiter's address, handed to a component: a system namespace.
 	"internal/controller/authorization_service.go": {},
 	// A run's way back to the component that started it, in its tenant.
@@ -447,6 +459,9 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/director/catalogue/address.go": {},
 	// The model gateway, in a system namespace.
 	"internal/modelgateway/modelgateway.go": {},
+	// Recognizes a name inside a cluster, to refuse it as a host outside;
+	// dials none.
+	"internal/egress/egress.go": {},
 }
 
 var inClusterAddress = regexp.MustCompile(`\.svc(\.cluster\.local)?\b`)

@@ -2112,17 +2112,8 @@ check_prereqs() {
     # wins is the Application's business, not this check's. Checking one and
     # announcing it as "the operator image" is how a run reported a tag the
     # cluster was never going to pull. Both are checked, and each is named.
-    local _os_ok=1 _t
-    for _t in "${_os_tag}" "${GENTIAN_OS_IMAGE_TAG:-}"; do
-        [[ -n "${_t}" ]] || continue
-        if validate_image_tag "${_os_repo}" "${_t}"; then
-            success "Operator image ${_os_repo}:${_t} exists"
-        else
-            error "  ${_os_repo}:${_t} does not exist."
-            error "  Set image.tag in ${_os_values}, or GENTIAN_OS_IMAGE_TAG, to a tag that does."
-            _os_ok=0
-        fi
-    done
+    local _os_ok=1
+    check_build_images "${_os_values}" "${_os_tag}" "${GENTIAN_OS_IMAGE_TAG:-}" || _os_ok=0
     if [[ -n "${_os_tag}" && -n "${GENTIAN_OS_IMAGE_TAG:-}" && "${_os_tag}" != "${GENTIAN_OS_IMAGE_TAG}" ]]; then
         info "  The cluster's values file says ${_os_tag}; this run renders ${GENTIAN_OS_IMAGE_TAG}."
     fi
@@ -2862,6 +2853,62 @@ _verify_gentian_os_ref_exists() {
 # checkout's build (_v5_os_build_pinned). `./install.sh --only B-01` is that
 # and nothing else.
 # =============================================================================
+# gentian_os_build_images — the images CI builds from one gentian-os commit
+# (.github/workflows/ci.yaml: the docker job's gentian-os, the images job's
+# matrix), one per line. A run pins the operator chart's and storage-tools to
+# the operator's tag; the identity appset names keycloak-event-listener by the
+# hash of its sources (scripts/tools/listener-tag.sh). They are published by
+# separate jobs, so one can be missing while the operator's exists.
+# scripts/tests/test-build-images.sh keeps the list in step with both.
+gentian_os_build_images() {
+    printf '%s\n' gentian-os keycloak-event-listener storage-tools
+}
+
+# check_build_images VALUES_FILE TAG... — every image of gentian_os_build_images
+# exists at every TAG given (empty ones and repeats skipped); each missing one is
+# named. Returns 1 when any is missing.
+#
+# CI publishes them in separate jobs, so the operator's can exist while another
+# does not. A run that checked the operator's alone moved Keycloak to a listener
+# image that was never published, and nobody could sign in.
+check_build_images() {
+    local values="$1" t want img seen=" " asked=" " rc=0 listener
+    shift
+    # The listener is named by its sources, not by the operator's tag: one
+    # tag for every TAG given, asked for once.
+    listener="$(bash "${SCRIPT_DIR}/scripts/tools/listener-tag.sh" "${SCRIPT_DIR}")" || {
+        error "  Could not work out the Keycloak event listener's tag from ${SCRIPT_DIR}."
+        return 1
+    }
+    for t in "$@"; do
+        [[ -n "${t}" && "${seen}" != *" ${t} "* ]] || continue
+        seen+="${t} "
+        while IFS= read -r img; do
+            want="${t}"
+            [[ "${img}" == "keycloak-event-listener" ]] && want="${listener}"
+            [[ "${asked}" != *" ${img}:${want} "* ]] || continue
+            asked+="${img}:${want} "
+            if validate_image_tag "ghcr.io/gentian-org/${img}" "${want}"; then
+                if [[ "${img}" == "gentian-os" ]]; then
+                    success "Operator image ghcr.io/gentian-org/${img}:${want} exists"
+                else
+                    success "Image ghcr.io/gentian-org/${img}:${want} exists"
+                fi
+            else
+                error "  ghcr.io/gentian-org/${img}:${want} does not exist."
+                if [[ "${img}" == "gentian-os" ]]; then
+                    error "  Set image.tag in ${values}, or GENTIAN_OS_IMAGE_TAG, to a tag that does."
+                else
+                    error "  CI builds it beside the operator's image from the same commit. Wait until"
+                    error "  that CI run is green, or re-run its failed job, before installing this tag."
+                fi
+                rc=1
+            fi
+        done < <(gentian_os_build_images)
+    done
+    return "${rc}"
+}
+
 # gentian_os_image_tag_moves TAG — true when TAG is not one CI publishes once
 # and never again: a release version (1.2.3) or <branch>-<short-sha>.
 gentian_os_image_tag_moves() {
@@ -2947,12 +2994,13 @@ gentian_os_revision() {
 # "eval" subcommand, or kislyuk/yq's jq-style filter) since both are seen in
 # the wild as `yq`. Echoes the value and returns 0, or returns 1 (nothing
 # echoed) if the field is absent/null or the file doesn't exist.
+# -N and </dev/null: as _gentian_yq (scripts/lib/versions.sh).
 # =============================================================================
 yq_get() {
     local filter="$1" file="$2"
     [[ -f "${file}" ]] || return 1
     local out
-    if out=$(yq eval "${filter}" "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
+    if out=$(yq eval -N "${filter}" "${file}" 2>/dev/null </dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
         echo "${out}"
         return 0
     fi

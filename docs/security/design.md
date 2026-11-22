@@ -399,8 +399,8 @@ session and the bouncer, so only a person with `can_use` on the app begins a sig
 answer has to be about that same person. A member of the realm without the right cannot begin
 one, and an answer they obtain elsewhere answers no request of theirs.
 
-**Who administers the app** is the realm's answer, in the assertion it signs: the one role of the
-sidecar's client, granted to the tenant's `app-admins` group. The sidecar reads it from the signed
+**Who administers the app** is the rights store's answer, in the assertion the realm signs: the
+platform's mapper asks the store which roles the person holds on the app. The sidecar reads it from the signed
 assertion — the assertion's own attribute `Role` with the value `gentian-app-admin` — and from
 nothing a request says about itself; an answer changed after signing is refused whole. The client
 has no other role in scope (`fullScopeAllowed` is off), so a role of that name elsewhere in the
@@ -540,7 +540,7 @@ What follows from this: OpenFGA is reachable from the programs that ask it and f
 | --- | --- | --- |
 | A perimeter approver of the tenant | An administrator of the tenant the cluster's administrator names on the Cluster claim (`spec.platformAccess.roleHolders`, role `perimeterApprover`, scope `tenant:<t>`, with a reason and an optional `expiresAt`); the operator writes `user:<realm>/<sub> perimeter_approver tenant:<t>` ([iam.md §1.1c](../concepts/iam.md)) | Removing the entry, or its `expiresAt` passing |
 | The cluster's perimeter approver | A person of the platform tenant named the same way, scope `cluster`: `cluster#perimeter_approver`, which every tenant's `perimeter_approver` derives from | The same |
-| The cluster's administrator | The model: `admin from cluster`, in every tenant by default, a tenant that administers itself too: the perimeter is the cluster's. No tuple of its own, no kernel-realm person in a tenant-realm group, and nothing else in the tenant by it | Leaving `gentian:platform:admin` |
+| The cluster's administrator | The model: `admin from cluster`, in every tenant by default, a tenant that administers itself too: the perimeter is the cluster's. No tuple of its own, and nothing else in the tenant by it | No longer being named `admin` on the Cluster claim |
 
 A tenant's own administrators approve nothing at the perimeter by being administrators. Naming one is the cluster's administrator's alone (`can_configure`); the director refuses a person of a tenant who is not in its `admins` group as the store holds it. Nothing a tenant's administrator manages decides who approves: the role is on the Cluster claim, not in a group of the tenant's realm.
 
@@ -583,7 +583,7 @@ What `app` costs is said to the approver in the director's words before they app
 
 **The same approver decides one thing that is not a public address.** An entry behind sign-in may declare `clientAuthorization: app`: the `Authorization` header is the app's own. Approved (`signInAppAuthorization` in the registry), the Gateway leaves the header as the browser sent it and the bouncer does not remove it. The session and the bouncer's question are required as on every entry — the OAuth2 filter admits no request on a bearer, and the bouncer is shown the session as an ID token in a header of its own ([routing.md §4.1](../concepts/routing.md)) — and no platform token reaches the app. What changes for the app is that it now receives a header a signed-in person's browser chose, where before it received none; it must check it as it would on its own.
 
-**And one address that takes a token in place of the session.** A token entry lets a program act as a signed-in person on one host ([routing.md §4.1](../concepts/routing.md)). What bounds it: only a profile of `trustTier: platform` declares one; the bouncer verifies every token against the tenant's realm and the entry's own address and then asks the person's right; the realm issues the token to one public client with PKCE and consent, with no role in it and no offline token; a program is sent back only to an address the entry declares, which the approver sees. What remains: an access token copied from the person's computer works for its five minutes, and what renews it works until the sign-in ends, four hours at most, because the realm rotates refresh tokens for no single client. Ending the person's session or disabling the account ends both.
+**And one address that takes a token in place of the session.** A token entry lets a program act as a signed-in person on one host ([routing.md §4.1](../concepts/routing.md)). What bounds it: only a profile of `trustTier: platform` declares one; the bouncer verifies every token against the tenant's realm and the entry's own address and then asks the person's right; the realm issues the token to one public client with PKCE and consent, with no role in it; a program is sent back only to an address the entry declares, which the approver sees. What remains: an access token copied from the person's computer works for its five minutes, and what renews it works until the sign-in ends, four hours at most, because the realm rotates refresh tokens for no single client. A tenant may lengthen that up to its own sign-in (`spec.tokenEntries.sessionMaxHours`) only where the cluster's administrator allows tenants the choice (`tokenEntries.tenantsMayExtendSessions` on the Cluster claim, off by default); a copied renewal then works that long. Ending the person's session or disabling the account ends both. A program that asks for an offline token (`offline_access`) holds one that outlives the session: it works until it goes unused for the realm's offline idle timeout (30 days), the person removes the program's access in their account, an administrator revokes it, or the account is disabled; it has no maximum lifetime.
 
 **How it is held.** The proxy's rules are asked of the proxy: `TestTheProxyItself*` (`internal/controller/component_perimeter_nginx_test.go`) start the image the operator deploys with the configuration it renders, in front of a server that says back what it was sent, and send it some ninety paths written to leave a prefix or reach a denied path, every identity header in three spellings, oversized bodies and headers, and bursts from two addresses; and, for an entry that passes the credential, that `Authorization` arrives as sent on the declared paths and on no other, that `Cookie` and every identity header still do not, and that guesses from one address are answered 429 at the lower limit. They need docker and are skipped without it. The sign-in limits are validated against the pinned release's definitions, and `TestEnvoyGatewayAcceptsTheRateLimits` puts them through that release's own translator where its `egctl` is installed.
 
@@ -655,7 +655,8 @@ Service of that name hand-written endpoints instead of its own pods could make t
 an address of the chart's choosing after all. What such a request can carry is fixed: a POST, a
 plain path, and a body the chart does not choose (a logout token for its own client, which no
 other client accepts). What admits the identity provider's namespace is every tenant's pods,
-Keycloak's own database and the mail relay, and the operator's membership listener. This is the
+Keycloak's own database and the mail relay, the operator's listener for realm events and the
+usher's port for the sign-in question. This is the
 position a chart already has towards the Gateway, which routes to the same Service; it needs a
 chart written to do it. The platform does not
 check a Service's endpoints.
@@ -745,7 +746,7 @@ sections above; the network side is [networking.md §1](../concepts/networking.m
 | L0 | TLS, rate limit | well-formed and within budget? | the Envoy listener; a local limit per client address on sign-in posts and on the requests to each route behind a session (§2.14); the publishing proxy's limits per client address on a published entry |
 | L1 | Edge session | who is this, in which realm? | `SecurityPolicy.oidc`, one confidential client per tenant zone, the kernel realm for the platform tenant's zone and the kernel consoles ([routing.md §4.1](../concepts/routing.md)) |
 | L1′ | Perimeter | which paths, how much, does a credential pass? | the publishing proxy in the tenant's DMZ: declared paths only, one reading of a path, identity headers and cookies removed, `Authorization` removed unless approved as `authMode: app` (§2.14). It verifies no caller |
-| L2 | Reachability | may this person reach this component at all? | the bouncer, asking OpenFGA the route's relation over the stored membership projection; cached per `(sub, sid, route)`, evicted on the change log |
+| L2 | Reachability | may this person reach this component at all? | the bouncer, asking OpenFGA the route's relation over what the store holds; cached per `(sub, sid, route)`, evicted on the change log |
 | L3 | App session and authorization | what may they do inside? | the app, from the identity headers or its own session with its own client and audience; `sessionMaxAge` caps how long the realm renews that client's sign-in, not the app's own cookie |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy from `requires`, `integrations` and granted privileges (§2.6–§2.9, §2.13); Kyverno for what a pod may be |
 
@@ -805,11 +806,13 @@ does not end a session the app keeps in its own cookie; for an app that does
 not go back to the realm once a person is signed in, the app's own session
 setting is the bound.
 
-**Platform rights follow the store; app rights follow the token.** Membership
-reaches OpenFGA from the realm's signed events through the operator (§3.0),
+**Platform rights follow the store; app rights follow the token.** Who holds
+what is written to OpenFGA by the operator when it is given or taken (§3.0),
 and the bouncer evicts on the next poll, so a withdrawn platform right is gone
-without any token being touched. Apps read groups from their own tokens, so a
-changed membership reaches an app at that person's next sign-in to it. A
+without any token being touched. Apps read a person's roles from their own
+tokens, written from the store at sign-in, so a changed role reaches an app at
+that person's next sign-in to it; a role that is taken ends the person's realm
+sessions, which brings that sign-in forward for every app that is told. A
 profile declares `sessionMaxAge` so that the realm forces that sign-in at an
 age somebody chose, for an app that renews its tokens at the realm; an app
 that keeps its own cookie session without doing so is bounded by its own
@@ -900,7 +903,7 @@ the code does.
 | Control | Where |
 | --- | --- |
 | Keycloak per-tenant realms, kernel realm, OIDC for the desktops, the consoles and apps | `kernel/services/keycloak-idp` installs Keycloak (Argo CD, the keycloakx chart vendored); realms and clients come from `tenant-default.yaml` and `identity_reconciler.go` |
-| Keycloak group → OpenFGA tuple sync | Membership is stored as `group#member` tuples, a projection the **operator** writes from Keycloak's signed event-listener statements (`membership_listener.go`, `internal/membership`). The operator is the writer AD-12 names; the director writes nothing to the store. Nothing reconciles the stored memberships toward Keycloak, and a change of a person's groups ends none of their sessions |
+| Who holds what | Positions and roles are tuples in the rights store, written by the **operator** alone: structure from what git declares, who holds what when the registrar asks. Keycloak holds no right. The operator is the writer AD-12 names; the director writes nothing to the store. A role taken from a person ends their realm sessions; an app that is not told of a sign-out keeps the role in its own session until the person signs in to it again ([iam.md §1.8](../concepts/iam.md)) |
 | Keycloak's administrator credentials, one per automated caller | Master-realm service accounts the installer makes (D-03), each with the `admin` role mapped into its scope rather than "Full scope allowed": `gentian-operator` for the operator (Secret `keycloak-admin`), `keycloak-provisioner` for the Jobs that configure realms, clients and groups and export realms (Secret `keycloak-provisioner`, Kubernetes service account of the same name; `internal/keycloak/provisioner.go`), `provider-keycloak` for Crossplane's provider (Secret `keycloak-provider-creds`). The operator writes the rights store and starts those Jobs, so it can still change any identity. |
 | Gateway ext-auth calling OpenFGA `Check` on every session route | `internal/bouncer`, attached by `internal/controller/bouncer.go`; the session filter runs first and the bouncer refuses a request without a token it verified ([routing.md §4.1](../concepts/routing.md)). Fails closed |
 | Session cookies: per host, encrypted, `SameSite=Lax`; frame policy naming the tenant's own desktop | `zoneSecurityPolicySpec`, `componentFramers` ([routing.md §4.2, §4.3](../concepts/routing.md)) |
@@ -928,7 +931,7 @@ the code does.
 | The rights check for a component (`requires.services.rights`) | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |
 | A removed person's mailbox | Whoever removes the person chooses archive or delete; no default, and the registrar refuses a removal without the choice. The registrar writes the choice down (`MailboxRemoval`, the one kind it may write in the cluster) and has no access to `system-mail`. The operator acts only on an address of the tenant's mail domain that no person of any realm on that domain holds, after the address's mail passwords are gone ([mail.md §5c](../concepts/mail.md)). Mail to the address is refused at `RCPT` (550, unknown recipient) while the record stands and nobody holds the address; a deleted mailbox's record is removed after 30 days, and the recipient policy decides again from then |
 | A tenant's backup and deletion | A bundle (format 4) holds what a deletion destroys, mailboxes included, and a deletion destroys the mailboxes. It holds each app's own secrets, encrypted by the operator, and a restore sets them at the app's own paths. The cluster signs the manifest and not the artifacts (§6.4). Rights recorded as granted come back only from a bundle this cluster signed, taken on it, of a tenant of the same name; from any other they are named instead ([data-lifecycle.md](../concepts/data-lifecycle.md)) |
-| Approval path for profile-declared egress | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's perimeter approver approves it (`can_approve_privilege`, which is `can_expose`, §2.14) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and both are the security officer's (`cluster#can_approve`: `PUT /v1/clusters/{c}/platform-security/waivers`, or an approval that names the missing allowlist entry and adds it with the grant), and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). Resource types of a component's own are installed only once break-glass granted them (§3.4b). The granted rules are in the component's policy, `component-<name>`, whoever renders its chart; it selects a placed component's pods by their release and any other app's by the `gentianos.io/app` label the operator renders every such chart with, and the tenant's per-app policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
+| Approval path for profile-declared egress | `requires.privileges.egress` is a request. A rule reaches the NetworkPolicy only once it was granted by name on the install (`internal/security/privilege.go`, `GrantedEgressRules`). The tenant's perimeter approver approves it (`can_approve_privilege`, which is `can_expose`, §2.14) and the director writes the grant as a commit (`internal/director/api/privileges.go`). A catalog listed in `PlatformSecurityPolicy.spec.preApprovedEgressCatalogs` has its apps' egress requests answered by that list instead, for as long as it is listed (`security.PreApprovedEgress`); the list is written by hand in the cluster's repository and changes nothing but egress. The egress requests of a profile the platform ships itself (no catalog brought it, `hostnames.PlatformShipped`) are answered by the platform (`answeredEgress`). A bridge to a tool server outside the cluster runs nothing of its own, so it is given to its callers (`agent_bridge_list.go`), and through them to the liaison, only once everything its profile asks for was answered. An install may carry the approval of the egress requests its build states (`approve`, `internal/director/api/install_asks.go`): asked of `can_approve_privilege` before anything is written, held to what the build and the apps it comes with ask for, and recorded as the caller's grants by the same write an approval afterwards makes. A pod-security waiver takes effect only where the cluster's allowlist names it (`PlatformSecurityPolicy`) and the security officer granted it on the install (`mac_waiver_reconciler.go`): either alone waives nothing, and both are the security officer's (`cluster#can_approve`: `PUT /v1/clusters/{c}/platform-security/waivers`, or an approval that names the missing allowlist entry and adds it with the grant), and the tenant's `MacWaiversReady` condition says which of the two is missing. A grant that is withdrawn or has expired takes the namespace label away at the tenant's next reconcile; nothing reconciles at the moment of expiry. A cluster role is asked for by name, from a set the platform defines, and is bound only where the platform has it, the allowlist permits it for the profile and it was granted on the install (§3.4a). Resource types of a component's own are installed only once break-glass granted them (§3.4b). The granted rules are in the component's policy, `component-<name>`, whoever renders its chart; it selects a placed component's pods by their release and any other app's by the `gentianos.io/app` label the operator renders every such chart with, and the tenant's per-app policies carry none. A rule that admits the cluster's own public address -- a granted one, or the App Store app's way out -- also admits the edge's Envoy pods behind it, on the ports the edge Service forwards the admitted ports to (`internal/controller/own_public_address.go`): from inside the cluster that address is rewritten to those pods before the policy is applied, and they serve nothing there that the internet does not reach. |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | `kernel/security/kyverno/policies/` |
 | The containers' AppArmor profile on nodes that stack labels | `kernel/security/node-apparmor/`: a privileged DaemonSet in `kernel-admission` reloads containerd's default profile with rules for the stacked label `cri-containerd.apparmor.d//&unconfined`, so processes in one container can signal each other (PostgreSQL's crash recovery needs it). It does nothing where `kernel.apparmor_restrict_unprivileged_unconfined` is off; AppArmor stays enforcing |
 | Who may ask the internal CA for a certificate | Kernel and system namespaces only (§12.4) |
@@ -942,6 +945,7 @@ the code does.
 | Human-identified secret writes (token exchange, no service token) | `internal/custodian/` |
 | Configuration writes | the director verifies the person and commits; the operator's lifecycle API admits only the director's ServiceAccount to its commands and trusts the `X-Gentian-Actor` name it passes |
 | OpenBao policy per tenant | `tenant-default.yaml` |
+| Crossplane's vault provider holds no vault token | Its pod runs as the ServiceAccount `crossplane-provider-vault` and signs in at the vault's Kubernetes auth as the role `crossplane-provider`, for a token that lives an hour and carries `crossplane-write` (ProviderConfig `openbao`, `crossplane/providers/`). Install step `B-04-vault-auth` makes the account and writes the role, and asks the vault whether it accepts the account; the Cluster composition keeps the role. `make test-vault-provider-signin` holds the names together |
 | Record of administrative changes | A change to declared state is a commit the director writes, naming the person, the relation and the object that allowed it; the administration console lists them (`/admin/changes`). A change to a person is recorded by the registrar with who asked and what allowed it (`internal/registrar/record`). Sign-ins are written by the realm, and the bouncer records each allow and refusal. A secret read is not recorded |
 | Decision log, request-id correlation | The bouncer records every decision with its request id. |
 | Commit signing and verification | The director signs every commit (`internal/director/gitops/signing.go`); the installer signs its own with the break-glass key, found by its recorded id (`scripts/lib/signing.sh`). Argo CD verifies through the AppProject's `sourceIntegrity` and its keyring (step `B-10`). A repository without key ids renders no policy, and the director then commits unsigned and says so |
@@ -962,9 +966,9 @@ on every Keycloak upgrade.
 | Component | Role | License |
 |---|---|---|
 | **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); each realm signs its own people in; SAML/OIDC brokering; token exchange where §3.0 lists it. See [iam.md](../concepts/iam.md), [admin-console.md](../concepts/admin-console.md). | Apache 2.0 |
-| **OpenFGA** | ReBAC authorization PDP (*what you may do*). The model holds people, groups, the cluster, tenants and apps. | Apache 2.0 |
+| **OpenFGA** | ReBAC authorization PDP (*what you may do*). The model holds people, positions, the cluster, tenants, apps and their roles. | Apache 2.0 |
 | **Director** | Turns an authorized request into a signed commit to the deployments repository. It asks OpenFGA before each one and writes nothing there. Keycloak decides no permission; OpenFGA changes no identity. | `cmd/director` |
-| **Operator, as the store's writer** | The authorization store is written by the operator and by nothing else on purpose: role-to-group assignments from the Cluster claim, tenants and apps from what Argo CD applied, and membership as `group#member` tuples from Keycloak's signed event-listener statements -- a projection, never edited in place. The process holding the push credential holds no reason to write a relation. What enforces "on purpose" is weak: OpenFGA cannot tell its preshared keys apart, and each can write. | `authz_projection_reconciler.go`, `membership_listener.go` |
+| **Operator, as the store's writer** | The authorization store is written by the operator and by nothing else on purpose: role holders from the Cluster claim, tenants, apps and positions from what Argo CD applied, and who holds a position or a role when the registrar asks. The process holding the push credential holds no reason to write a relation. What enforces "on purpose" is weak: OpenFGA cannot tell its preshared keys apart, and each can write. | `authz_projection_reconciler.go`, `internal/applifecycle/http_assignments.go` |
 | **Provisioning bridge** | The operator makes an `IntegrationBinding` for each pair of installed apps that share a contract and turns an `AppGrant` into the network path and the keys of §3.4. Neither reaches the graph. Group membership arrives as events (row above). The operator holds Keycloak's master administrator credential, for the Jobs that configure realms. | `integration_binding_controller.go`, `contract_keys.go` |
 | **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission. | Apache 2.0 / OSS |
 | **PEP** | Named enforcement points calling OpenFGA `Check`: the bouncer behind the Gateway, the director, the custodian, the usher and the registrar call it (§3.0), over OpenFGA's own API. The usher asks a tile list's checks together, in `BatchCheck`, and so do both `/me` routes. | OSS |
@@ -974,7 +978,7 @@ on every Keycloak upgrade.
 For a greenfield, cloud-only OS:
 
 - **Keycloak-native identity.** Keycloak owns identities per tenant realm, backed by its own Postgres, and is the only place membership is changed. OpenFGA holds a projection of it, fed by Keycloak's event listener, to compute *may* — authority is separated, not copies (principle 2).
-- **OpenFGA ReBAC** replaces coarse group-only RBAC. One relationship graph holds people, groups, the cluster, tenants and apps (§3.0) — no role explosion.
+- **OpenFGA ReBAC** replaces coarse group-only RBAC. One relationship graph holds people, positions, the cluster, tenants and apps (§3.0) — no role explosion.
 - **Layered isolation** (§2) — MAC backbone, identity, and authorization are independent enforcement planes.
 
 ### 3.3 Reference architecture
@@ -989,16 +993,16 @@ flowchart TD
         Keycloak["KEYCLOAK (IdP / AuthN)<br>realms, clients, service accounts"]
     end
     
-    Director["OPERATOR (writes the store; the director only asks it)<br>membership projection from Keycloak events<br>+ structure: roles, tenants, installs<br>+ Integration Binding"]
+    Director["OPERATOR (writes the store; the director only asks it)<br>who holds what, given through the registrar<br>+ structure: positions, role holders, tenants, installs<br>+ Integration Binding"]
     
     Apps["Front door (Envoy Gateway + bouncer),<br>platform services, apps ◄── PEP"]
     
-    OpenFGA["OPENFGA (ReBAC PDP)<br>user:* group:* cluster:* tenant:* app:*"]
+    OpenFGA["OPENFGA (ReBAC PDP)<br>user:* position:* cluster:* tenant:* app:* role:*"]
     
     
     MAC["MAC BACKBONE (peer to all of the above, not inside it):<br>K8s namespaces/tenant · NetworkPolicy default-deny<br>egress · Kyverno admission"]
     
-    Shell -->|"user and group administration"| Keycloak
+    Shell -->|"user administration"| Keycloak
     Users --> Keycloak
     Keycloak -.->|"OIDC / OAuth2 / SAML brokering<br>RFC 8693 Token Exchange → tokens"| Apps
     
@@ -1011,7 +1015,7 @@ flowchart TD
     
 ```
 
-**Decision flow:** (1) A person authenticates to Keycloak → OIDC token. (2) Keycloak's event listener pushes signed membership changes to the operator, which writes them as `group#member` tuples — a projection, never edited in place; the operator also writes structure (roles, tenants, installs) from the objects Argo CD applied from the director's commits, so a relation follows a commit only once it has been applied; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token and calls OpenFGA `Check` with the relation and the object. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group → resource) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. Step (5) runs for tenant namespaces and, for the platform's namespaces, as far as §3.0 says.
+**Decision flow:** (1) A person authenticates to Keycloak → OIDC token. (2) The operator writes who holds which position and role when a tenant's administrator gives or takes it through the registrar; it also writes structure (positions, role holders, tenants, installs) from the objects Argo CD applied from the director's commits, so a relation follows a commit only once it has been applied; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token and calls OpenFGA `Check` with the relation and the object. What a person holds is already in the graph and no right travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → position → role → resource) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. Step (5) runs for tenant namespaces and, for the platform's namespaces, as far as §3.0 says.
 
 ### 3.4 Application permissions — catalog contracts and grants
 
@@ -1019,6 +1023,8 @@ What an app needs from the platform and from other apps is declared in its **`Co
 
 
 A contract between two components the platform places itself, both of trust tier `platform`, is granted by the platform: where the consumer names the provider and the capabilities it asks for, and the provider provides the contract, the director's placement worker writes the grant into every tenant that has both, as `platform:placement` (`internal/placement`, `preApproved`). That is how the App Store app reaches the desktop's API (`desktop-api`). The desktop still decides each call on the person's own token. A profile may name `valueMapping.platform.desktopUrlKey` instead, which opens the same path without a binding (`internal/controller/desktop_access.go`); the schema refuses the key below trust tier `platform`.
+
+A contract among an app and the apps that came with it (`spec.comesWith`) is granted by the platform too: the tenant's administrator accepted all of them by installing the one. Where one of them names another as the provider of a contract, the director writes the grant as `platform:comes-with`, at the install, at a move to another build and in its pass over every tenant (`approveAmong`), so a contract a later build adds among the same apps is granted as well. A contract with any other app of the tenant — one the tenant installed itself, one the platform places — waits for the administrator, and a contract the grant already names is left as it stands.
 Field reference and deployment flow: [app-catalog.md](../concepts/app-catalog.md).
 
 #### Terminology — manifest language vs CRD fields
@@ -1171,7 +1177,7 @@ What it does not do:
 
 - **Capabilities are not enforced.** Any granted capability opens the whole path: to the endpoint's port, or without an endpoint to the provider's pods. The list is written on the policy as a label and nowhere else.
 - **Nothing reaches the rights store.** The model has a `contract` type; nothing writes it and no enforcement point asks about a call between two apps.
-- **Nothing is granted at install.** The operator writes no grant and changes none; its role in the cluster can neither create nor patch one. A declared integration stays closed until the tenant's administrator grants it, and a grant narrower than the declaration is what takes effect. The binding says how much of what it asks for was granted: its `Granted` condition is `True` when all of it was, and `False` with the reason `NotGranted` or `PartlyGranted` otherwise, naming the capabilities that are missing. The *Integrations* screen of the administration console shows the same.
+- **The operator grants nothing.** It writes no grant and changes none; its role in the cluster can neither create nor patch one. A declared integration stays closed until the tenant's administrator grants it, or the director does for the two cases above, and a grant narrower than the declaration is what takes effect. The binding says how much of what it asks for was granted: its `Granted` condition is `True` when all of it was, and `False` with the reason `NotGranted` or `PartlyGranted` otherwise, naming the capabilities that are missing. The *Integrations* screen of the administration console shows the same.
 
 Revoking a grant removes the network path and both key Secrets in one reconcile. It does not change the shared password at `vaultPath`, which stays in the consumer's values until the app is rolled.
 
@@ -1252,12 +1258,15 @@ A grant that is withdrawn, has expired or names other definitions unbinds the ro
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 
-A person signs in at their tenant's realm. The front door asks the rights store whether that person may use the app (`can_use` on `app:<tenant>/<profile>`) on every request of a session route (§3.0). The right comes from the app's Keycloak group, `gentian:tenant:<t>:app:<profile>`, whose members the operator projects into the store. **App administrators** are the members of `gentian:tenant:<t>:app-admins`; the operator gives them the role each app's profile names in `spec.hooks.provisioning.privilegedRole` (see [app-profile-guide.md](https://github.com/gentian-org/gentian-apps/blob/develop/docs/app-profile-guide.md) §6). People and groups are administered in the [administration console](../concepts/admin-console.md). Between two apps there is the network path and the key of step 3, and no check by the platform.
+A person signs in at their tenant's realm. The front door asks the rights store whether that person may use the app (`can_use` on `app:<tenant>/<profile>`) on every request of a session route (§3.0). The right is a role on the app, held directly or through a position ([iam.md §1.2](../concepts/iam.md)). **App administrators** hold `admin` on the app; the app learns the roles a person holds from its sign-in token, its sync Job or the sign-in sidecar ([iam.md §1.8](../concepts/iam.md)). People and positions are administered in the [administration console](../concepts/admin-console.md). Between two apps there is the network path and the key of step 3, and no check by the platform.
 
 ---
 
 
 ## 4. Secrets topology
+
+The rules that decide where a secret or key is kept, and the places with
+their writers and readers on one page, are in [secrets.md](secrets.md).
 
 ```mermaid
 flowchart TD
@@ -1323,6 +1332,8 @@ gentian-os/
         │   └── {repository-name}     #   username, password of a declared repository
         ├── contracts/
         │   └── {contract-name}       #   shared credential of a binding (§3.4)
+        ├── people/
+        │   └── {person}/{component}/{name}   # a secret a component keeps for one person
         └── backup/                   #   destination, identity
 ```
 
@@ -1354,9 +1365,14 @@ Who may read what:
     `gentianos.io/tenant: <tenant>` and `gentianos.io/tier` `tenant` or
     `tenant-runs`: the one the tenant's apps run in and the one its runs are
     started in. Every `ExternalSecret` the Compositions and the operator put
-    in a tenant's namespace names it. In the namespace for runs the only one
-    is a repository's pull Secret (§5.1); a tenant applies nothing there, and
-    a run's pod holds no account that reads a Secret.
+    in a tenant's namespace names it. In the namespace for runs there are two
+    kinds: a repository's pull Secret (§5.1), and for each installed action
+    that asks a person for credentials one Secret, `run-credentials-<action>`,
+    read from the action's own `apps/<action>/supplied/`. The dispatcher's
+    table names that Secret for the action, and the pods of that action's
+    runs mount it read-only; the dispatcher holds no right to read a Secret.
+    A tenant applies nothing there, and a run's pod holds no account that
+    reads a Secret.
 
   The platform tenant is no exception. Its desktop keeps its data on the
   kernel's PostgreSQL, in a database of its own (`portal_shell`) under a role
@@ -1400,6 +1416,11 @@ Who may read what:
   - *The cluster's own registry credential* (`Repository` without a tenant,
     with a `namespaceSelector`) is a kernel path. Where its selector matches
     a tenant's namespace, no pull Secret arrives there.
+- **The confidant alone reads and writes `tenants/+/people/`**, under
+  `confidant-people` (`cluster-default.yaml`), and reaches nothing else.
+  Neither kind of External Secrets store covers those paths, and the
+  policies a tenant's administrator signs in with deny them
+  ([control-plane.md §4.10](../concepts/control-plane.md)).
 - **The director reads repository credentials**, a tenant's and the
   cluster's, under `director-repository-read` (`cluster-default.yaml`), to
   pull a catalog kept as an OCI artifact (§2.17). Read only, on

@@ -49,6 +49,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/membership"
 	"github.com/gentian-org/gentian-os/internal/perimetertraffic"
 	"github.com/gentian-org/gentian-os/internal/releaseindex"
 	"github.com/gentian-org/gentian-os/internal/schemacheck"
@@ -421,6 +422,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.OutgoingGatewayReconciler{Client: mgr.GetClient()}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "OutgoingGateway")
+		os.Exit(1)
+	}
+
 	componentDiscovery, err := discovery.NewDiscoveryClientForConfig(mgr.GetConfig())
 	if err != nil {
 		setupLog.Error(err, "unable to create discovery client")
@@ -450,7 +456,9 @@ func main() {
 		// An API extension's definitions, by name and uncached
 		// (component_api_extensions.go), and its group's other types.
 		CRDReader: mgr.GetAPIReader(),
-		Discovery: componentDiscovery,
+		// A tenant's volume claims, uncached as the export reads them.
+		VolumeReader: mgr.GetAPIReader(),
+		Discovery:    componentDiscovery,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)
@@ -703,16 +711,21 @@ func main() {
 			setupLog.Error(err, "unable to create controller", "controller", "AuthzProjection")
 			os.Exit(1)
 		}
-		// Membership, from the same graph client and for the same reason.
-		// Keycloak states a user's whole group set, signed; this applies it.
-		// It was the director's last write to the graph, which is what kept
-		// the director's token a writing token.
-		mirror := &controller.AppStoreMirror{
-			Client:    mgr.GetClient(),
-			Namespace: envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
-			Arbiter:   arbiterPlatform,
+		// What only a realm sees happen to a person: somebody arriving
+		// from another realm is given what the tenant declares for them,
+		// and what a removed person held goes with them.
+		arrivals := &controller.RealmArrivals{Client: mgr.GetClient(), Rights: graph}
+		// What components keep for a person in the vault ends when the
+		// realm says the person is gone. Without a vault there is nothing
+		// kept.
+		var departures membership.Departures
+		if addr := os.Getenv("BAO_ADDR"); addr != "" {
+			departures = &controller.PersonSecretsDepartures{
+				Client: mgr.GetClient(),
+				Vault:  secrets.NewKVClient(addr, envvar.Or("BAO_ROLE", "gentian-os-operator"), ""),
+			}
 		}
-		listener, err := controller.NewMembershipListener(graph, mirror, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		listener, err := controller.NewMembershipListener(arrivals, slog.New(slog.NewJSONHandler(os.Stderr, nil)), arrivals, departures)
 		if err != nil {
 			setupLog.Error(err, "unable to create the membership listener")
 			os.Exit(1)
@@ -723,16 +736,6 @@ func main() {
 				os.Exit(1)
 			}
 			setupLog.Info("membership listener enabled", "addr", listener.Addr)
-			// The statements that did not arrive: people no longer in
-			// Keycloak lose their memberships at the next sweep.
-			if err := mgr.Add(&controller.MembershipSweep{
-				Receiver: listener.Receiver,
-				Client:   mgr.GetClient(),
-				Log:      listener.Log,
-			}); err != nil {
-				setupLog.Error(err, "unable to add the membership sweep")
-				os.Exit(1)
-			}
 		}
 	}
 
@@ -784,10 +787,14 @@ func main() {
 			setupLog.Error(err, "unable to add app lifecycle server")
 			os.Exit(1)
 		}
-		// An app installed for everyone is granted by the tenant reconciler
-		// with what this service already holds: the same function behind
-		// provision-app, and the same Keycloak credential.
-		tenantReconciler.DefaultGrant = lifecycle.Server.Service.GrantAppByDefault
+		// Who holds what in a tenant is given and taken through this
+		// listener, with the store client the projection writes with: the
+		// operator stays the store's one writer.
+		if tenantReconciler.Rights != nil {
+			lifecycle.Server.Rights = tenantReconciler.Rights
+			lifecycle.Server.Service.Rights = tenantReconciler.Rights
+			lifecycle.Server.RightsChanged = tenantReconciler.RightsChanged
+		}
 		// What the check found, for the director to ask before it commits
 		// and for an operations screen to show.
 		lifecycle.Server.Definitions = definitions
@@ -811,7 +818,7 @@ func main() {
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 			TenancyMode:  tenancyMode,
 		},
-		Counter: &controller.UsageStatisticsCounts{Client: mgr.GetClient()},
+		Counter: &controller.UsageStatisticsCounts{Client: mgr.GetClient(), Rights: tenantReconciler.Rights},
 		Key: func() (*usagestatistics.Key, error) {
 			return usagestatistics.KeyFromFile(envvar.Or("USAGE_STATISTICS_KEY_FILE", "/etc/gentian/usage-statistics/signing_seed"))
 		},

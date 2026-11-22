@@ -433,21 +433,14 @@ fresh; reply GET /v1/tenants/customers/partners 200 '{"partners":[{"name":"abc",
 gentian tenants partners customers
 has "partners lists the identity provider" "${OUT}" "identity provider / scope partner-abc"
 
-# A tenant's own groups, and another tenant's people signing in: one request
-# each, as the director takes them.
-fresh; reply PUT /v1/clusters/c1/tenants/customers/groups 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian tenants groups customers website-editors store-editors
-is "tenants groups sends the list" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/tenants/customers/groups{"groups":["website-editors","store-editors"]}'
+# Another tenant's people signing in: one request, as the director takes it.
 fresh; reply PUT /v1/clusters/c1/tenants/customers/sign-in/team 202 '{"status":"updated","commit":"0123456789abcdef"}'
-gentian tenants sign-in customers --from team --groups website-editors,members
-is "tenants sign-in sends the source and its groups" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/tenants/customers/sign-in/team{"groups":["website-editors","members"]}'
-has "... and says it is committed" "${OUT}" "People of team sign in to customers as website-editors,members: committed"
+gentian tenants sign-in customers --from team --positions website-editor,user
+is "tenants sign-in sends the source and its positions" "$(writes | tr -d ' \n')" 'PUT/v1/clusters/c1/tenants/customers/sign-in/team{"positions":["website-editor","user"]}'
+has "... and says it is committed" "${OUT}" "People of team sign in to customers as website-editor,user: committed"
 fresh; reply DELETE /v1/clusters/c1/tenants/customers/sign-in/team 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian tenants sign-in customers --remove team
 is "tenants sign-in --remove sends one DELETE" "$(cat "${CALLS}")" "DELETE /v1/clusters/c1/tenants/customers/sign-in/team "
-fresh
-gentian tenants groups customers Not_A_Label
-refused "a group name that is not a label is a usage error"
 
 # Credentials: listed by tenant; set from files and stdin, never from the
 # command line, every value without its trailing newline.
@@ -472,18 +465,39 @@ fresh; reply GET /v1/tenants/team/apps/status 200 '{"tenant":"team","apps":[{"pr
 gentian apps approve aluvian-commerce --tenant team
 has "apps approve without a request lists what the app waits for" "${OUT}" "  egress/intake"
 is "... and asks nothing to change" "$(writes)" ""
-fresh; reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
+fresh; reply GET /v1/tenants/team/apps/status 200 '{"tenant":"team","apps":[{"profile":"aluvian-commerce","name":"aluvian-commerce","pendingPrivileges":["egress/intake"],"pendingPrivilegeApprovals":[{"privilege":"egress/intake","approvedBy":"perimeter-approver","hosts":["site-api.aluvian.io"]}]}]}'
+reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian apps approve aluvian-commerce egress/intake --tenant team --reason "reads the website's order requests"
 is "apps approve sends one PUT with the reason" "$(writes | tr -d '\n' | tr -s ' ')" \
     'PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake { "reason": "reads the website'"'"'s order requests"}'
 has "... and says it is committed" "${OUT}" "Approved egress/intake for aluvian-commerce in team: committed (01234567)"
 fresh
-gentian apps approve aluvian-commerce egress/intake --tenant team --reason "ok"
-refused "an approval without a reason of ten characters is a usage error"
-is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh; reply GET /v1/tenants/team/apps/status 200 '{"tenant":"team","apps":[{"profile":"aluvian-commerce","name":"aluvian-commerce","pendingPrivileges":["egress/intake"],"pendingPrivilegeApprovals":[{"privilege":"egress/intake","approvedBy":"perimeter-approver","hosts":["site-api.aluvian.io"]}]}]}'
+reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian apps approve aluvian-commerce egress/intake --tenant team
+is "apps approve without a reason sends one PUT with no reason" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake {}'
 fresh
 gentian apps approve aluvian-commerce hostNetwork/x --tenant team --reason "because it needs it"
 refused "a request of no known kind is a usage error"
+
+# An egress request whose hosts are named at approval opens the hosts the
+# approval names: one --host each, and none is refused before anything is
+# sent. --host belongs to an egress approval.
+AT='{"tenant":"team","apps":[{"profile":"operations-sync-ee","name":"operations-sync-ee","pendingPrivileges":["egress/backends"],"pendingPrivilegeApprovals":[{"privilege":"egress/backends","approvedBy":"perimeter-approver","hostsAtApproval":true}]}]}'
+fresh; reply GET /v1/tenants/team/apps/status 200 "${AT}"
+gentian apps approve operations-sync-ee egress/backends --tenant team
+refused "an approval naming no host of a request that needs them"
+is "... and nothing is sent" "$(writes)" ""
+fresh; reply GET /v1/tenants/team/apps/status 200 "${AT}"
+reply PUT /v1/tenants/team/privileges/operations-sync-ee/egress/backends 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian apps approve operations-sync-ee egress/backends --tenant team --host erp.example.org --host files.example.org:8443
+is "apps approve --host sends the hosts with the approval" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'PUT /v1/tenants/team/privileges/operations-sync-ee/egress/backends { "hosts": [ "erp.example.org", "files.example.org:8443" ]}'
+fresh
+gentian apps approve backup-scheduler-ee podSecurity/run-as-root --tenant platform --host erp.example.org
+refused "--host on another kind is a usage error"
+is "... and nothing is sent" "$(cat "${CALLS}")" ""
 
 # An API extension's approval names the definitions it approves: the digest
 # the cluster reports for the pending request.
@@ -516,6 +530,54 @@ refused "a decline must name the request"
 fresh
 gentian apps decline aluvian-commerce hostNetwork/x --tenant team --reason "because it must not"
 refused "a decline of no known kind is a usage error"
+
+# A tenant's own trusted domains: read, add, remove, and the cluster
+# administrator's switch for whether the tenant keeps a list.
+fresh; reply GET /v1/tenants/team/trusted-domains 200 '{"tenant":"team","delegated":true,"domains":["example.org","github.com"]}'
+gentian trusted-domains list --tenant team
+has "trusted-domains list names each domain" "${OUT}" "  github.com"
+fresh; reply GET /v1/tenants/team/trusted-domains 200 '{"tenant":"team","delegated":false,"domains":[]}'
+gentian trusted-domains list --tenant team
+has "trusted-domains list says when the list is not delegated" "${OUT}" "Trusted domains are not delegated to team"
+has "... and when it is empty" "${OUT}" "team has no trusted domains of its own."
+fresh; reply PUT /v1/tenants/team/trusted-domains/example.org 202 '{"status":"added","commit":"0f1e2d3c4b5a"}'
+gentian trusted-domains add example.org --tenant team
+is "trusted-domains add sends one PUT" "$(writes | tr -d '\n' | tr -s ' ')" 'PUT /v1/tenants/team/trusted-domains/example.org '
+has "... and says it is trusted" "${OUT}" "example.org is now trusted for team: committed"
+fresh; reply DELETE /v1/tenants/team/trusted-domains/example.org 202 '{"status":"removed","commit":"0f1e2d3c4b5a"}'
+gentian trusted-domains remove example.org --tenant team
+is "trusted-domains remove sends one DELETE" "$(writes | tr -d '\n' | tr -s ' ')" 'DELETE /v1/tenants/team/trusted-domains/example.org '
+fresh
+gentian trusted-domains add 'Example.org' --tenant team
+refused "what is no domain is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh
+gentian trusted-domains add example.org
+refused "a trusted domain needs its tenant"
+fresh; reply PUT /v1/clusters/c1/tenants/globex/trusted-domains-delegation 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
+gentian tenants delegate-trusted-domains globex on
+is "delegate-trusted-domains on sends one PUT" "$(writes | tr -d '\n' | tr -s ' ')" 'PUT /v1/clusters/c1/tenants/globex/trusted-domains-delegation '
+fresh; reply DELETE /v1/clusters/c1/tenants/globex/trusted-domains-delegation 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
+gentian tenants delegate-trusted-domains globex off
+is "delegate-trusted-domains off sends one DELETE" "$(writes | tr -d '\n' | tr -s ' ')" 'DELETE /v1/clusters/c1/tenants/globex/trusted-domains-delegation '
+has "... and says the list stays" "${OUT}" "Its list stays"
+
+# Withdrawing takes an approval back: one DELETE, no body.
+fresh; reply DELETE /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
+gentian apps withdraw aluvian-commerce egress/intake --tenant team
+is "apps withdraw sends one DELETE" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'DELETE /v1/tenants/team/privileges/aluvian-commerce/egress/intake '
+has "... and says the request waits again" "${OUT}" "Withdrew egress/intake from aluvian-commerce in team: committed"
+fresh; reply DELETE /v1/tenants/team/privileges/aluvian-commerce/egress/intake 200 '{"status":"unchanged"}'
+gentian apps withdraw aluvian-commerce egress/intake --tenant team
+has "apps withdraw of what is not approved says so" "${OUT}" "is not approved; nothing was committed"
+fresh
+gentian apps withdraw aluvian-commerce --tenant team
+refused "a withdrawal must name the request"
+fresh
+gentian apps withdraw aluvian-commerce hostNetwork/x --tenant team
+refused "a withdrawal of no known kind is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
 
 # What awaits an approver, across the cluster: the usher's list, read as a
 # table with who answers, who asked and why, and the command that answers it.
@@ -1124,6 +1186,7 @@ OLD="sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
 apps_catalogue() {
     reply GET /v1/tenants/acme/catalogues 200 '{"catalogues":[{"name":"gentian"}]}'
     reply GET /v1/tenants/acme/catalogues/gentian/entries 200 '{"entries":[{"name":"notes","version":"2.0.0","digest":"'"${PINNED}"'"}]}'
+    reply GET "/v1/tenants/acme/catalogues/gentian/entries/notes/asks?digest=${PINNED}" 200 "${ASKS:-{\"egress\":[],\"mayApprove\":false\}}"
 }
 
 fresh; apps_catalogue
@@ -1136,6 +1199,32 @@ fresh; apps_catalogue
 reply POST /v1/tenants/acme/apps/notes 200 '{"status":"already_installed"}'
 gentian apps install notes --tenant acme
 has "a current app installed again commits nothing" "${OUT}" "notes is already installed in acme at this build; nothing was committed."
+
+# A build that asks for outbound access says so before it is installed, and
+# --approve-egress sends the approval with the install.
+ASKS_ONE='"egress":[{"install":"notes","privilege":"egress/sync","reason":"reads the calendars","hosts":["cal.example.org"]}]'
+ASKS="{${ASKS_ONE},\"mayApprove\":true}"
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef"}'
+gentian apps install notes --tenant acme
+has "an install says what the build asks for" "${OUT}" "notes egress/sync  to cal.example.org  -- reads the calendars"
+has "... and that it waits, with the way to approve" "${OUT}" "install with --approve-egress"
+has "... and installs" "$(writes)" "POST /v1/tenants/acme/apps/notes"
+lacks "... and approves nothing unasked" "$(writes)" "approve"
+
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef","approved":[{"install":"notes","privilege":"egress/sync"}]}'
+gentian apps install notes --tenant acme --approve-egress
+is "--approve-egress sends what was listed with the install" \
+    "$(writes | sed 's/^POST [^ ]* //' | jq -c '.approve')" '[{"install":"notes","privilege":"egress/sync"}]'
+has "... and says it is approved" "${OUT}" "Its outbound access is approved, by you."
+
+ASKS="{${ASKS_ONE},\"mayApprove\":false}"
+fresh; apps_catalogue
+gentian apps install notes --tenant acme --approve-egress
+refused "--approve-egress by somebody who is not the perimeter approver installs nothing"
+is "... and asks the director for no write" "$(writes)" ""
+unset ASKS
 
 # An entry the catalog leaves to the store (me or ee) is not in the
 # listing, only counted, so by name it is not installed from here: the store
@@ -1282,32 +1371,36 @@ gentian platform-roles holders remove auditor acme it@acme.example
 refused "removing a role the login does not hold is refused"
 is "... and nothing is committed" "$(writes)" ""
 
-# Who holds each role through its group: the registrar's answer, read only.
-fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example","enabled":true}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]},{"role":"other","group":"gentian:platform:other","members":null,"unavailable":true}]}'
+# The platform tenant's role holders as the kernel realm knows them: the
+# registrar's answer, read only.
+fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example","enabled":true}]},{"role":"auditor","unavailable":true,"members":[{"id":"u2","username":"former@k.example","email":""}]}]}'
 gentian platform-roles members
 is "members asks the registrar alone" "$(cat "${CALLS}")" "GET /v1/clusters/c1/platform-role-members "
-has "... and lists a member with the group" "${OUT}" "ops@k.example"
-has "... and an empty group" "${OUT}" "(nobody)"
-has "... and a group that was not read" "${OUT}" "the list is incomplete"
-has "... and says where they are managed" "${OUT}" "managed in Keycloak"
+has "... and lists a holder with the role" "${OUT}" "ops@k.example"
+has "... and a holder the realm no longer knows, as the claim names them" "${OUT}" "former@k.example"
+has "... and says that one could not be read" "${OUT}" "could not be read from the kernel realm"
+has "... and says where they are named" "${OUT}" "written on the Cluster claim"
+fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":true,"roles":[]}'
+gentian platform-roles members
+has "... and a cluster with no holder of the platform tenant" "${OUT}" "names nobody"
 
 # The periodic review: both lists shown, typed confirmation, one POST that
 # carries the registrar's answer as it was shown.
-MEMBERS='{"cluster":"c1","complete":true,"roles":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example"}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]}]}'
+MEMBERS='{"cluster":"c1","complete":true,"roles":[{"role":"admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example"}]}]}'
 fresh; reply GET /v1/clusters/c1/platform-role-members 200 "${MEMBERS}"
 reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 reply POST /v1/clusters/c1/actions/review-access 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian_stdin reviewed platform-roles review --next 2027-02-01T00:00:00Z
-has "review shows the group members" "${OUT}" "ops@k.example"
+has "review shows the platform tenant's holders" "${OUT}" "ops@k.example"
 has "... and the holders" "${OUT}" "it@acme.example"
-is "... and records what was shown, with the next date" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/actions/review-access{"members":[{"role":"admin","group":"gentian:platform:admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example"}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]}],"nextReviewAt":"2027-02-01T00:00:00Z"}'
+is "... and records what was shown, with the next date" "$(writes | tr -d ' \n')" 'POST/v1/clusters/c1/actions/review-access{"members":[{"role":"admin","members":[{"id":"u1","username":"ops@k.example","email":"ops@k.example"}]}],"nextReviewAt":"2027-02-01T00:00:00Z"}'
 has "... and says it is committed" "${OUT}" "Reviewed: committed"
 fresh; reply GET /v1/clusters/c1/platform-role-members 200 "${MEMBERS}"
 reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 gentian_stdin "yes" platform-roles review
 refused "a review not confirmed by typing reviewed is refused"
 is "... and nothing is recorded" "$(writes)" ""
-fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","group":"gentian:platform:admin","members":null,"unavailable":true}]}'
+fresh; reply GET /v1/clusters/c1/platform-role-members 200 '{"cluster":"c1","complete":false,"roles":[{"role":"admin","members":[{"id":"u1","username":"ops@k.example"}],"unavailable":true}]}'
 reply GET /v1/clusters/c1/platform-roles/holders 200 "${HOLDERS}"
 gentian_stdin reviewed platform-roles review
 refused "a review of a list that could not be read in full is refused"

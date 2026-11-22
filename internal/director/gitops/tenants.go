@@ -816,7 +816,6 @@ spec:
     cpu: "16"
     memory: 32Gi
     storage: 50Gi
-    maxApps: 20
   # Apps are installed through the director, which appends to this list.
   apps: []
 `, name, name, display, requireMFA, signUpBlock, name, strings.ReplaceAll(name, "-", "_"), name)

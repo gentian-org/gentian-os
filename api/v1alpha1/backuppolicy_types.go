@@ -175,7 +175,27 @@ type BackupPolicySpec struct {
 	// +optional
 	// +kubebuilder:default=true
 	AllowTenantOverride *bool `json:"allowTenantOverride,omitempty"`
+
+	// BeforeMove is what is exported before an installed app moves to
+	// another build (docs/concepts/versioning.md §5): tenant, the app and the
+	// tenant's own -- its realm, its desktop's database, its mailboxes; app,
+	// the app alone; none, nothing, so that the last backup is what there is
+	// to go back to. An app that holds no data -- no database, no bucket, no
+	// volume -- is never exported, whatever this says. Unset inherits, and
+	// unset all the way up is app.
+	// +optional
+	BeforeMove BeforeMoveExport `json:"beforeMove,omitempty"`
 }
+
+// BeforeMoveExport is what is exported before an app moves to another build.
+// +kubebuilder:validation:Enum=tenant;app;none
+type BeforeMoveExport string
+
+const (
+	BeforeMoveTenant BeforeMoveExport = "tenant"
+	BeforeMoveApp    BeforeMoveExport = "app"
+	BeforeMoveNone   BeforeMoveExport = "none"
+)
 
 // OverrideAllowed reports whether tenants may state policies of their own.
 func (s *BackupPolicySpec) OverrideAllowed() bool {
@@ -203,6 +223,11 @@ type BackupPolicyStatus struct {
 	// absence.
 	// +optional
 	EffectiveRecipients []string `json:"effectiveRecipients,omitempty"`
+
+	// EffectiveBeforeMove is what is exported before an app moves, after
+	// inheritance.
+	// +optional
+	EffectiveBeforeMove BeforeMoveExport `json:"effectiveBeforeMove,omitempty"`
 
 	// CredentialRequirement names the requirement carrying this destination's
 	// keys, and CredentialSatisfied reports whether it has been filled. A

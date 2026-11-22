@@ -25,6 +25,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/bouncer"
 )
 
 // A token entry is the one gateway entry with no session in front: a host of
@@ -97,7 +98,8 @@ func tokenEntryMetadataName(component, entry string) string {
 }
 
 // tokenEntryMetadata is the entry's Protected Resource Metadata (RFC 9728):
-// the address tokens are made out to and the realm that issues them. It is
+// the address tokens are made out to, the realm that issues them, and the
+// scope to ask for (bouncer.EntryScope, which the 401 names too). It is
 // what the bouncer's 401 points a program at, and it says nothing a person
 // who knows the tenant's name could not work out.
 func tokenEntryMetadata(host, kernelDomain, realm string) (string, error) {
@@ -105,6 +107,7 @@ func tokenEntryMetadata(host, kernelDomain, realm string) (string, error) {
 		"resource":                 tokenEntryAudience(host),
 		"authorization_servers":    []string{fmt.Sprintf("https://id.%s/auth/realms/%s", kernelDomain, realm)},
 		"bearer_methods_supported": []string{"header"},
+		"scopes_supported":         []string{bouncer.EntryScope},
 	})
 	return string(doc), err
 }
@@ -189,6 +192,24 @@ func tokenEntryApprovalWaived(tenant *gentianov1alpha1.Tenant, clusterAllows boo
 		tenant.Spec.TokenEntries.Approval == gentianov1alpha1.TokenEntryApprovalWaived
 }
 
+// tokenEntrySessionMaxAge is how long a sign-in through the tenant's token
+// entries lasts: 4 hours, or what the tenant says where the cluster lets it,
+// and never past the tenant's own sign-in. The tenant's word alone extends
+// nothing.
+func tokenEntrySessionMaxAge(tenant *gentianov1alpha1.Tenant, clusterAllows bool) time.Duration {
+	hours := gentianov1alpha1.DefaultTokenEntrySessionHours
+	if clusterAllows && tenant != nil && tenant.Spec.TokenEntries != nil &&
+		tenant.Spec.TokenEntries.SessionMaxHours != nil && *tenant.Spec.TokenEntries.SessionMaxHours > 0 {
+		hours = *tenant.Spec.TokenEntries.SessionMaxHours
+	}
+	if tenant != nil {
+		if own := tenant.SessionMaxHours(); own > 0 && own < hours {
+			hours = own
+		}
+	}
+	return time.Duration(hours) * time.Hour
+}
+
 // servedTokenEntry says whether the component's token entry is served, and
 // writes the condition that says so (in memory: the caller's status update
 // carries it). It is served when the tenant's perimeter approver approved the
@@ -199,11 +220,20 @@ func servedTokenEntry(
 	comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
 	e *gentianov1alpha1.ExposureSpec, host string, sessionHosts map[string]bool, waived bool, now time.Time,
 ) bool {
+	return servedEntry(comp, profile, e, host, sessionHosts, e != nil && tokenEntryApproved(comp, e, now), waived)
+}
+
+// servedEntry is servedTokenEntry with the approval already read: a bridge's
+// is read from its ways (approvedBridgeWays), whose names its route does not
+// carry.
+func servedEntry(
+	comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
+	e *gentianov1alpha1.ExposureSpec, host string, sessionHosts map[string]bool, approved, waived bool,
+) bool {
 	if e == nil {
 		apimeta.RemoveStatusCondition(&comp.Status.Conditions, ConditionTokenEntry)
 		return false
 	}
-	approved := tokenEntryApproved(comp, e, now)
 	byWaiver := !approved && waived
 	approved = approved || waived
 	cond := metav1.Condition{
@@ -249,7 +279,7 @@ func servedTokenEntry(
 // moment at which this one exists without the bouncer in front.
 func (r *ComponentReconciler) ensureTokenEntry(
 	ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant,
-	profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, served, held bool,
+	profile *gentianov1alpha1.ComponentProfile, zone edgeZone, e *gentianov1alpha1.ExposureSpec, door *bridgeDoor, served, held bool,
 ) error {
 	keep, metadata := "", ""
 	if served {
@@ -274,7 +304,13 @@ func (r *ComponentReconciler) ensureTokenEntry(
 		}
 		host := exposureHost(zone, comp, e)
 		authz := exposureAuthz(tenant, comp, profile, r.Cluster, false)
+		// A bridge asks the question of the app it connects, under its own
+		// paths, and its app is handed a token made out to it (bridge.go).
+		if door != nil {
+			authz = door.authz
+		}
 		route := buildExposureRoute(comp, tenant.Name, keep, host, zone, e, authz, r.KernelDomain, nil)
+		door.annotate(route)
 		route.Labels[tokenEntryRouteLabel] = "true"
 		if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
 			return err

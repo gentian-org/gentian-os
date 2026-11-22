@@ -97,6 +97,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	policy.Status.EffectiveEndpoint = eff.Endpoint
 	policy.Status.EffectiveBucket = eff.Bucket
 	policy.Status.EffectiveRecipients = slices.Clone(eff.Recipients)
+	policy.Status.EffectiveBeforeMove = eff.BeforeMove
 	policy.Status.CredentialRequirement = eff.CredentialName
 	policy.Status.CredentialSatisfied = true
 	message := "backups write to the platform's own storage"

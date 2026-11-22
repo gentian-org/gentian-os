@@ -147,8 +147,7 @@ spec:
                  signs in through is adopted, never created, configured or
                  brokered — every object below that is realm state or a bridge
                  between two realms stays unrendered, and only what belongs to
-                 the tenant inside that realm (its entitlement groups) is
-                 composed. */}}
+                 the tenant inside that realm is composed. */}}
             {{- $realm := default $tenant (dig "isolation" "keycloakRealm" "" $spec) }}
             {{- $adoptsKernelRealm := and $kernelRealm (eq $realm $kernelRealm) }}
             {{- /* Whether people make their own accounts in the realm
@@ -285,6 +284,14 @@ spec:
                   }
                   path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ $tenant }}/*" {
                     capabilities = ["list", "delete"]
+                  }
+                  # Not what components keep for the tenant's people: only
+                  # the confidant holds that.
+                  path "{{ $kvMount }}/data/gentian-os/tenants/{{ $tenant }}/people/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ $tenant }}/people/*" {
+                    capabilities = ["deny"]
                   }
 
             {{- /* ── The tenant's own secret store ─────────────────────────────
@@ -614,7 +621,10 @@ spec:
                  the path its keys are published at, separated by spaces
                  (zoneVouchingProfilesKey in the operator says why a space is
                  safe), and, for a component of the platform tenant, what its
-                 tokens may do at the director, comma-separated. A line that
+                 tokens may do at the director, comma-separated. Among those
+                 words, "narrow" marks a component below the platform's trust,
+                 whose client is given no app scope, and each "home=<profile>"
+                 names a home granted to it, which it calls as the person. A line that
                  is not four or five fields is not guessed at: it is left
                  out, and that component gets nothing rather than an issuer
                  whose keys are fetched from somewhere half-read. A director
@@ -628,16 +638,32 @@ spec:
             {{- $vouchingSeen = append $vouchingSeen (index $f 0) }}
             {{- $director := list }}
             {{- $exchanges := false }}
+            {{- $narrow := false }}
+            {{- $homes := list }}
             {{- if eq (len $f) 5 }}
             {{- range $d := (splitList "," (index $f 4)) }}
             {{- if eq $d "exchange" }}{{- $exchanges = true }}{{- end }}
+            {{- if eq $d "narrow" }}{{- $narrow = true }}{{- end }}
+            {{- if and (hasPrefix "home=" $d) (not (has (trimPrefix "home=" $d) $homes)) }}{{- $homes = append $homes (trimPrefix "home=" $d) }}{{- end }}
             {{- if and (has $d (list "plans-read" "plans-apply")) (not (has $d $director)) }}
             {{- $director = append $director $d }}
             {{- if not (has $d $directorScopes) }}{{- $directorScopes = append $directorScopes $d }}{{- end }}
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges "keyless" (eq (index $f 1) "-")) }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges "narrow" $narrow "homes" $homes "keyless" (eq (index $f 1) "-")) }}
+            {{- end }}
+            {{- end }}
+            {{- /* $presentCallers are the profiles among them that call a home
+                 as the person only while that person is present: below the
+                 platform's trust, with no keys, exchanging, and with a home
+                 granted. The token the edge hands such an app names its
+                 client as well (at the app scope, below), so that client can
+                 exchange it for a home's and nothing else can. */}}
+            {{- $presentCallers := list }}
+            {{- range $v := $vouchingProfiles }}
+            {{- if and $v.narrow $v.keyless $v.exchange (gt (len $v.homes) 0) }}
+            {{- $presentCallers = append $presentCallers $v.profile }}
             {{- end }}
             {{- end }}
             {{- /* The components that call partners or accept their
@@ -1369,19 +1395,50 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- end }}
-            {{- /* Who the person is, for the app: their groups of this realm,
+            {{- /* And the app's vouching client, for an app that calls a home
+                 as the person while that person is present: the token it is
+                 handed names that client, which may then exchange it for one
+                 of a home granted to it. Only while a home is granted, so a
+                 client with no home's scope holds no token it can exchange. */}}
+            {{- if has $p $presentCallers }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-exchange-scope-{{ $p }}-vouching-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-{{ $p }}-vouching-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: vouching-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ printf "vouch-%s" $p }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- /* Who the person is, for the app: the roles they hold on it,
                  their address and their name, in the access token the app is
                  handed. The exchange client has no default scope beyond
                  basic, and the bouncer takes a token that names this one
                  scope and no other, so what the app reads has to come from
-                 here. They are what the app learns of a person signing in to
-                 it directly, where the realm's default scopes give them: an
-                 editor check by group (a CMS's), and who did what. Into the
-                 access token only; the scope's name in it stays this one. The
-                 config is Keycloak's own for these mapper types, every key it
-                 writes back, so the provider does not update them forever. */}}
+                 here. The roles are the platform's own names (user, admin,
+                 the ones the profile declares), asked of the rights store by
+                 the platform's mapper: an editor check (a CMS's), and who did
+                 what. Into the access token only; the scope's name in it
+                 stays this one. The config is every key Keycloak writes back
+                 for these mapper types, so the provider does not update them
+                 forever. */}}
             {{- range $m := (list
-                  (dict "name" "groups" "type" "oidc-group-membership-mapper" "config" (dict "claim.name" "groups" "full.path" "false" "multivalued" "true"))
+                  (dict "name" "roles" "type" "gentian-app-roles" "config" (dict "claim.name" "gentian_app_roles" "gentian.tenant" $tenant "gentian.app" $p))
                   (dict "name" "email" "type" "oidc-usermodel-attribute-mapper" "config" (dict "claim.name" "email" "user.attribute" "email" "jsonType.label" "String"))
                   (dict "name" "full name" "type" "oidc-full-name-mapper" "config" (dict))) }}
             ---
@@ -1402,6 +1459,213 @@ spec:
                 config:
                   {{- range $k, $v := $m.config }}
                   {{ $k }}: {{ $v | quote }}
+                  {{- end }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* Which app a token presented at the tenant's door is for: the
+                 scope "bridge-<profile>".
+
+                 One per app a served bridge connects, as the operator
+                 projects them (bridgeScopes, a JSON document: a scope carries
+                 mappers and a line cannot), named exactly what
+                 BridgeTokenScope in the operator (bridge.go) returns. That
+                 function writes the name onto the bridge's route for the
+                 bouncer to ask for, so the two agree letter for letter.
+
+                 Not the app scope above, which names the profile for an app
+                 that has no sign-in of its own. An app behind a bridge
+                 verifies the token as it verifies its own sign-in's: so the
+                 audience is its own sign-in client, and the claims are the
+                 ones its own sign-in tokens carry of a person -- the mappers
+                 of its OIDC pack, read by the operator, and none that a
+                 profile could add for the occasion. Into the access token
+                 only.
+
+                 A custom audience although a client is named, as at the
+                 director's: Keycloak drops a client audience whose client is
+                 absent or disabled, and the token would then arrive with no
+                 audience where it should be refused for a wrong one.
+
+                 Absent while no bridge is served: the key is not written,
+                 nothing here renders, and the realm is what it was. The
+                 scope's observed id rather than a ref, and no external-name,
+                 for the reasons given at the app scope. */}}
+            {{- $bridgeDoc := dig "bridgeScopes" "" $zhData }}
+            {{- $bridgeScopes := list }}
+            {{- /* The bridge scopes that have been observed, kept apart from
+                 the app scopes: only the edge's exchange client may ask for
+                 one. A component that vouches for people is given the app
+                 scopes further down, and must not come by a token an app
+                 takes for its own sign-in's. */}}
+            {{- $bridgeScopeNames := list }}
+            {{- if $bridgeDoc }}
+            {{- $bridgeScopes = dig "scopes" list (fromJson $bridgeDoc) }}
+            {{- end }}
+            {{- range $b := $bridgeScopes }}
+            {{- $p := $b.profile }}
+            {{- $scope := printf "bridge-%s" $p }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              name: {{ $tenant }}-edge-bridge-scope-{{ $p }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-bridge-scope-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $scope }}
+                description: {{ printf "A token of the person at the tenant's door, for %s and nothing else" $p | quote }}
+                includeInTokenScope: true
+              providerConfigRef:
+                name: keycloak
+            {{- $scopeID := dig "resources" (printf "keycloak-edge-bridge-scope-%s" $p) "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $scopeID }}
+            {{- $bridgeScopeNames = append $bridgeScopeNames $scope }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-bridge-scope-{{ $p }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-bridge-scope-{{ $p }}-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: app-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $b.audience | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- range $m := (default list $b.mappers) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-bridge-scope-{{ $p }}-claim-{{ $m.slug }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-bridge-scope-{{ $p }}-claim-{{ $m.slug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: {{ $m.name | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $m.type | quote }}
+                config:
+                  {{- range $k, $v := (default dict $m.config) }}
+                  {{ $k | quote }}: {{ $v | quote }}
+                  {{- end }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* Which home a component calls as the person: the scope
+                 "home-<profile>" (HomeTokenScope in the operator).
+
+                 One per home some component of the tenant is granted to call
+                 so (integrations[].asPerson), as the operator projects them
+                 (homeScopes, the document bridgeScopes is). The token is the
+                 one the home's own sign-in issues: its sign-in client as the
+                 audience, and the claims of its OIDC pack, as a bridged
+                 app's above and for the same reason -- the home verifies it
+                 as it verifies its own. Only the vouching clients of the
+                 components the home is granted to are given it, below; the
+                 edge's exchange client never is. */}}
+            {{- $homeDoc := dig "homeScopes" "" $zhData }}
+            {{- $homeScopes := list }}
+            {{- $homeScopeNames := list }}
+            {{- if $homeDoc }}
+            {{- $homeScopes = dig "scopes" list (fromJson $homeDoc) }}
+            {{- end }}
+            {{- range $h := $homeScopes }}
+            {{- $p := $h.profile }}
+            {{- $scope := printf "home-%s" $p }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              name: {{ $tenant }}-home-scope-{{ $p }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-home-scope-{{ $p }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                name: {{ $scope }}
+                description: {{ printf "A token of the person for %s, the tenant's home, and nothing else" $p | quote }}
+                includeInTokenScope: true
+              providerConfigRef:
+                name: keycloak
+            {{- $scopeID := dig "resources" (printf "keycloak-home-scope-%s" $p) "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $scopeID }}
+            {{- $homeScopeNames = append $homeScopeNames $scope }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-home-scope-{{ $p }}-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-home-scope-{{ $p }}-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: app-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.custom.audience: {{ $h.audience | quote }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+            {{- range $m := (default list $h.mappers) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-home-scope-{{ $p }}-claim-{{ $m.slug }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-home-scope-{{ $p }}-claim-{{ $m.slug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientScopeId: {{ $scopeID }}
+                name: {{ $m.name | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $m.type | quote }}
+                config:
+                  {{- range $k, $v := (default dict $m.config) }}
+                  {{ $k | quote }}: {{ $v | quote }}
                   {{- end }}
                   id.token.claim: "false"
                   access.token.claim: "true"
@@ -1442,7 +1706,8 @@ spec:
                  the rest. Neither is reachable: the bouncer asks only for
                  the scope a route names, and a route names one only while
                  its profile asks. */}}
-            {{- if gt (len $exchangeScopes) 0 }}
+            {{- $edgeExchangeScopes := concat $exchangeScopes $bridgeScopeNames }}
+            {{- if gt (len $edgeExchangeScopes) 0 }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: ClientOptionalScopes
@@ -1459,9 +1724,232 @@ spec:
                   policy:
                     resolve: Always
                 optionalScopes:
-                  {{- range $scope := $exchangeScopes }}
+                  {{- range $scope := $edgeExchangeScopes }}
                   - {{ $scope }}
                   {{- end }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the door's device sign-in ──────────────────────────────────
+                 A calendar, contact or file program that knows only a
+                 username and a password reaches the tenant's door with a
+                 device password (docs/concepts/bridges.md). The bouncer posts
+                 it to this realm as a password grant of the client below,
+                 and the realm answers with a token of the person for the
+                 door, carrying the ways the password may use.
+
+                 A client of its own, not the exchange client: that one does
+                 one thing and nobody signs in through it. This one does one
+                 thing too. Its direct grant runs the flow
+                 gentian-door-devices, whose one step checks a device
+                 password and nothing else (the platform's Keycloak
+                 extension, gentian-device-password). It cannot check a
+                 person's password, and no other client can check a device
+                 password: every other client's direct grant runs Keycloak's
+                 own steps.
+
+                 The secret is generated and gathered for the bouncer as the
+                 exchange client's is, under a label of its own
+                 (gentianos.io/edge-devices-realm). */}}
+            {{- $devicesClientID := "gentian-door-devices" }}
+            {{- $devicesSecret   := printf "edge-%s-devices" $zone }}
+            {{- $doorAudience    := printf "https://sync.%s" $domain }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-devices-password
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-devices-password
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: generators.external-secrets.io/v1alpha1
+                  kind: Password
+                  metadata:
+                    name: {{ $devicesSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-devices-realm: {{ $realm }}
+                  spec:
+                    length: 48
+                    digits: 8
+                    symbols: 0
+                    noUpper: false
+                    allowRepeat: true
+                    secretKeys:
+                      - client-secret
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-devices-client-secret
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-devices-client-secret
+            spec:
+              readiness:
+                policy: DeriveFromObject
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $devicesSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-devices-realm: {{ $realm }}
+                  spec:
+                    refreshPolicy: CreatedOnce
+                    refreshInterval: "0"
+                    target:
+                      name: {{ $devicesSecret }}
+                      creationPolicy: Owner
+                      template:
+                        metadata:
+                          labels:
+                            app.kubernetes.io/managed-by: gentian-os
+                            gentianos.io/edge-devices-realm: {{ $realm }}
+                    dataFrom:
+                      - sourceRef:
+                          generatorRef:
+                            apiVersion: generators.external-secrets.io/v1alpha1
+                            kind: Password
+                            name: {{ $devicesSecret }}
+              providerConfigRef:
+                name: kubernetes
+            {{- /* The flow and its one step. Orphan, as the realm's other
+                 flows: a flow outlives a composite that is recreated. */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-flow
+              name: {{ $tenant }}-door-devices-flow
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                alias: gentian-door-devices
+                description: A device password at the tenant's door, and nothing else
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-exec
+              name: {{ $tenant }}-door-devices-exec
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                parentFlowAlias: gentian-door-devices
+                authenticator: gentian-device-password
+                requirement: REQUIRED
+                priority: 10
+              providerConfigRef:
+                name: keycloak
+            {{- /* Confidential, the direct grant on and bound to the flow
+                 above, every other flow off. fullScopeAllowed false and the
+                 one default scope basic, as on the exchange client: the
+                 token is for the door and says whose it is, and the bouncer
+                 exchanges it for the app's at once. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-door-devices-client
+              annotations:
+                crossplane.io/external-name: {{ $devicesClientID }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-client
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: {{ $devicesClientID }}
+                name: {{ printf "%s door (device passwords)" $brandName | quote }}
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: true
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                authenticationFlowBindingOverrides:
+                  - directGrantIdRef:
+                      name: {{ $tenant }}-door-devices-flow
+                extraConfig:
+                  gentianos.io/managed-by: platform
+                clientSecretSecretRef:
+                  name: {{ $devicesSecret }}
+                  namespace: {{ $edgeNs }}
+                  key: client-secret
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-door-devices-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-door-devices-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - basic
+              providerConfigRef:
+                name: keycloak
+            {{- /* What the token carries beyond basic: the door in its
+                 audience, which is what the bouncer checks a token at the
+                 door for; the exchange client in its audience, without which
+                 Keycloak refuses to exchange it; and the ways the password
+                 may use, from the session note the device password step
+                 writes. */}}
+            {{- range $m := (list
+                  (dict "name" "door-audience" "mapper" "oidc-audience-mapper" "config" (dict "included.custom.audience" $doorAudience))
+                  (dict "name" "exchange-audience" "mapper" "oidc-audience-mapper" "config" (dict "included.custom.audience" $exchangeClientID))
+                  (dict "name" "ways" "mapper" "oidc-usersessionmodel-note-mapper" "config" (dict "user.session.note" "gentian.device_password.ways" "claim.name" "gentian_ways" "jsonType.label" "String"))) }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-door-devices-{{ $m.name }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-door-devices-{{ $m.name }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-door-devices-client
+                  policy:
+                    resolve: Always
+                name: {{ $m.name }}
+                protocol: openid-connect
+                protocolMapper: {{ $m.mapper }}
+                config:
+                  {{- range $k, $v := $m.config }}
+                  {{ $k }}: {{ $v | quote }}
+                  {{- end }}
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
               providerConfigRef:
                 name: keycloak
             {{- end }}
@@ -1686,6 +2174,13 @@ spec:
                 tokenUrl: {{ $vouchIssuer }}
                 extraConfig:
                   jwtAuthorizationGrantEnabled: "true"
+                  {{- /* A component granted a home to call as the person has
+                       the people who sign in to it linked here by the
+                       platform's sign-in extension, which reads this mark
+                       and the profile on the app's own sign-in client. */}}
+                  {{- if gt (len $v.homes) 0 }}
+                  gentianos.io/link-at-sign-in: "true"
+                  {{- end }}
                 clientIdSecretRef:
                   name: {{ $tenant }}-vouching-issuer-credential
                   namespace: {{ $identityNs }}
@@ -1755,10 +2250,14 @@ spec:
                  which is why the one value it fills in is written inside a
                  raw string.
 
-                 Written once, like the secret in it. So an address that
-                 changes later -- a cluster that moves its Keycloak -- is not
-                 followed: the Secret is deleted and made again, which is
-                 also a new client secret. */}}
+                 Written once, like the secret in it. The issuer alone is
+                 kept current afterwards, by the operator (keepVouchingIssuer),
+                 for a profile that starts or stops naming keys. Anything else
+                 that changes later -- a cluster that moves its Keycloak -- is
+                 not followed: the Secret is deleted and made again, which is
+                 also a new client secret, and the client below follows it.
+                 The component reads the Secret mounted, so either reaches it
+                 without a restart. */}}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -1910,7 +2409,16 @@ spec:
 
                  Beside them, the director scopes this component names and
                  no other's, once each exists with its mapper. */}}
+            {{- /* A component below the platform's trust ("narrow") is given
+                 no app scope: only the scopes of the homes granted to it,
+                 which a platform component is given beside its app scopes. */}}
             {{- $optional := $exchangeScopes }}
+            {{- if $v.narrow }}{{- $optional = list }}{{- end }}
+            {{- range $h := $v.homes }}
+            {{- if has (printf "home-%s" $h) $homeScopeNames }}
+            {{- $optional = append $optional (printf "home-%s" $h) }}
+            {{- end }}
+            {{- end }}
             {{- range $d := $v.director }}
             {{- if has $d $directorReady }}
             {{- $optional = append $optional (printf "director-%s" $d) }}
@@ -1943,22 +2451,14 @@ spec:
             {{- end }}
 
             {{- if not $adoptsKernelRealm }}
-            {{- /* The realm states its memberships to the platform.
+            {{- /* The realm tells the platform what only it sees.
 
-                 Who is in which group is Keycloak's to say, and the
-                 authorization store holds a projection of it, fed by the
-                 gentian-director listener inside Keycloak. The listener runs
-                 only in a realm that names it, and only the kernel realm did
-                 -- the install script sets it there. So no tenant realm ever
-                 stated a membership, the store never learned that a tenant's
-                 administrator administers it, and the edge refused every
-                 person of every tenant: "This is not available to you", after
-                 a sign-in that had just succeeded.
-
-                 Admin events carry what an administrator changes; user events
-                 carry a sign-in, on which the listener states that person's
-                 groups afresh -- which is also what repairs a membership that
-                 was made before this was declared. */}}
+                 That a person came in through an identity provider -- a
+                 cluster administrator entering, a person of another tenant
+                 signing in -- and that a person was removed: the
+                 gentian-director listener inside Keycloak states both, and
+                 the operator gives or takes what follows in the rights
+                 store. The listener runs only in a realm that names it. */}}
             ---
             apiVersion: realm.keycloak.crossplane.io/v1alpha1
             kind: RealmEvents
@@ -1981,6 +2481,11 @@ spec:
                 eventsListeners:
                   - jboss-logging
                   - gentian-director
+                  # Ends a person's device passwords with their password.
+                  - gentian-device-passwords
+                  # Links a person who signs in to an app that calls a home
+                  # as the person to that app's vouching entry.
+                  - gentian-home-links
               providerConfigRef:
                 name: keycloak
             {{- /* The mailbox store's client is realm state: one per realm,
@@ -2099,8 +2604,8 @@ spec:
                 includeInTokenScope: true
               providerConfigRef:
                 name: keycloak
-            {{- /* The scope's observed id rather than a ref, as for the groups
-                 scope below: the scope is found by its name, and the API path
+            {{- /* The scope's observed id rather than a ref, as for other
+                 scopes: the scope is found by its name, and the API path
                  of a mapper needs the UUID. Not rendered until the scope has
                  been observed once. */}}
             {{- $mailboxScopeID := dig "resources" "keycloak-mailbox-scope" "resource" "status" "atProvider" "id" "" $observed }}
@@ -2133,126 +2638,16 @@ spec:
 
             {{- end }}
             {{- if and $kernelRealm $kcInternal }}
-            {{- /* ── the tenant's entitlement groups ─────────────────────────
-                 Three fixed, one per app. The names are internal/keycloak/groups.go's
-                 contract — members, admins, app-admins, and app:<profile> — and
-                 they carry one attribute, the platform's mark, which a realm
-                 import reads: such a group keeps the id it has here and is never
-                 made from a bundle (internal/keycloak PlatformMarkerAttribute).
-
-                 No external-name. A group is identified by its UUID, so it cannot
-                 be adopted from its name; given the realm and the name, the
-                 provider resolves the existing one instead, which is how the pack's
-                 mappers and client role adopted without being recreated. Keycloak
-                 refuses a second top-level group of the same name, so the failure
-                 mode if it does not resolve is a conflict rather than a duplicate.
-
-                 The gentian-groups Job still makes these. It also covers the
-                 tenant's apps, which this Composition cannot see —
-                 CollectTenantGroupNames reads them from the Tenant.
-              */}}
-            {{- /* Only the four that belong to the tenant itself. The per-app
-                 group is app-default's, because its name follows the resolved
-                 profile and its attributes come from that profile's
-                 gentianos.io/keycloak-group-attributes annotation — nine of the
-                 catalogue's profiles carry one, and the Odoo ones drive module
-                 and role provisioning. This Composition cannot see a ComponentProfile;
-                 app-default already fetches it.
-
-                 The two administrators' groups carry one attribute more, the
-                 role a partner assertion says for their members
-                 (gentianPartnerRole; internal/keycloak PartnerRoleAttribute):
-                 tenant-admin on admins, cluster-admin on platform-admins --
-                 the group the platform's administrators are in while they are
-                 here through the provider "kernel" (below), which grants
-                 nothing itself. The scope partner-<name> reads the attribute
-                 off the person's groups and nothing else does. The groups Job
-                 sets the same, so the two writers agree.
-
-                 app-admins is the exception: the groups Job writes onto it the
-                 roles an app's administrator gets, collected from the installed
-                 profiles (gentianOdooGroupRoles, from each one's
-                 gentianOdooAdminRoles), which this Composition cannot see.
-                 Declared here, the group's attributes were put back to the mark
-                 alone on every reconcile, and app administrators lost every
-                 app's administrator roles -- Odoo's Sales/Administrator among
-                 them -- until the Job ran again. So its mark is set when the
-                 group is made (initProvider) and the attributes are the Job's
-                 after that; without LateInitialize, so they are not copied into
-                 forProvider and enforced from there either. */}}
-            {{- $groupNames := list
-                  (dict "name" (printf "gentian:tenant:%s:members" $tenant) "attributes" (dict))
-                  (dict "name" (printf "gentian:tenant:%s:admins" $tenant) "attributes" (dict "gentianPartnerRole" "tenant-admin" "gentianRequiresMFA" "true"))
-                  (dict "name" (printf "gentian:tenant:%s:platform-admins" $tenant) "attributes" (dict "gentianPartnerRole" "cluster-admin" "gentianRequiresMFA" "true"))
-                  (dict "name" (printf "gentian:tenant:%s:app-admins" $tenant) "attributes" (dict) "jobOwnsAttributes" true) }}
-            {{- range $group := $groupNames }}
-            {{- $g := $group.name }}
-            {{- $gslug := $g | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
-            ---
-            apiVersion: group.keycloak.crossplane.io/v1alpha1
-            kind: Group
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-group-{{ $gslug }}
-              name: {{ $gslug }}
-            spec:
-              deletionPolicy: Orphan
-              {{- if $group.jobOwnsAttributes }}
-              managementPolicies: ["Observe", "Create", "Update", "Delete"]
-              initProvider:
-                attributes:
-                  gentianos.io/managed-by: platform
-              forProvider:
-                realmId: {{ $realm }}
-                name: {{ $g | quote }}
-              {{- else }}
-              forProvider:
-                realmId: {{ $realm }}
-                name: {{ $g | quote }}
-                attributes:
-                  gentianos.io/managed-by: platform
-                  {{- range $k, $v := $group.attributes }}
-                  {{ $k }}: {{ $v | quote }}
-                  {{- end }}
-              {{- end }}
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            {{- /* The tenant's own groups, declared in git (spec.groups): plain
-                 groups, without the registrar's custom mark, so the console
-                 puts people in them and neither renames nor deletes them. */}}
-            {{- range $g := (dig "groups" list $spec) }}
-            {{- if and (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $g)) (not (hasPrefix "gentian" (toString $g))) }}
-            ---
-            apiVersion: group.keycloak.crossplane.io/v1alpha1
-            kind: Group
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-declared-group-{{ $g }}
-              name: {{ $tenant }}-group-{{ $g }}
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                name: {{ $g | quote }}
-                {{- /* The platform's mark, as on every group a Composition
-                     makes: a realm import does not make it again from a
-                     bundle, since this does. */}}
-                attributes:
-                  gentianos.io/managed-by: platform
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            {{- end }}
             {{- if not $adoptsKernelRealm }}
 
             {{- /* ── the sign-in flow ──────────────────────────────────────────
-                 Keycloak's stock browser flow, with one rule added: a person in
-                 a group marked gentianRequiresMFA gives a second factor at every
-                 sign-in, and enrolls first if they have none. Enforced here and
-                 not per account, so it follows the group: whoever is put in it,
-                 by whatever path, meets it at their next sign-in. Everybody else
-                 is asked only if they set a second factor up. */}}
+                 Keycloak's stock browser flow, with one rule added: an account
+                 marked gentianRequiresMFA gives a second factor at every
+                 sign-in, and enrolls first if it has none. The operator writes
+                 the mark from the rights store onto whoever administers the
+                 tenant, and takes it off anybody else; the person cannot
+                 change it (the user profile below). Everybody else is asked
+                 only if they set a second factor up. */}}
             ---
             apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
             kind: Flow
@@ -2338,7 +2733,7 @@ spec:
                 config:
                   attribute_name: gentianRequiresMFA
                   attribute_expected_value: "true"
-                  include_group_attributes: "true"
+                  include_group_attributes: "false"
                   not: {{ $e.not | quote }}
               providerConfigRef:
                 name: keycloak
@@ -2495,6 +2890,16 @@ spec:
                       - name: length
                         config:
                           max: "255"
+                  {{- /* The mark the sign-in flow reads: an account that
+                       administers gives a second factor. The platform writes it
+                       from the rights store; the person neither sees nor changes
+                       it, or could take the rule off their own account. */}}
+                  - name: gentianRequiresMFA
+                    displayName: Second factor required
+                    multiValued: false
+                    permissions:
+                      - view: [admin]
+                        edit: [admin]
               providerConfigRef:
                 name: keycloak
 
@@ -2514,9 +2919,7 @@ spec:
                  rotated in two places.
 
                  No role of this realm goes with a token (fullScopeAllowed
-                 off); the realm's default scopes do, the groups claim among
-                 them, which is how the outside realm can give rights by the
-                 groups a person has here. Orphan and everything except
+                 off); the realm's default scopes do. Orphan and everything except
                  LateInitialize, as on the zone's client. */}}
             {{- range $b := (dig "brokeredTo" list $spec) }}
             {{- if regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" (toString $b.name) }}
@@ -2567,10 +2970,9 @@ spec:
                  partner's issuer as its only audience, the person's
                  pairwise subject (sector the partner's issuer, the salt the
                  operator derives) and the person's role on this tenant
-                 (gentian_roles: tenant-admin, cluster-admin, read off the
-                 attribute gentianPartnerRole of the person's groups, which
-                 only the two administrators' groups carry -- access token
-                 only, so nothing but an assertion says it), and the partner
+                 (gentian_roles: tenant-admin, cluster-admin, as the rights
+                 store answers the platform's mapper -- access token only, so
+                 nothing but an assertion says it), and the partner
                  client, client ID = the
                  partner's issuer, which the partner's realm signs in through
                  once per person to link the two accounts. It sends a person
@@ -2904,36 +3306,35 @@ spec:
                   pairwiseSubAlgorithmSalt: {{ $b.salt | quote }}
               providerConfigRef:
                 name: keycloak
-            {{- /* The person's role on this tenant: Keycloak's user attribute
-                 mapper, aggregating over the person's groups, so the claim
-                 is the attribute of the groups the person is in and nothing
-                 else -- the realm's user profile declares no such attribute,
-                 and Keycloak admits none it does not declare on an account.
-                 Multivalued: a platform administrator in both groups is
-                 both. Nobody else has the claim at all. Access token and
-                 introspection only, like the audience: no ID token, no
-                 userinfo. */}}
+            {{- /* The person's role on this tenant: the platform's mapper asks
+                 the rights store whether the person administers the tenant
+                 (tenant-admin), and whether they are, or came in as, an
+                 account of the kernel realm that administers the cluster
+                 (cluster-admin). A person who is neither has an empty claim.
+                 Access token and introspection only, like the audience: no ID
+                 token, no userinfo. */}}
             ---
             apiVersion: client.keycloak.crossplane.io/v1alpha1
             kind: ProtocolMapper
             metadata:
-              name: {{ $tenant }}-partner-{{ $b.name }}-roles
+              {{- /* Named apart from the attribute mapper it took the place
+                   of: the provider does not change a mapper's kind in place,
+                   so the earlier one is removed and this one made. */}}
+              name: {{ $tenant }}-partner-{{ $b.name }}-store-roles
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-roles
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-store-roles
             spec:
               deletionPolicy: Delete
               forProvider:
                 realmId: {{ $realm }}
                 clientScopeId: {{ $scopeID }}
-                name: gentian-roles
+                name: partner-roles
                 protocol: openid-connect
-                protocolMapper: oidc-usermodel-attribute-mapper
+                protocolMapper: gentian-partner-roles
                 config:
-                  user.attribute: gentianPartnerRole
                   claim.name: gentian_roles
-                  jsonType.label: String
-                  multivalued: "true"
-                  aggregate.attrs: "true"
+                  gentian.tenant: {{ $tenant | quote }}
+                  gentian.kernel-realm: {{ $kernelRealm | default "kernel" | quote }}
                   id.token.claim: "false"
                   access.token.claim: "true"
                   introspection.token.claim: "true"
@@ -3333,7 +3734,8 @@ spec:
 
                  The two realms are the cluster's own, administered by the
                  same people, so their verified addresses are trusted
-                 (trustEmail) and the groups follow every sign-in (FORCE).
+                 (trustEmail); what a person who arrives holds here is the
+                 operator's to give, from the positions the sign-in names.
                  An account already here under the same address is still
                  linked only once its owner proves it: Keycloak's own
                  first-broker-login flow, not the kernel broker's. Shown on
@@ -3410,29 +3812,6 @@ spec:
                   key: client_secret
               providerConfigRef:
                 name: keycloak
-            {{- range $i, $g := (default list $f.groups) }}
-            {{- if hasPrefix "/" (toString $g) }}
-            ---
-            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
-            kind: IdentityProviderMapper
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-signin-{{ $f.tenant }}-group-{{ $i }}
-              name: {{ $tenant }}-signin-{{ $f.tenant }}-group-{{ $i }}
-            spec:
-              deletionPolicy: Delete
-              forProvider:
-                realm: {{ $realm }}
-                identityProviderAlias: {{ $f.alias }}
-                name: {{ printf "group %s" (trimPrefix "/" (toString $g)) | quote }}
-                identityProviderMapper: oidc-hardcoded-group-idp-mapper
-                extraConfig:
-                  syncMode: FORCE
-                  group: {{ $g | quote }}
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            {{- end }}
             {{- end }}
             {{- end }}
 
@@ -3516,71 +3895,6 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- end }}{{- /* $signUp */}}
-
-            {{- /* ── the realm's "groups" client scope ────────────────────────
-                 What puts a user's group membership into their tokens. Every
-                 client in the realm gets it, because the groups Job adds it to
-                 default-default-client-scopes.
-
-                 That PUT stays with the Job. The realm currently defaults nine
-                 scopes, mostly Keycloak's own — acr, basic, email, profile,
-                 role_list, roles, saml_organization, web-origins — and declaring
-                 the list here would mean owning all nine and silently dropping
-                 whichever built-in a future Keycloak adds. The Job only ever adds
-                 "groups", which is additive and cannot subtract.
-              */}}
-            ---
-            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-            kind: ClientScope
-            metadata:
-              annotations:
-                crossplane.io/external-name: groups
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-groups-scope
-              name: {{ $tenant }}-groups-scope
-            spec:
-              deletionPolicy: Orphan
-              managementPolicies: ["Observe"]
-              forProvider:
-                realmId: {{ $realm }}
-                name: groups
-              providerConfigRef:
-                name: keycloak
-            {{- /* The membership mapper on it. Takes the scope's observed id
-                 rather than a ref, because the scope above is adopted by name and
-                 Observe-only, so a ref would yield "groups" where the API path
-                 needs a UUID. */}}
-            {{- $groupsScopeID := dig "resources" "keycloak-groups-scope" "resource" "status" "atProvider" "id" "" $observed }}
-            {{- if $groupsScopeID }}
-            ---
-            apiVersion: client.keycloak.crossplane.io/v1alpha1
-            kind: ProtocolMapper
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-groups-scope-mapper
-              name: {{ $tenant }}-groups-scope-mapper
-            spec:
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm }}
-                name: groups
-                protocol: openid-connect
-                protocolMapper: oidc-group-membership-mapper
-                clientScopeId: {{ $groupsScopeID }}
-                config:
-                  full.path: "false"
-                  id.token.claim: "true"
-                  access.token.claim: "true"
-                  userinfo.token.claim: "true"
-                  claim.name: groups
-                  {{- /* Keycloak's own defaults for this mapper type, written
-                       back on every read. Omitting them left the Composition
-                       permanently out of step with what the provider observed,
-                       which it answered by updating forever. */}}
-                  introspection.token.claim: "true"
-                  multivalued: "true"
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
 
             {{- /* ── the tenant realm, observed ──────────────────────────────
                  The realm every other Keycloak object here lives in. The realm
@@ -3977,15 +4291,14 @@ spec:
                  keys. No secret; the provider insists on one, so a fixed word
                  that is never sent fills it.
 
-                 For the platform's administrators only. The provider requires
-                 the token's groups claim to name gentian:platform:admin, so no
-                 other kernel account gets an account here through it, and two
-                 mappers of one kind put whoever arrives into this tenant's
-                 admins group and its platform-admins group from that claim at
-                 every sign-in (FORCE): a person who left the platform group
-                 is out of both at their next sign-in through it. The second
-                 group grants nothing here; it is what lets a partner
-                 assertion say cluster-admin (the partner scopes above).
+                 For the cluster's administrators only. The provider requires
+                 the token's gentian_cluster_roles claim to name admin -- the
+                 role as the rights store answers it to the platform's mapper
+                 on the client -- so no other kernel account gets an account
+                 here through it. The realm puts whoever arrives nowhere: the
+                 operator is told that they came in and gives the account the
+                 position Tenant administrator, which it takes back when the
+                 tenant stops letting them in.
                  Keycloak's own first-broker-login
                  flow, with no profile page: an address this realm already has
                  is linked once its owner confirms it.
@@ -4054,8 +4367,8 @@ spec:
                   clientAuthMethod: private_key_jwt
                   clientAssertionAudience: {{ printf "https://id.%s/auth/realms/%s" $kd $kernelRealm | quote }}
                   filteredByClaim: "true"
-                  claimFilterName: groups
-                  claimFilterValue: gentian:platform:admin
+                  claimFilterName: gentian_cluster_roles
+                  claimFilterValue: admin
                   updateProfileFirstLoginMode: "off"
                 clientIdSecretRef:
                   name: {{ $tenant }}-kernel-idp-client
@@ -4065,50 +4378,6 @@ spec:
                   name: {{ $tenant }}-kernel-idp-client
                   namespace: {{ $identityNs }}
                   key: client_secret
-              providerConfigRef:
-                name: keycloak
-            ---
-            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
-            kind: IdentityProviderMapper
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp-admins-mapper
-              name: {{ $tenant }}-kernel-idp-admins-mapper
-            spec:
-              deletionPolicy: Delete
-              managementPolicies: ["Observe", "Create", "Update", "Delete"]
-              forProvider:
-                realm: {{ $realm }}
-                identityProviderAlias: kernel
-                name: platform administrators are this tenant's administrators
-                identityProviderMapper: oidc-advanced-group-idp-mapper
-                extraConfig:
-                  syncMode: FORCE
-                  claims: '[{"key":"groups","value":"gentian:platform:admin"}]'
-                  are.claim.values.regex: "false"
-                  group: {{ printf "/gentian:tenant:%s:admins" $tenant | quote }}
-              providerConfigRef:
-                name: keycloak
-            ---
-            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
-            kind: IdentityProviderMapper
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp-platform-admins-mapper
-              name: {{ $tenant }}-kernel-idp-platform-admins-mapper
-            spec:
-              deletionPolicy: Delete
-              managementPolicies: ["Observe", "Create", "Update", "Delete"]
-              forProvider:
-                realm: {{ $realm }}
-                identityProviderAlias: kernel
-                name: platform administrators are this tenant's platform administrators
-                identityProviderMapper: oidc-advanced-group-idp-mapper
-                extraConfig:
-                  syncMode: FORCE
-                  claims: '[{"key":"groups","value":"gentian:platform:admin"}]'
-                  are.claim.values.regex: "false"
-                  group: {{ printf "/gentian:tenant:%s:platform-admins" $tenant | quote }}
               providerConfigRef:
                 name: keycloak
             {{- end }}{{- /* $kernelBroker */}}
@@ -4122,7 +4391,7 @@ spec:
                  its realm's provider "kernel" signs in with,
                  broker-to-<tenant>: authenticated by the JWT that realm
                  signs, checked against its published keys, and carrying the
-                 groups claim the provider reads the platform group off.
+                 gentian_cluster_roles claim the provider reads the role off.
                  Realm state of the kernel realm, which this Composition
                  otherwise leaves alone -- made here because nothing else
                  composes that realm. The resource names keep their earlier
@@ -4163,12 +4432,12 @@ spec:
               providerConfigRef:
                 name: keycloak
             ---
-            apiVersion: openidgroup.keycloak.crossplane.io/v1alpha1
-            kind: GroupMembershipProtocolMapper
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-enter-{{ $e.tenant }}-groups-mapper
-              name: {{ $tenant }}-hub-enter-{{ $e.tenant }}-groups-mapper
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-hub-enter-{{ $e.tenant }}-roles-mapper
+              name: {{ $tenant }}-hub-enter-{{ $e.tenant }}-roles-mapper
             spec:
               deletionPolicy: Delete
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
@@ -4178,12 +4447,15 @@ spec:
                   name: {{ $tenant }}-hub-enter-{{ $e.tenant }}-client
                   policy:
                     resolve: Always
-                name: groups
-                claimName: groups
-                fullPath: false
-                addToIdToken: true
-                addToAccessToken: true
-                addToUserinfo: true
+                name: cluster-roles
+                protocol: openid-connect
+                protocolMapper: gentian-cluster-roles
+                config:
+                  claim.name: gentian_cluster_roles
+                  id.token.claim: "true"
+                  access.token.claim: "true"
+                  userinfo.token.claim: "true"
+                  introspection.token.claim: "false"
               providerConfigRef:
                 name: keycloak
             {{- end }}
@@ -4251,6 +4523,14 @@ spec:
             - edge-exchange-password
             - edge-exchange-client-secret
             - keycloak-edge-exchange-client
+          # The door's device client's secret, and its flow, before the
+          # device client.
+          - sequence:
+            - edge-devices-password
+            - edge-devices-client-secret
+            - keycloak-door-devices-flow
+            - keycloak-door-devices-exec
+            - keycloak-door-devices-client
           # A vouching client's secret before the client, again for that
           # reason. Patterns, because there is one of each per component that
           # vouches: every vouching client waits until every vouching Secret
@@ -4272,8 +4552,7 @@ spec:
             - keycloak-registration-exec-.*
             - keycloak-registration-bindings.*
           # The platform's administrators entering a tenant: the provider's
-          # Secret before the provider, the provider before its mapper.
+          # Secret before the provider.
           - sequence:
             - ^kernel-idp-client$
             - ^keycloak-kernel-idp$
-            - ^keycloak-kernel-idp-admins-mapper$

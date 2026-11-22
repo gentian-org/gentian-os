@@ -192,7 +192,6 @@ func TestTenant_DeepCopy(t *testing.T) {
 				Mode: v1alpha1.MailModeSelfhosted,
 			},
 			Quotas: &v1alpha1.TenantQuotas{
-				MaxApps: 20,
 				Storage: &storage,
 				CPU:     &cpu,
 				Memory:  &memory,

@@ -252,6 +252,7 @@ tenant of a single-tenancy cluster, or a custom domain:
 | `sso` | nothing | a name a sign-in page would have |
 | `account` | nothing | a name a page for one's account and password would have |
 | `accounts` | nothing | a name a page for one's account and password would have |
+| `sync` | nothing | the tenant's door for programs that sync files, calendars and contacts, where its bridges answer |
 <!-- reserved-names:platform:end -->
 
 **The kernel's own hosts**, refused where a tenant's domain is the cluster's
@@ -516,8 +517,14 @@ which comes straight back while the realm still has a session for the person
 and shows the login form otherwise. That happens only for a `GET` the browser
 marks `Sec-Fetch-Mode: navigate`, and once per two minutes per host
 (`gentian-edge-restart` cookie, never passed to a backend). A page that comes
-back still without a session gets a page saying the sign-in has ended. The page
-for a person who lacks the access is shown only for a `403`. The one path of an app that takes no
+back still without a session gets a page saying the session could not be
+renewed, with a link that reloads the page; it never signs out, which would
+end the realm's session too. The page for a person who lacks the access is
+shown only for a `403`. A token whose realm's signing keys the bouncer cannot
+fetch (Keycloak away) is answered `503`, not `401`: the session may well be
+good, and a `503` is retried where a `401` ends it. A bouncer pod is ready only
+once it holds the kernel realm's keys, so in a rollout the pods before it keep
+answering while Keycloak restarts too. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
@@ -616,17 +623,26 @@ The bouncer verifies the token on every request: signature, expiry, that it
 is an access token of the tenant's own realm, that it is made out to the
 entry's address (`aud` holds `https://<host>`) and that it names a session of
 the realm, and then asks the route's relation of the person. A refusal is
-`401` with `WWW-Authenticate: Bearer resource_metadata=...`, never a
-redirect. The `Cookie` header is removed before the backend, the token is
+`401` with `WWW-Authenticate: Bearer scope="openid", resource_metadata=...`,
+never a redirect. The metadata document names the realm and the same scope
+(`scopes_supported: ["openid"]`), so a program asks for that scope alone; a
+program told none may ask for every scope of the realm, which the entry's
+client refuses. The `Cookie` header is removed before the backend, the token is
 left in `Authorization`, and the audit record names the program's client
 beside the person. The session's own token is refused there, and a token
 made out to the entry is refused at the director and at every app.
 
 The realm issues such a token to one public client, `token-entry-<component>`,
 which exists while the entry is served: authorization code with PKCE and the
-person's consent, no other grant, no role of the person in the token, no
-offline token, and a sign-in through it ends after four hours (sooner where
-the profile's `sessionMaxAge` is shorter). A program is sent back only to an
+person's consent, no other grant, no role of the person in the token, and a
+sign-in through it ends after four hours (sooner where the profile's
+`sessionMaxAge` is shorter). A program may ask for an offline token
+(`offline_access`): it outlives the sign-in and ends after the realm's offline
+idle timeout without use (30 days), or when the person removes the program's
+access in their account (Applications) or an administrator revokes it. A tenant may make it last longer,
+up to its own sign-in (`spec.tokenEntries.sessionMaxHours` on the Tenant),
+which counts only where the Cluster claim allows tenants the choice
+(`spec.tokenEntries.tenantsMayExtendSessions`, off by default). A program is sent back only to an
 address the entry declares (`clientRedirectURIs`): an exact `https` address,
 or a loopback address for a program on the person's computer. Where to obtain
 a token is published on the entry's host at
@@ -636,7 +652,10 @@ token on to no app. Where the entry names a component that exchanges
 (`exchangedBy`, a profile that declares
 `requires.services.vouching.exchange`), the entry's tokens name that
 component's client, and it exchanges one at the realm for a token of the one
-app it calls. No other client can exchange them, and that component can
+app it calls, by that app's scope `app-<profile>`: the realm holds one for
+every app an exposure of which says `exchangeToken`, for every app an
+installed bridge from the agents connects, and for every such bridge that
+connects none. No other client can exchange them, and that component can
 exchange no token that did not come in through such an entry.
 
 A token entry is served once the tenant's perimeter approver approved it
@@ -711,8 +730,9 @@ frame policy, set at the edge and not by the component:
 
 - remove upstream `X-Frame-Options`
 - set `Content-Security-Policy: frame-ancestors 'self'` plus, by name, the
-  desktop of the component's own tenant and the component's own other hosts
-  (a file store and the editor it embeds)
+  desktop of the component's own tenant, the desktops of the tenants whose
+  people sign in to it, and the component's own other hosts (a file store and
+  the editor it embeds)
 
 | Component of | May be framed by |
 |---|---|
@@ -720,6 +740,13 @@ frame policy, set at the edge and not by the component:
 | The user tenant, tenancy `single` | `desktop.<kernelDomain>` |
 | The platform tenant (`admin.platform.<kernelDomain>`, …) | `platform.<kernelDomain>` |
 | The kernel's consoles (`argocd.`, `headlamp.`, Keycloak's administration) | `platform.<kernelDomain>` |
+
+A tenant whose people sign in to another tenant
+([identity-brokering.md](../guides/identity-brokering.md)) opens that tenant's
+apps from its own desktop. Where both tenants declare the sign-in (the target
+names the source in `spec.signInFrom`, the source names the target in
+`spec.signInTo`), the source's desktop is a framer of every component of the
+target too. The platform tenant is never such a source.
 
 No wildcard, and the platform's desktop is not a framer of any tenant's
 component: platform administrators do not open tenants' apps.
@@ -1211,7 +1238,10 @@ in this repository writes one: the cluster's mail names are published as DNS
 records for the mail edge's load balancer (see [mail.md](mail.md)).
 
 The gateway-platform controller updates the hairpin block when the Envoy
-Service or routing mode changes and rolls CoreDNS. Tenant NetworkPolicies are
+Service, routing mode or set of hosts changes. CoreDNS's `reload` plugin
+picks the change up without a restart; only a Corefile without `reload` gets
+CoreDNS rolled, since a cluster with one CoreDNS replica resolves nothing
+during a roll. Tenant NetworkPolicies are
 refreshed when the edge Service changes so egress to the edge stays allowed.
 
 The block holds `<kernelDomain>` itself, and a CoreDNS `hosts` entry answers

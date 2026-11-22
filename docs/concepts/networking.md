@@ -23,7 +23,7 @@ passes them top to bottom; a lower layer never re-answers a higher one.
 | L0 | TLS, DNS, rate limit | is this traffic well-formed and within budget? | the Envoy listener; a local limit per client address on sign-in posts, to a realm's sign-in pages and to a sign-in sidecar's answer path, and on the requests to each route behind a session (`BackendTrafficPolicy`); the publishing proxy's own limits per client address on a published entry ([security/design.md §2.14](../security/design.md)) | none |
 | L1 | Edge session | who is this, in which realm? | Envoy `SecurityPolicy.oidc`: one confidential client per tenant zone in that tenant's realm, the kernel realm for the platform tenant's zone and the kernel UIs ([routing.md §4.1](routing.md)) | the realm's token: `sub`, realm |
 | L1′ | Perimeter | which paths, how much, and does a credential pass? | the publishing proxy in the tenant's DMZ, a named enforcement point: it forwards the declared paths and nothing else, holds a request to one reading of its path, a method, a size and a time, removes every identity header, `Cookie` and `Set-Cookie`, and removes `Authorization` unless the entry was approved as `authMode: app`, where the app alone checks it. It verifies no caller | none, or the credential the app issued |
-| L2 | Reachability | may this person reach this component at all? | the ext-auth bouncer, asking OpenFGA `can_use` on the app (or the relation the route names) over the stored membership projection (AD-12); cached per `(sub, sid, route)`, evicted on OpenFGA's change log | the same token |
+| L2 | Reachability | may this person reach this component at all? | the ext-auth bouncer, asking OpenFGA `can_use` on the app (or the relation the route names) over what the rights store holds (AD-12); cached per `(sub, sid, route)`, evicted on OpenFGA's change log | the same token |
 | L3 | App session and authorization | what may they do inside? | the app: the identity headers the bouncer sets, or its own silent single sign-on with its own client and audience and its own cookie. The profile's `sessionMaxAge` caps how long the realm renews that client's sign-in; it does not end the app's own cookie session. The edge token itself is forwarded only on a route that declares `forwardToken`; a route that declares `exchangeToken` is handed a token exchanged for that app alone (§1.1) | identity headers, or the app's own session |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy derived from `requires`, `integrations` and granted privileges (§2–§4); Kyverno for what a pod may be | ServiceAccount, namespace and pod labels |
 
@@ -65,14 +65,23 @@ writes one by hand.
 
 | Policy | Selects | Opens |
 | --- | --- | --- |
-| `tenant-isolation` (the baseline) | every pod of the namespace, an adapter's excepted | Ingress from the edge namespace -- its Envoy pods alone where the kernel's rules are on (§3) -- from the identity provider's namespace, which calls an app's back-channel logout address, and from the operator's namespace, which provisions into running apps. Egress to the cluster's DNS and to the API server. Nothing else in either direction |
+| `tenant-isolation` (the baseline) | every pod of the namespace, a bridge's from the agents excepted | Ingress from the edge namespace -- its Envoy pods alone where the kernel's rules are on (§3) -- from the identity provider's namespace, which calls an app's back-channel logout address, and from the operator's namespace, which provisions into running apps. Egress to the cluster's DNS and to the API server. Nothing else in either direction |
 | the export Job's policy | the tenant's backup and export Jobs | what a backup of the tenant's stores needs |
-| an adapter's policies | an adapter's pods, which the edge, the identity provider and the operator must not reach | a floor of the adapter's own |
+| `agent-bridge-*` | the pods of a bridge with a way from the agents, which the edge, the identity provider and the operator must not reach | a floor of the bridge's own, admitting the components that vouch for people, and its way to the app it connects ([bridges.md §4.4](bridges.md#44-ways-from-the-agents)) |
+| `homesync`, `homesync-target-*` | the tenant's home sync's pods, and the pods of the apps it keeps equal and of the homes' providers | the home sync's way to those apps, and their way in for it ([app-customization.md §2.3](../guides/app-customization.md)) |
+| `porter`, `porter-target-*` | the tenant's porter's pods, and the pods of the file homes | the file dialog's way to the tenant's file home, and the home's way in for it ([app-customization.md §2.3](../guides/app-customization.md)) |
 | `kernel-access-<app>` | the app's pods | Egress to each store the profile declares, on that store's port, and to the model gateway for `requires.services.llm` ([security/design.md §2.6](../security/design.md)) |
 | the app's in-app policy | the app's pods | the programs of one app reach each other |
 | `component-<app>` | the app's pods | the egress rules of `requires.privileges.egress` that were granted by name on the install. A declared privilege nobody granted opens nothing |
 | a contract's policies | consumer and provider of an `IntegrationBinding` | the path between two apps that share a contract, as far as the `AppGrant` allows |
 | the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared cache (Valkey) through `kernel-access-<app>` instead |
+
+A component that is told the realm's issuer
+(`valueMapping.platform.issuerKey`) and is handed no token by an exposure of
+its own has one more rule in `component-<app>`: the edge Service's pods on
+the port its https port forwards to, where the issuer answers from inside the
+cluster. It fetches the realm's signing keys there; nothing else of the edge
+namespace is opened.
 
 A component that starts runs (`requires.services.runs`) has two more:
 `component-<app>` opens the way to the dispatcher's pods on its port, and
@@ -80,7 +89,7 @@ A component that starts runs (`requires.services.runs`) has two more:
 for runs, on the port its callback Service sends to (§2.1).
 
 Network rules only ever add: a pod the baseline selects cannot be closed again
-by another policy, which is why an adapter's pods are left out of the baseline
+by another policy, which is why a bridge's pods are left out of the baseline
 instead of being narrowed afterwards.
 
 What follows for an app that believes the identity headers: another app of the
@@ -102,7 +111,7 @@ a pod from any other account (`gentian-run-pods`).
 | `action-<name>` | the pods of runs of that installed action | the egress rules of the action's `requires.privileges.egress` that were granted on its install |
 | `caller-<app>` | the pods of runs that component started | the component's pods in `tenant-<t>`, on the port its callback Service sends to |
 
-No rule reaches an adapter, an engine, a store or the kernel: what a run needs
+No rule reaches a bridge, an engine, a store or the kernel: what a run needs
 of them it asks of the component that started it. A run of a component's own
 image is selected by no `action-<name>` policy and has no egress beyond its
 caller.

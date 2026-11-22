@@ -18,9 +18,10 @@ This document describes identity, roles, and access control in Gentian OS.
 
 ## 1. Identity topology (Keycloak-native)
 
-**Keycloak + OpenFGA** are the identity authority. Identity is
-**Keycloak-native per tenant** — each tenant realm is the authoritative
-user and group store for that organization.
+**Keycloak** holds identity and **OpenFGA**, the rights store, holds who may
+do what. Identity is **Keycloak-native per tenant**: each tenant realm is the
+authoritative store of that organization's accounts. A realm holds no right:
+no group of it grants anything, and no token carries a `groups` claim (§1.2).
 
 ### 1.1 Realms and login
 
@@ -28,9 +29,9 @@ user and group store for that organization.
 |---|---|
 | `master` | Keycloak operator CLI only |
 | `kernel` | The platform's administrators, and the platform tenant's clients |
-| `<tenant>` | Authoritative user/group store for that tenant; per-app OIDC; **where tenant members authenticate** |
+| `<tenant>` | Authoritative store of that tenant's accounts; per-app OIDC; **where the tenant's people authenticate** |
 
-- **Members and tenant admins** are stored, and sign in, in the **tenant realm** — each has its own `Cookie → forms` browser flow, so there's no brokering on the sign-in path.
+- **A tenant's people, its administrators among them,** are stored, and sign in, in the **tenant realm** — each has its own `Cookie → forms` browser flow, so there's no brokering on the sign-in path.
 - The canonical, bookmarkable entry point is the tenant's desktop, **`https://desktop.<tenant>.<KERNEL_DOMAIN>/`** (on a single-tenancy cluster, `https://desktop.<KERNEL_DOMAIN>/`, §1.1a): the edge sends the browser to the tenant realm's form, which asks for email and password together.
 - What the cluster's bare domain does (the apex; `www` leads where it does) depends on the cluster's tenancy mode (§1.1a). On a **multi-tenancy** cluster it is the **concierge**, a page the platform tenant publishes with no session in front of it. It asks for the email only and sends the browser to the desktop of the workspace the address belongs to (`@<tenant>.<KERNEL_DOMAIN>`, `@<KERNEL_DOMAIN>` for the platform's own people, or a tenant's custom domain); an address it cannot place is asked for the workspace's name. It asks the server nothing about accounts, and hands the address on as `login_hint`. On a **single-tenancy** cluster nobody is asked anything: the bare domain leads to the one user tenant's desktop.
 - **The edge keeps the session**, not the app and not the desktop: on every host behind a session the Gateway runs the code flow against the zone's client (`gentian-edge-<zone>`), keeps the tokens in encrypted, host-scoped, `SameSite=Lax` cookies, renews them with the refresh token, and only then asks the bouncer whether this person may reach the host. The order, what the bouncer is shown and what it refuses are in [routing.md §4.1](routing.md).
@@ -130,19 +131,19 @@ What sign-up changes, and only in that tenant's realm:
   made for by the authentication session, so an answer serves one sign-up.
   The flow is the tenant's own (`gentian-registration`), since Keycloak
   refuses to add an execution to its built-in one.
-- **An account made that way is a member of nothing.** It is in none of
-  the tenant's groups, so it holds no relation on the platform: the bouncer
-  refuses it the desktop and every app, the director and the usher refuse
-  every tenant route, and a grant of an app to every member does not reach
-  it. The usage statistics report counts the members of such a tenant, not its
-  realm's accounts. Making such an account a member is an administrator
-  putting it in a group, as for anybody.
+- **An account made that way holds nothing.** It holds no position of the
+  tenant, so it holds no relation on the platform: the bouncer refuses it
+  the desktop and every app, the director and the usher refuse every tenant
+  route, and an app given to the position User does not reach it. The usage
+  statistics report counts the holders of User in such a tenant, not its
+  realm's accounts. Making such an account a person of the tenant is an
+  administrator giving it a position, as for anybody.
 - **Its people can be sent home instead** (`spec.signUp.home`, an https
   address such as a website's account page). The tenant's bare domain then
   redirects there rather than to the desktop, and the bouncer answers a
   browser the store refuses at the tenant's desktop with a redirect there
   rather than the refusal page. It grants nothing: the request reaches no
-  backend, and members still reach the desktop.
+  backend, and the tenant's people still reach the desktop.
 
 - **The administrator's account carries its login as its address,
   recorded as verified.** The realm refuses an account without an address,
@@ -153,29 +154,31 @@ What sign-up changes, and only in that tenant's realm:
   is the login. The registrar refuses that (`422`).
 
 What it does not change: the realm's administrators, its edge client and
-its groups are as in every tenant; the tenant's own people are still
+its positions are as in every tenant; the tenant's own people are still
 invited; and the registrar lists every account of the realm, which is how
 staff look after the customers' accounts.
 
 ### 1.1c Brokering: people of another realm signing in
 
 A realm may let people of another realm — another tenant here, or a tenant of
-another cluster — sign in with their own account, mapped into groups by
-where they come from. It is Keycloak's identity brokering, configured by an
-administrator in its console, not composed by the platform:
-[identity-brokering.md](../guides/identity-brokering.md). The sign-in page shows
+another cluster — sign in with their own account. People of another tenant
+of the same cluster are declared on both tenants (`spec.signInFrom`,
+`spec.signInTo`); the operator gives each person who arrives the positions
+the sign-in names, `user` or positions the tenant declares, never an
+administrator's. A realm of another cluster is Keycloak's identity
+brokering: [identity-brokering.md](../guides/identity-brokering.md). The sign-in page shows
 every provider not set to *Hide on login page*; the platform's own (`kernel`,
 `vouch-*`) are, and so stay off it. The one brokering the platform composes
 is the platform's administrators entering a tenant, below.
 
 #### Cluster roles held by name
 
-The kernel realm holds the platform's administrators (§1.1). Two cluster
-roles are held by a group of that realm (§1.2): `admin` and `breakGlass`
-(`spec.platformRoles`). Every other cluster role is held by a person the
-cluster's administrator names on the Cluster claim, each keeping their own
-account in their tenant's realm -- the kernel realm for the platform tenant's
-people.
+Every cluster role is held by a person the cluster's administrator names on
+the Cluster claim, each keeping their own account in their tenant's realm --
+the kernel realm for the platform tenant's people. No group of any realm
+holds one. While the claim names no `admin`, the account the install made
+(`admin@<KERNEL_DOMAIN>`) holds it, so a cluster is never administered by
+nobody.
 
 ```yaml
 spec:
@@ -193,6 +196,8 @@ spec:
 
 | Role | Relation | Who may be named | Scope |
 |---|---|---|---|
+| `admin` | `admin` (`can_configure`, `can_deploy_tenant`) | a person of the platform tenant | `cluster` |
+| `breakGlass` | `break_glass` (`can_set_admission`, `can_edit_raw`) | a person of the platform tenant, with a reason and until a time | `cluster` |
 | `securityOfficer` | `security_officer` (`can_approve`) | a person of the platform tenant, or an administrator of another tenant | `cluster` |
 | `auditor` | `auditor` (`can_audit`) | the same | `cluster` |
 | `serviceAdmin` | `service_admin` (`can_operate_system`) | a person of the platform tenant | `cluster` |
@@ -210,13 +215,12 @@ administrator for the purpose -- and the entry names the tenant, which has to
 be stated. Keyed like every entry, one account audits one tenant. A person of a tenant other than the platform's must be one of its
 administrators: a tenant's administrators can take over any account of their
 realm, so a role held there is in their hands too, and only approving and
-reading are acceptable for that. `admin` and `breakGlass` are never held by
-name. An entry is keyed by role, tenant and subject, which outlives a changed
+reading are acceptable for that. An entry is keyed by role, tenant and subject, which outlives a changed
 address; `username` and `email` say who it is to a person reading the claim,
 `reason` why they hold it. An entry whose `expiresAt` has passed grants
 nothing: the operator projects no tuple for it and requeues at the next
-expiry. Nor does the entry of a person of another tenant while they are not
-in its `admins` group as the store holds it: the entry stays in the claim,
+expiry. Nor does the entry of a person of another tenant while they do not
+administer it as the store holds it: the entry stays in the claim,
 the operator logs once that it is not in effect, and the role holds again
 once they are an administrator (at the next projection, at most ten minutes
 on). The director's list says of each entry that is not in effect why
@@ -226,12 +230,12 @@ The cluster's administrator writes an entry through the director
 (`can_configure`), from the command line
 (`kubectl gentian platform-roles holders add <role> <tenant> <login> --reason <why> [--expires <RFC 3339>] [--scope tenant:<t>]`)
 or from the platform console, whose picker lists the candidates -- every
-person of the platform tenant and the members of each other tenant's `admins`
-group, read by the registrar across the realms it holds a credential for,
+person of the platform tenant and the administrators of each other tenant,
+read by the registrar across the realms it holds a credential for,
 under `can_configure` on the cluster
 (`GET /v1/clusters/{c}/role-candidates`). The director refuses an entry
-without a reason, one already expired, and a person of another tenant who is
-not in its `admins` group as the store holds it.
+without a reason, one already expired, and a person of another tenant who
+does not administer it as the store holds it.
 
 **The tuple names the realm.** The operator writes each entry into the graph
 directly, with the cluster's other role tuples and declaratively like them:
@@ -254,9 +258,16 @@ Their realm's sign-in policy is the one that protects the role.
 cluster's administrator manages the kernel realm's people, so the registrar's
 guard (`ErrProtected`) refuses every write to a person of the platform tenant
 the claim names -- their names, address, whether they may sign in, removal,
-second factor, mailed password links, activation and vouching links -- as it
-does for the members of the `admin` and `breakGlass` groups. The cluster's
-administrator cannot take over the security officer's account.
+second factor, mailed password links, activation and vouching links. The
+cluster's administrator cannot take over the security officer's account.
+
+**The cluster's own tools read the roles from the token.** The vault, the
+Kubernetes API's proxy, Argo CD and Grafana cannot ask the rights store, so
+the kernel realm's tokens for them carry `gentian_cluster_roles`: the
+cluster roles the person holds, by the model's names (`admin`, `auditor`,
+...). The platform's mapper in Keycloak asks the store for every token
+(§1.8). A role that is taken away stays in a token already issued until it
+expires.
 
 #### The platform's administrators entering a tenant
 
@@ -270,15 +281,14 @@ switch *Platform administrators may enter this tenant* on the tenant
 console's *Security* screen. When it is on, the tenant's realm composes the
 identity provider `kernel`, and the kernel realm the client `broker-to-<t>`
 it authenticates to, by the JWT the tenant's realm signs, checked against its
-published keys -- no secret crosses. The provider requires the `groups` claim to name
-`gentian:platform:admin` (no other kernel account gets an account in the
-tenant through it), and two mappers of one kind put whoever arrives into
-`gentian:tenant:<t>:admins` and `gentian:tenant:<t>:platform-admins` from
-that claim, re-evaluated at every sign-in (sync mode force): a person who
-leaves the platform group is out of both at their next sign-in through it.
-The second group grants nothing in the tenant -- no role in the kernel
-store, nothing on the desktop or in an app; it exists so that an assertion
-towards a partner can say the person is a cluster administrator
+published keys -- no secret crosses. The provider requires the token's
+`gentian_cluster_roles` claim to name `admin`, so no other kernel account
+gets an account in the tenant through it. The realm tells the operator that
+the person arrived, and the operator gives the account the position Tenant
+administrator; it takes the position back from everyone who was given it
+this way when the switch goes off. The realm tells after the sign-in, so the
+first page of a person's first arrival may be refused. An assertion towards
+a partner says such a person is a cluster administrator
 ([partners.md §2](partners.md)). The person arrives as
 a new account of the tenant's realm, under Keycloak's own first-broker-login
 flow; an address the realm already has is linked only once its owner confirms
@@ -291,44 +301,70 @@ lets the cluster's administrators act on the tenant through the director,
 this one lets them sign in to it, and each is set and withdrawn on its own.
 
 What a platform administrator is told when they enter a tenant this way is
-what any tenant administrator sees; the account they get holds `admins`,
-like every administrator's (§1.3), and `platform-admins`, which adds
-nothing to it.
+what any tenant administrator sees: the account they get holds the position
+Tenant administrator, like every administrator's (§1.2).
 
-### 1.2 Group taxonomy
+### 1.2 Roles and positions
 
-Gentian uses explicit Keycloak group names for platform roles, tenant
-membership, and access to each app:
+Rights have two layers, both in the rights store
+(`authz/model/v1/model.fga`).
 
-| Group | Purpose |
-|---|---|
-| `gentian:platform:admin` | The platform administrator. The Cluster claim names the group that holds each of the two group-held platform roles (`spec.platformRoles`); this is the default for `admin` |
-| the group the claim names for `breakGlass` | Break-glass; nobody holds it unless the claim names a group. Every other cluster role is held by name (§1.1c) |
-| `gentian:tenant:<t>:members` | All workspace members |
-| `gentian:tenant:<t>:admins` | Tenant IT admins. Carries the group attribute `gentianPartnerRole: tenant-admin`, which an assertion towards a partner reads and nothing else does |
-| `gentian:tenant:<t>:platform-admins` | The platform's administrators while they are in the tenant through `kernel` (§1.1c), filled and emptied at every sign-in like `admins`. Grants nothing: no tuple in the kernel store, nothing on the desktop or in an app. Carries `gentianPartnerRole: cluster-admin`, for the partner assertion alone |
-| `gentian:tenant:<t>:app-admins` | The App Admin role: who administers the tenant's apps. One group for the whole tenant, not one per app (`internal/keycloak/groups.go`); it is the one group an app's own administrator role is derived from, by the profile's sync Job (§1.8) or by the sign-in sidecar (§1.11) |
-| `gentian:tenant:<t>:app:<profile>` | Access to one installed app (§1.6) |
+**A role** is what a person may do on one thing: a tenant, an app, or an
+add-on, which is an app of its own.
 
-Membership reaches **OpenFGA** as events: Keycloak's event listener posts signed statements to the
-operator, which writes them as `group#member` tuples (`internal/controller/membership_listener.go`).
-Nothing polls Keycloak for it. A tenant's realm can speak only for that tenant's groups
-(`internal/membership`). The front door asks `can_use` on an app
-([routing.md §4.1](routing.md)).
-
-### 1.3 Roles: member vs administrator
-
-Mutually exclusive roles — a tenant admin account must not double as a
-day-to-day app user:
-
-| Role | Typical groups | Desktop |
+| Role | On a tenant | On an app or add-on |
 |---|---|---|
-| **Member** | `members`, optional `app:*` | User app tiles only |
-| **Tenant admin** | `admins` | Admin Console (Users, Groups, Notifications) — no app tiles |
-| **Perimeter approver** | `admins`, named on the Cluster claim (§1.1c) | Approves what the tenant publishes to the internet (`can_expose`) and its egress beyond the baseline (`can_approve_privilege`), and nothing else beyond the tenant admin's. A tenant administrator the cluster's administrator names `perimeterApprover`; a perimeter approver of the platform tenant approves for every tenant, and so does the platform admin, by default ([security/design.md §2.14](../security/design.md)) |
-| **Platform admin** | `gentian:platform:admin` | Admin Console (cross-tenant during bootstrap) |
+| `user` | a person of the tenant: enters it, sees its desktop | uses the app |
+| a declared role | | what the app's profile declares between the two (`spec.roles.declared`), such as a sales manager |
+| `admin` | administers the tenant: people, apps, settings | administers the app; holds every other role of it |
 
-Provisioning is via the [Gentian Admin Console](admin-console.md).
+`admin` is the highest role and includes all others, so an app always has
+somebody who can configure it. A role on an add-on lets a person into its
+base app, and the base's administrator administers its add-ons.
+Administering a tenant is not administering its apps.
+
+**A position** is a named set of roles a kind of person holds.
+
+| Position | Holds |
+|---|---|
+| User (`user`) | `user` on the tenant, and `user` on each app given to it. Every person of the tenant holds it |
+| App administrator (`app-administrator`) | `admin` on every installed app |
+| Tenant administrator (`tenant-administrator`) | `admin` on the tenant, and no role on any app |
+| a tenant's own (`spec.positions`) | the roles it names, and those of the positions it includes: an executive includes the sales manager |
+
+A person is given positions, and may be given a single role beside them as
+a visible exception. An app is given at install to the positions chosen
+(`spec.apps[].positions`; `defaultGrant` is the position User).
+
+**Who writes what.** What a position is, is declared in git with the tenant
+and written by the director as a commit. Who holds a position or a role is
+in the rights store alone: a tenant's administrator gives and takes it in
+the administration console, through the registrar, and the operator writes
+it -- the operator is the store's one writer. A tenant's last administrator
+cannot lose the position. The tenant's first administrator is given it by
+the operator, once.
+
+**Who administers gives a second factor.** The account of whoever
+administers a tenant or the cluster carries a mark the realm's sign-in flow
+reads (`gentianRequiresMFA`). The operator writes it from the rights store
+and takes it off anybody else; the person can neither see nor change it.
+
+**How rights are checked.** The front door asks `can_use` on an app for
+every request ([routing.md §4.1](routing.md)); the platform's own services
+ask the store for each call ([authorization.md](authorization.md)). What a
+person holds, and through which position, is shown on the console's *Access*
+screen.
+
+### 1.3 What each kind of person sees
+
+| Who | Holds | Desktop |
+|---|---|---|
+| **A person of the tenant** | User, and often a position of the tenant's own | The tiles of the apps they hold a role on |
+| **Tenant administrator** | Tenant administrator | The administration console; an app's tile only with a role on that app |
+| **Perimeter approver** | Tenant administrator, and named on the Cluster claim (§1.1c) | Approves what the tenant publishes to the internet (`can_expose`) and its egress beyond the baseline (`can_approve_privilege`), and nothing else beyond the tenant administrator's. A perimeter approver of the platform tenant approves for every tenant, and so does the cluster's administrator, by default ([security/design.md §2.14](../security/design.md)) |
+| **Cluster administrator** | `admin` on the cluster, by name (§1.1c) | The platform console |
+
+People are invited and given positions in the [administration console](admin-console.md).
 
 ### 1.4 Bootstrap credentials
 
@@ -423,38 +459,59 @@ Keycloak answered — the HTTP status and its message, on one line, with
 anything that looks like an address or a link removed — and logs it as a
 warning.
 
+### 1.4a A person's own account
+
+The desktop's account panel holds no right of its own. It relays the person's
+token to the registrar, which acts on the token's subject and nobody else,
+with a token of the tenant's realm only (`internal/registrar/account.go`):
+
+| What | Route |
+|---|---|
+| Read names, address, username, second-factor state | `GET /v1/tenants/{t}/account` |
+| Change first and last name | `POST /v1/tenants/{t}/actions/update-own-profile` |
+| List sessions, the caller's own marked | `GET /v1/tenants/{t}/account/sessions` |
+| End one session, or every one but the caller's | `POST …/actions/end-own-session`, `…/actions/end-own-other-sessions` |
+| Device passwords | [bridges.md §4.2](bridges.md) |
+
+- **The address is not changed here.** It is where a password link and a
+  second-factor link are sent, so whoever could change it could take the
+  account over; the tenant's administrators change it (*Members*).
+- **The password is not changed here.** The realm's own pages do that: at
+  sign-in, and through the link *Forgot password* or an administrator sends.
+- A holder of a platform role is not renamed through the registrar (§1.1c);
+  ending their own sessions is allowed.
+- Keycloak's own account API is not used: it takes only a token made out to
+  its `account` client, and no token of the edge is.
+
 ### 1.5 User attributes
 
 | Attribute | Purpose |
 |---|---|
 | `email` / `username` | Primary login id (email) |
 | `gentian.inviteEmail` | Secondary email for invite, password reset, recovery |
+| `gentianRequiresMFA` | The mark the sign-in flow reads: this account gives a second factor (§1.2). Written by the operator; administrators of the realm alone see it |
 
 ### 1.6 App access and what the desktop shows
 
-Who may use an installed app is membership of the app's group,
-`gentian:tenant:<t>:app:<profile>`, in the tenant's realm. There is no other
-grant, and nothing a store states gives access.
+Who may use an installed app is whoever holds a role on it (§1.2). There is
+no other grant, and nothing a store states gives access.
 
-- **The group** is created with the install, one per installed app and one
-  per activated addon. A tenant's administrator puts people in it, in the
-  administration console. An app installed for everyone
-  (`Tenant.spec.apps[].defaultGrant`) has its current members added once, and
-  is preselected when a person is invited later. That leaves out the tenant's
-  administrators, who are given such an app by hand; a placed app includes them.
-- **The model.** The operator writes, for each installed app, the tuple that
-  makes the group's members `entitled` on `app:<tenant>/<profile>`
-  (`internal/director/authz/apps.go`). `can_use` is *entitled, and not an
-  administrator of the tenant*; `can_launch` is `can_use`
-  (`authz/model/v1/model.fga`). An app with activated addons is entered
-  through the addons' groups, not its own.
+- **Giving an app.** At install the tenant's administrator chooses the
+  positions that get the app (`Tenant.spec.apps[].positions`); each holds
+  `user` on it. A single person is given a role on the app directly, in the
+  administration console.
+- **The model.** The operator writes each installed app, its add-ons and
+  the roles its profile declares into the store
+  (`internal/director/authz/apps.go`), and each position's roles
+  (`positions.go`). `can_use` is holding any role on the app or on one of
+  its add-ons; `can_launch` is `can_use`; `can_administer` is `admin`
+  (`authz/model/v1/model.fga`).
 - **The front door** asks `can_use` on every request to the app's host
   ([routing.md §4.1](routing.md)).
 - **The desktop** shows the tiles the usher answers for the signed-in person:
   each tile names a relation and an object, and the person holds it or the
   tile is not listed. An app's tile asks `can_launch` on the app; an
-  administration tile asks `can_administer` on the tenant. Nothing reads
-  groups out of a token to decide this.
+  administration tile asks `can_administer` on the tenant.
 
 ### 1.7 OIDC packs (tenant realms)
 
@@ -466,14 +523,12 @@ catalog of the whole cluster may bring one.
 A pack is looked up by the profile's `requires.services.identity.oidc.clientId`,
 or by `oidcPackRef` where that is set. For an app with a pack the tenant's
 identity provisioning runs a Job that creates the client, the scope and its
-mappers in the **tenant realm** and maps the pack's `entitlementGroup` (the
-app's group, §1.6) to its `clientRole`, so that the app's tokens carry the
-role for people who were given the app. An app without a pack gets its client
+mappers in the **tenant realm**. An app without a pack gets its client
 rendered with its release by the operator.
 
 A pack with `serviceClient: true` registers a confidential client for a
-service that only validates tokens (`gentian-dovecot`); it has no scope, role
-or group.
+service that only validates tokens (`gentian-dovecot`); it has no scope or
+role.
 
 The tenant realm keeps Keycloak's built-in `browser` flow, so it
 authenticates its own people with a credential form. A tenant realm carries
@@ -481,20 +536,42 @@ the identity provider `kernel` only where the tenant switched it on
 (`spec.platformAccess.adminsEnter`, §1.1c), and then for the platform's
 administrators alone; its own people never reach it through the kernel realm.
 
-### 1.8 Provisioning accounts in apps
+### 1.8 Roles inside apps
 
 The platform does not create, change or remove a person's account in an app.
 An app makes the account when the person first signs in to it, from the token
 or assertion of that sign-in. There is no event bus and no SCIM delivery.
 
-One thing is synchronized: **who administers an app**. A profile may declare
-the role an administrator holds in the app and a Job that applies it
-(`spec.hooks.provisioning.privilegedRole`, `.syncJob`). The operator resolves
-the members of `gentian:tenant:<t>:app-admins`, hands the list to the app's
-own script in a Job in the tenant's namespace, and runs it again when the
-membership changes (`internal/controller/app_privilege_reconciler.go`,
-`internal/provisioning/privilege`). The script speaks the app's protocol; the
-kernel knows none.
+What an app is told is **which roles the person holds on it**. A profile
+declares what each role is called inside the app (`spec.roles`: `user`,
+`admin`, and the declared roles, each with its in-app names); an add-on
+declares its own, and they reach the app it is activated in.
+
+- **The sign-in token.** The platform's mapper in Keycloak
+  (`gentian-app-roles`) asks the rights store, through the usher, for every
+  token it writes for the app, and writes two claims: `gentian_app_roles`
+  (or the claim the profile names), the in-app names of the roles held, and
+  the same name followed by `_mapped`, every in-app name the platform
+  decides. The app gives the first and takes the rest of the second; what
+  is in neither is the app's own. A client with no in-app names carries the
+  roles in the platform's names. When the store cannot be asked, a sign-in
+  fails; a renewed token keeps the roles of the one before.
+- **An app that cannot read a token.** The operator hands the app's
+  administrators and users, as the store names them, to the profile's sync
+  Job (`spec.hooks.provisioning.syncJob`) in the tenant's namespace, and
+  runs it again when what a person holds changes
+  (`internal/controller/app_privilege_reconciler.go`). An app behind the
+  sign-in sidecar reads the roles from the signed answer (§1.11).
+- **A role that is taken away.** The front door stops a person who holds no
+  role on the app at their next request. For a role taken while another
+  stays, the operator ends the person's sessions in the realm; every app
+  that is told of a sign-out (§1.12) drops its own, and the next sign-in
+  carries the roles as they are. An app that is not told keeps the role
+  until the person signs in to it again. A role that is given takes effect
+  at the next sign-in.
+
+The mapper is an internal interface of Keycloak and is the platform's to
+keep working across its releases.
 
 ### 1.9 Tenant identity provisioning sequence
 
@@ -502,8 +579,7 @@ A tenant's realm is provisioned through the `tenant-default` Composition:
 partly as `provider-keycloak` resources it declares, partly as Jobs that call
 the Keycloak Admin API. The operator builds the Jobs' manifests
 (`internal/controller/identity_reconciler.go`, `keycloak_*.go`, helpers in
-`internal/keycloak/shell_helpers.go`; group names in
-`internal/keycloak/groups.go`), hands them to the Composition in a ConfigMap,
+`internal/keycloak/shell_helpers.go`), hands them to the Composition in a ConfigMap,
 and the Jobs run in `kernel-authentication`.
 
 ```mermaid
@@ -515,7 +591,7 @@ sequenceDiagram
   TR->>KC: realm Job
   KC->>K: create the tenant realm
   TR->>KC: gentian-groups Job
-  KC->>K: ensure members/admins/app-admins/perimeter/app:* groups
+  KC->>K: point the email claim at the username
   TR->>KC: admin Job
   KC->>K: create the tenant admin account, without a password
   opt apps with an OIDC pack, or with SAML
@@ -527,9 +603,9 @@ sequenceDiagram
 
 Job names follow `{purpose}-{tenant}` (e.g. `keycloak-gentian-groups-demo`).
 The reconciler waits for each Job via `waitForProvisioningJob` before
-advancing. The zone's sign-in client (`gentian-edge-<zone>`), the fixed
-groups, scopes and mappers are not Jobs: the Composition declares them. The
-platform tenant adopts the kernel realm and gets only the groups Job.
+advancing. The zone's sign-in client (`gentian-edge-<zone>`), its scopes and
+mappers are not Jobs: the Composition declares them. The platform tenant
+adopts the kernel realm and gets only the `keycloak-gentian-groups` Job.
 
 The mail-server Job (`keycloak-tenant-smtp-<tenant>`) writes the realm's
 `smtpServer` with its password. The Composition declares the same block from
@@ -556,21 +632,20 @@ What is declared and what is a Job:
 | Declared in `tenant-default` | A Job |
 |---|---|
 | The zone's sign-in client (`gentian-edge-<zone>`), its scopes and audience mappers | `keycloak-realm-{tenant}`: creates the realm |
-| The token-exchange client (`gentian-edge-exchange`), the `groups` scope and mapper, the user profile, realm events | `keycloak-gentian-groups-{tenant}`: the tenant's groups, one per installed app included, and their attributes |
-| The four fixed groups (`members`, `admins`, `app-admins`, `perimeter`) | `keycloak-admin-{tenant}`: the tenant administrator's account, without a password |
+| The token-exchange client (`gentian-edge-exchange`), the user profile, realm events | `keycloak-gentian-groups-{tenant}`: the realm's email claim, read from the username |
+| The sign-in flow that asks a marked account for a second factor | `keycloak-admin-{tenant}`: the tenant administrator's account, without a password |
 | The realm's required actions | OIDC client Jobs, for an app whose client has an OIDC pack (§1.7); SAML client Jobs |
 | `gentian-dovecot` and the `mailbox` scope, where the cluster has its own mail server | `keycloak-tenant-smtp-{tenant}`: the realm's mail-server settings, where the cluster has SMTP credentials |
 | The realm itself, adopted by name | |
 | For a tenant people sign up to (`spec.signUp.enabled`): the realm's registration settings, its registration flow with the platform's proof-of-work check, and the binding of the realm to that flow | |
-| For a tenant that lets the platform's administrators enter (`spec.platformAccess.adminsEnter`): the identity provider `kernel` and its mappers into the admins groups (§1.1c) | |
+| For a tenant that lets the platform's administrators enter (`spec.platformAccess.adminsEnter`): the identity provider `kernel` (§1.1c) | |
 | For the platform tenant: per entering tenant the client `broker-to-<t>` in the kernel realm | |
 | A tenant's partners: the partner client and scope, the identity provider `partner-<name>` ([partners.md](partners.md)) | |
 
 An app without a pack gets its OIDC client rendered with its release by the
 operator (`internal/apprender`), not from a Job; the tenant reconciler only
 seeds the client's secret. The platform tenant adopts the kernel realm: it
-gets no realm Job, no administrator Job and no mail-server Job, only its
-groups, and the clients the platform's administrators enter other tenants
+gets no realm Job, no administrator Job and no mail-server Job, and the clients the platform's administrators enter other tenants
 with, which are declared.
 
 **Deleting a tenant.** The operator runs one Job
@@ -693,10 +768,9 @@ way in which a program beside the app can become anybody in it.
    cookie, or a page that puts the session where the app's own page keeps it, and a redirect into
    the app.
 
-**Who administers an app signed in to this way** is who holds the App Admin role: membership of
-`gentian:tenant:<tenant>:app-admins`, given by the tenant's administrator in the admin console
-(*Groups* → *Roles* → `app-admins`). The realm lists it in the signed assertion as the one role of the
-sidecar's client, the sidecar reads it from the signed bytes, and the handler gives or takes the
+**Who administers an app signed in to this way** is who holds `admin` on it (§1.2). The
+platform's mapper lists the person's roles on the app in the signed assertion, as the rights store
+answers them, the sidecar reads them from the signed bytes, and the handler gives or takes the
 app's administrator role at every sign-in. A tenant's administrator is not an app's administrator
 for being that ([app-customization.md §2.3a](../guides/app-customization.md)).
 
@@ -758,7 +832,7 @@ session for them, and each ends differently.
 | **An app behind the sign-in sidecar** whose handler can end a session | the realm posts a signed logout request to the sidecar, inside the cluster; the sidecar checks it and has the handler end the person's sessions in the app | at once, if the sidecar was running when the realm told it |
 | **Any other app session** | nothing the platform does. The app's own lifetime for a session | a sidecar's app: an hour at most. An app with its own client: as long as the app keeps a session |
 
-**When an administrator switches a member off.** There is no Sessions screen and no act that
+**When an administrator switches a person off.** There is no Sessions screen and no act that
 ends somebody's session by hand. What happens:
 
 - The registrar sets the account to disabled at the realm (`update-person`), or deletes it
@@ -769,10 +843,9 @@ ends somebody's session by hand. What happens:
   person signed in only by renewing a five-minute access token against the realm session, so
   every host of the zone stops answering them **within five minutes**, not at once
   (`accessTokenLifespan` in `tenant-default`).
-- For a removed person the rights go as well: the realm's event reaches the operator, the
-  membership entries are deleted, and the front door refuses the next request it asks about.
-  A person who is only switched off keeps their group memberships; what stops them is the
-  realm.
+- For a removed person the rights go as well: the realm's event reaches the operator, what
+  the person held is deleted, and the front door refuses the next request it asks about.
+  A person who is only switched off keeps what they hold; what stops them is the realm.
 - The realm posts no logout notice to the apps for either act, so a session an app holds itself
   is not ended. It is of no use behind the front door, which refuses the request first. A
   credential the app itself issued and accepts on a public entry (`authMode: app`: an app
@@ -820,7 +893,7 @@ cookie. The security side of all of this is [security/design.md §2.15](../secur
 
 | Concern | Where |
 |---|---|
-| People and groups, app access | The administration console, `admin.<tenant domain>`: *Members*, *Groups*, *Apps*. It holds no Keycloak credential: the registrar does, one per realm, and checks the caller against OpenFGA |
+| People, positions and app access | The administration console, `admin.<tenant domain>`: *Members*, *Positions*, *Apps*. It holds no Keycloak credential: the registrar does, one per realm, and checks the caller against OpenFGA |
 | Realm password, session and lockout policy | The console's *Security* screen; a commit by the director (`can_set_policy`), applied by `tenant-default`. There is no other way to set it: the registrar's Keycloak client holds `view-users`, `query-users`, `query-groups` and `manage-users`, and no role over realm settings |
 | Notices to a tenant's people | The console's *Notifications* screen |
 
@@ -834,6 +907,6 @@ IAM does **not** replace the MAC backbone:
 
 - **MAC** — `tenant-{name}` namespace, NetworkPolicy, Kyverno ([security/design.md](../security/design.md))
 - **Identity** — per-tenant Keycloak realm
-- **Authorization** — OpenFGA (ReBAC), fed from Keycloak group membership (§1.2)
+- **Authorization** — OpenFGA (ReBAC): roles and positions (§1.2)
 
 Effective access is the **intersection** of all layers.

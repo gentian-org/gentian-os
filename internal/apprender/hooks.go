@@ -44,7 +44,7 @@ func renderHooks(in *Input, out *Rendered) error {
 	// in the script reaches the container as literal text, and `set -u`
 	// kills it.
 	script := expand(pij.Script, in.placeholders()...)
-	env := hooksEnv(in.Profile)
+	env := hooksEnv(in.Profile, !in.ModelAccessWithheld)
 
 	// The Job runs once, and again only when what it runs changes. Its pod
 	// template is immutable and a finished Job is not deleted (a TTL made it
@@ -185,7 +185,7 @@ func renderHooks(in *Input, out *Rendered) error {
 // cannot carry the sensitive-values keys: Kubernetes drops every key that is
 // not a C identifier, which every hyphenated one is. These names are the
 // documented contract for a script, whatever Helm keys the profile maps.
-func hooksEnv(p *gentianov1alpha1.ComponentProfileSpec) []hooksEnvVar {
+func hooksEnv(p *gentianov1alpha1.ComponentProfileSpec, models bool) []hooksEnvVar {
 	env := []hooksEnvVar{}
 	add := func(set bool, name, key string) {
 		if set {
@@ -219,8 +219,9 @@ func hooksEnv(p *gentianov1alpha1.ComponentProfileSpec) []hooksEnvVar {
 			add(m.PasswordKey != "", "CACHE_PASSWORD", "cache-password")
 		}
 		// The model gateway's record is written only for a profile that
-		// declares requires.services.llm, so only such a profile maps it.
-		if m := vm.LLM; m != nil && hooksDeclaresLLM(p) {
+		// declares requires.services.llm, so only such a profile maps it --
+		// and not while its optional requirement is not met.
+		if m := vm.LLM; m != nil && hooksDeclaresLLM(p) && models {
 			add(m.BaseURLKey != "", "LLM_BASE_URL", "llm-base-url")
 			add(m.APIKeyKey != "", "LLM_API_KEY", "llm-api-key")
 		}

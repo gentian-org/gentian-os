@@ -62,7 +62,7 @@ final class Sender {
         try {
             worker.execute(() -> deliver(payload));
         } catch (RejectedExecutionException full) {
-            LOG.errorf("membership event dropped: %d events are already waiting for the director", QUEUE);
+            LOG.errorf("event dropped: %d events are already waiting for the director", QUEUE);
         }
     }
 
@@ -76,18 +76,18 @@ final class Sender {
                 }
                 if (status / 100 == 4) {
                     // Refused, not unavailable: the same bytes will be refused again.
-                    LOG.errorf("director refused a membership event with status %d; check the signing key and clock", status);
+                    LOG.errorf("director refused a event with status %d; check the signing key and clock", status);
                     return;
                 }
-                LOG.warnf("director answered %d to a membership event (attempt %d)", status, attempt + 1);
+                LOG.warnf("director answered %d to a event (attempt %d)", status, attempt + 1);
             } catch (InterruptedException stop) {
                 Thread.currentThread().interrupt();
                 return;
             } catch (Exception e) {
-                LOG.warnf("membership event not delivered (attempt %d): %s", attempt + 1, e.getMessage());
+                LOG.warnf("event not delivered (attempt %d): %s", attempt + 1, e.getMessage());
             }
         }
-        LOG.error("membership event given up on; the director's comparison with Keycloak will have to find it");
+        LOG.error("event given up on; the next sign-in states it again");
     }
 
     /** Signs "<unix seconds>.<body>" afresh for every attempt: the receiver bounds how old a signature may be. */
