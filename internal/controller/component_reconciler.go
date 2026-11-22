@@ -2248,6 +2248,10 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// tenant takes part in, declared on both tenants (signin_framers.go).
 		Watches(&gentianov1alpha1.Tenant{}, componentsFramedBySignIn(mgr.GetClient()),
 			builder.WithPredicates(signInFramersChanged(r.KernelDomain, r.TenancyMode, r.KernelRealm))).
+		// The domains a tenant trusts for itself answer its apps' egress
+		// (component_preapproved_egress.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsOfTenantAskingForEgress(mgr.GetClient()),
+			builder.WithPredicates(trustedDomainsChanged())).
 		// The edge's public address, which a component granted the internet
 		// reaches from inside through the edge's pods (own_public_address.go).
 		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),
