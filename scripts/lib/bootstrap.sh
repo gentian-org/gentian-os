@@ -2227,6 +2227,40 @@ ensure_claim_release_section() {
     info "claims/cluster.yaml: spec.release added, naming $(gentian_os_ref); the claim declares the cluster's release from here on."
 }
 
+# ensure_claim_names_no_role_group <claim file>
+# A claim that still says which Keycloak group holds a cluster role
+# (spec.platformRoles) has the section taken out, with the comment the
+# scaffold wrote above it: the claim's schema has no such field, so a claim
+# carrying it is refused. Cluster roles are held by name
+# (spec.platformAccess.roleHolders); while nobody is named administrator,
+# the install's account administers.
+ensure_claim_names_no_role_group() {
+    local claim="$1" tmp
+    [[ -f "${claim}" ]] || return 0
+    grep -qE '^  platformRoles: *$' "${claim}" || return 0
+    tmp="$(mktemp)"
+    awk '
+        # The comment block directly above the section, held back until the
+        # line after it shows what it belongs to.
+        /^  #/ { held = held $0 "\n"; next }
+        /^  platformRoles: *$/ { held = ""; skipping = 1; next }
+        skipping && /^    / { next }
+        { skipping = 0; printf "%s", held; held = ""; print }
+        END { printf "%s", held }
+    ' "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
+    rm -f "${tmp}"
+    info "claims/cluster.yaml: spec.platformRoles removed; cluster roles are held by name (spec.platformAccess.roleHolders)."
+}
+
+# preview_claim_names_no_role_group <claim file> -- what
+# ensure_claim_names_no_role_group would do, without doing it.
+preview_claim_names_no_role_group() {
+    local claim="$1"
+    [[ -f "${claim}" ]] || return 0
+    grep -qE '^  platformRoles: *$' "${claim}" || return 0
+    info "would remove spec.platformRoles from claims/cluster.yaml"
+}
+
 # preview_claim_release_section <claim file> -- what ensure_claim_release_section
 # would do, without doing it.
 preview_claim_release_section() {
@@ -3564,11 +3598,13 @@ require_cluster_deployment() {
     if gentian_read_only; then
         preview_claim_catalogue_section "${claim}"
         preview_claim_release_section "${claim}"
+        preview_claim_names_no_role_group "${claim}"
         preview_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
         preview_default_profiles "${cluster}"
     else
         ensure_claim_catalogue_section "${claim}"
         ensure_claim_release_section "${claim}"
+        ensure_claim_names_no_role_group "${claim}"
         ensure_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
     fi
     if [[ -f "${claim}" ]]; then

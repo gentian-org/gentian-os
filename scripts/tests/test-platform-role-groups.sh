@@ -51,6 +51,36 @@ else
     bad "step 0 wrote no Cluster claim" "$(tail -n 20 "${SANDBOX}/scaffold.log")"
 fi
 
+# --- a claim written before ---------------------------------------------------
+# A claim that names a group for a role loses the section and its comment, and
+# keeps everything around it; a second pass changes nothing.
+OLD="${SANDBOX}/old-claim.yaml"
+cat > "${OLD}" <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+spec:
+  # The cluster's own id.
+  clusterUID: abc
+  # Who administers this cluster, by the Keycloak group they are in.
+  platformRoles:
+    admin: gentian:platform:admin
+    breakGlass: gentian:platform:break-glass
+
+  # Where this cluster runs.
+  platform: self-hosted
+EOF
+env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" KERNEL_DOMAIN=k.example \
+    bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
+        ensure_claim_names_no_role_group "$1"; ensure_claim_names_no_role_group "$1"' _ "${OLD}" >"${SANDBOX}/old.log" 2>&1
+is "an earlier claim loses the role groups and nothing else" "$(cat "${OLD}")" "apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+spec:
+  # The cluster's own id.
+  clusterUID: abc
+
+  # Where this cluster runs.
+  platform: self-hosted"
+
 # --- the bootstrap Job --------------------------------------------------------
 # kubectl keeps what is applied from stdin, and answers yes to everything else.
 cat > "${SANDBOX}/bin/kubectl" <<'EOF'
