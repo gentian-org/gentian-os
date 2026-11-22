@@ -374,6 +374,17 @@ porter:
     # Empty: the chart published with image.tag (componentprofile-porter.yaml).
     version: ""
 
+# The liaison: a person's sign-ins at services outside the cluster
+# (internal/liaison). Shipped and placed nowhere: a tenant has one while an
+# app it installed comes with it. Published and pinned as the home sync is.
+liaison:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: liaison
+    # Empty: the chart published with image.tag (componentprofile-liaison.yaml).
+    version: ""
+
 # The concierge: the page on the cluster's bare domain, a component of the
 # platform tenant published from its DMZ. Off by default; the v5 bootstrap
 # turns it on. Like the consoles it comes from gentian-ui as a moving chart

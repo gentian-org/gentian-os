@@ -98,9 +98,21 @@ type EffectiveAccessRow struct {
 }
 
 // Integrations reports one tenant's bindings and grants.
+//
+// A component the platform places (TenantApp.Placed) is the platform's, not
+// the administrator's: its binding is left out wherever the administrator has
+// nothing to decide on it, that is wherever it asks for nothing its grant does
+// not already permit.
 func (s *Service) Integrations(ctx context.Context, tenantName string) (*IntegrationOverview, error) {
-	if _, err := s.getTenant(ctx, tenantName); err != nil {
+	tenant, err := s.getTenant(ctx, tenantName)
+	if err != nil {
 		return nil, err
+	}
+	placed := map[string]bool{}
+	for _, app := range tenant.Spec.Apps {
+		if app.Placed {
+			placed[app.Profile] = true
+		}
 	}
 	ns := client.InNamespace(layout.Tenant(tenantName))
 
@@ -155,7 +167,6 @@ func (s *Service) Integrations(ctx context.Context, tenantName string) (*Integra
 		if info.Capabilities == nil {
 			info.Capabilities = []string{}
 		}
-		out.Bindings = append(out.Bindings, info)
 
 		allowed := granted[b.Spec.Consumer.App][b.Spec.Contract]
 		row := EffectiveAccessRow{
@@ -175,6 +186,10 @@ func (s *Service) Integrations(ctx context.Context, tenantName string) (*Integra
 				row.Ungranted = append(row.Ungranted, want)
 			}
 		}
+		if placed[b.Spec.Consumer.App] && len(row.Ungranted) == 0 {
+			continue
+		}
+		out.Bindings = append(out.Bindings, info)
 		out.EffectiveAccess = append(out.EffectiveAccess, row)
 	}
 

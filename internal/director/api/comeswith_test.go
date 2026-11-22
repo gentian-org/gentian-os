@@ -20,6 +20,7 @@ import (
 	"time"
 
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
 // comingWith is a profile on the cluster that names the apps it comes with.
@@ -285,5 +286,193 @@ func TestATenantAtABuildIsBroughtWhatTheBuildComesWith(t *testing.T) {
 	before := h.tip(t)
 	if n := srv.RunComesWith(context.Background()); n != 0 || h.tip(t) != before {
 		t.Fatalf("a second pass installed %d apps, and the repository moved: %v", n, h.tip(t) != before)
+	}
+}
+
+// A profile the platform ships for the apps that come with it is in no
+// catalog and not in the repository. An app that names it is installed with
+// it all the same, the entry naming no catalog and no build: the cluster
+// holds the profile, at the build the platform is at.
+func TestAnAppBringsAProfileThePlatformShips(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("agents.yaml"): comingWith("agents", "liaison"),
+			// A placed component of the platform is not an app's to bring.
+			dt.CataloguePath("grabby.yaml"): comingWith("grabby", "porter"),
+		})
+	})
+	tom := h.token(t, "tenant-demo", "tom")
+
+	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/agents", tom, "")
+	if code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	if got := fmt.Sprint(out["installedWith"]); got != "[liaison]" {
+		t.Errorf("installedWith = %s; want the liaison", got)
+	}
+	entry := appEntryOf(t, h, "demo", "liaison")
+	if !strings.Contains(entry, "cameWith: agents") {
+		t.Errorf("the liaison's entry does not say what it came with:\n%s", entry)
+	}
+	if strings.Contains(entry, "catalogue:") || strings.Contains(entry, "digest:") {
+		t.Errorf("the liaison is in no catalog and has no build of its own:\n%s", entry)
+	}
+
+	code, out = h.do(t, "POST", "/v1/tenants/demo/apps/grabby", tom, "")
+	if code != http.StatusUnprocessableEntity {
+		t.Fatalf("an app that comes with a placed component = %d %v; want it refused", code, out)
+	}
+	if entry := appEntryOf(t, h, "demo", "porter"); entry != "" {
+		t.Errorf("the porter was installed by an app:\n%s", entry)
+	}
+}
+
+// asking is a profile on the cluster that asks contracts of other apps and
+// may name the apps it comes with.
+func asking(name string, with []string, asks ...[3]string) string {
+	out := dt.ProfileYAML(name)
+	if len(with) > 0 {
+		out += "  comesWith: [" + strings.Join(with, ", ") + "]\n"
+	}
+	if len(asks) > 0 {
+		out += "  integrations:\n"
+		for _, a := range asks {
+			out += "    - contract: " + a[0] + "\n      provider: " + a[1] + "\n      capabilities: [" + a[2] + "]\n"
+		}
+	}
+	return out
+}
+
+// The contracts among an app and the apps that came with it are pre-approved
+// when it is installed: what the app asks of one of them, and what one of
+// them asks of another. A contract with an app the tenant installed itself
+// waits for the administrator, though the app names it in comesWith too.
+func TestContractsAmongAppsThatCameTogetherArePreApproved(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("engine.yaml"): asking("engine", []string{"wiki", "board", "nextcloud"},
+				[3]string{"pages", "wiki", "read, write"}, [3]string{"files", "nextcloud", "read"}),
+			dt.CataloguePath("board.yaml"): asking("board", nil, [3]string{"pages", "wiki", "read"}, [3]string{"files", "nextcloud", "read"}),
+		})
+	})
+	tom := h.token(t, "tenant-demo", "tom")
+
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/engine", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	grants := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grants.yaml")
+	for _, want := range []string{"app: engine", "app: board", "contract: pages", "platform:comes-with", "installed together"} {
+		if !strings.Contains(grants, want) {
+			t.Errorf("the grants do not say %q:\n%s", want, grants)
+		}
+	}
+	if strings.Contains(grants, "contract: files") {
+		t.Errorf("a contract with the tenant's own Nextcloud was pre-approved:\n%s", grants)
+	}
+
+	// Nothing more is written by a pass over a tenant that has it all.
+	before := h.tip(t)
+	if n := h.server().RunComesWith(context.Background()); n != 0 || h.tip(t) != before {
+		t.Fatalf("a pass installed %d apps, and the repository moved: %v", n, h.tip(t) != before)
+	}
+}
+
+// A contract a later build adds among apps that came together is
+// pre-approved by the pass; more of a contract the grant already names is
+// not, so what an administrator narrowed is not widened back.
+func TestAContractALaterBuildAddsAmongThemIsPreApproved(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("engine.yaml"): asking("engine", []string{"wiki", "board"}, [3]string{"pages", "wiki", "read"}),
+		})
+	})
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/engine", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	dt.Commit(t, h.remote, map[string]string{
+		dt.CataloguePath("engine.yaml"): asking("engine", []string{"wiki", "board"},
+			[3]string{"pages", "wiki", "read, write"}, [3]string{"cards", "board", "move"}),
+	})
+	h.server().RunComesWith(context.Background())
+	grants := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grants.yaml")
+	if !strings.Contains(grants, "contract: cards") {
+		t.Errorf("the contract the later build adds is not pre-approved:\n%s", grants)
+	}
+	if strings.Contains(grants, "write") {
+		t.Errorf("a contract the grant already names was widened:\n%s", grants)
+	}
+}
+
+// An app that came with another is uninstalled once the other runs a build
+// that does not name it: not while the app is still on its way to that
+// build. The tenant's own apps and the app itself are left as they are, and
+// a second pass changes nothing.
+func TestWhatABuildNoLongerComesWithIsUninstalled(t *testing.T) {
+	notes := profileNamed("notes", "one")
+	src := catalogues(t, served{"gentian": {"notes": notes}})
+	op := &rolloutsOperator{}
+	h := startSeeded(t, nil, func(remote string) {
+		tenant := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
+		dt.Commit(t, remote, map[string]string{
+			dt.ClaimPath:                 claimWith(gitops.CatalogueSource{Name: "gentian", URL: src.URL + "/gentian"}),
+			dt.CataloguePath("pad.yaml"): dt.ProfileYAML("pad"),
+			dt.TenantPath("demo"):        strings.TrimRight(tenant, "\n") + "\n  - profile: pad\n    cameWith: notes\n",
+		})
+	}, withFetcher(src), withOperator(op))
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/notes", tom, fmt.Sprintf(`{"coordinate":"gentian/notes","digest":%q}`, sha(notes))); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	wiki := appEntryOf(t, h, "demo", "wiki")
+	app := appEntryOf(t, h, "demo", "notes")
+	running := func(runs, phase string) []map[string]any {
+		return []map[string]any{{"tenant": "demo", "profile": "notes", "pinned": sha(notes), "running": runs, "target": sha(notes), "phase": phase, "ready": true}}
+	}
+	srv := h.server()
+
+	// Pinned to the build and not running it yet.
+	op.set(running("", "Rolling"))
+	srv.RunComesWith(context.Background())
+	if entry := appEntryOf(t, h, "demo", "pad"); entry == "" {
+		t.Fatal("the pad went while the app was on its way to the build")
+	}
+
+	op.set(running(sha(notes), "Done"))
+	srv.RunComesWith(context.Background())
+	if entry := appEntryOf(t, h, "demo", "pad"); entry != "" {
+		t.Fatalf("the pad stayed:\n%q", entry)
+	}
+	if got := appEntryOf(t, h, "demo", "wiki"); got != wiki {
+		t.Errorf("the tenant's own wiki was changed:\n%q\nwas\n%q", got, wiki)
+	}
+	if got := appEntryOf(t, h, "demo", "notes"); got != app {
+		t.Errorf("the app itself was changed:\n%q\nwas\n%q", got, app)
+	}
+	if by := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%an|%s|%b", "main"); !strings.Contains(by, "platform:comes-with") || !strings.Contains(by, "no longer comes with") {
+		t.Errorf("the commit does not say what it did:\n%s", by)
+	}
+	before := h.tip(t)
+	if srv.RunComesWith(context.Background()); h.tip(t) != before {
+		t.Fatal("a second pass moved the repository")
+	}
+}
+
+// What another installed app comes with too is not uninstalled: the entry
+// is marked with that app.
+func TestWhatABuildNoLongerComesWithStaysWithAnotherAppThatDoes(t *testing.T) {
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.CataloguePath("suite.yaml"):  comingWith("suite", "board"),
+			dt.CataloguePath("reader.yaml"): comingWith("reader", "pad"),
+			dt.CataloguePath("pad.yaml"):    dt.ProfileYAML("pad"),
+		})
+		tenant := dt.RemoteFile(t, remote, dt.TenantPath("demo"))
+		dt.Commit(t, remote, map[string]string{dt.TenantPath("demo"): strings.TrimRight(tenant, "\n") +
+			"\n  - profile: suite\n  - profile: reader\n  - profile: pad\n    cameWith: suite\n"})
+	})
+	h.server().RunComesWith(context.Background())
+	if entry := appEntryOf(t, h, "demo", "pad"); !strings.Contains(entry, "cameWith: reader") {
+		t.Fatalf("the pad is not the reader's:\n%q", entry)
 	}
 }

@@ -122,6 +122,7 @@ var uiComponents = []struct{ key, chart, base string }{
 var derivedFromImage = [][]string{
 	{"homesync", "chart", "version"},
 	{"porter", "chart", "version"},
+	{"liaison", "chart", "version"},
 }
 
 // NeedLeaderElection keeps one replica applying.

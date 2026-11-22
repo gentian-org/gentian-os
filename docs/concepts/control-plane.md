@@ -1258,6 +1258,29 @@ person's token is in the header `Gentian-Person-Token`.
   network policy opens the confidant's one port to that component alone.
 - Calls: Keycloak's public keys and the vault.
 
+**The liaison**
+
+The platform ships one such component, the liaison (`internal/liaison`,
+[componentprofile-liaison.yaml](../../charts/gentian-os/templates/componentprofile-liaison.yaml)).
+It keeps a person's sign-ins at services outside the cluster:
+
+- A person signs in at a service on the liaison's page,
+  `liaison.<tenant's domain>/connections/`, behind the tenant's sign-in. The
+  liaison registers as a public client at the service (RFC 7591), runs the
+  authorization code flow with PKCE, and keeps what the service hands back
+  with the confidant.
+- A component that was granted the contract `connections` tells the liaison
+  which services there are and asks it for a short credential for one call.
+  The lasting credential never leaves the liaison.
+- It reaches outside services over https. The platform answers that request
+  itself, as it does for every profile it ships. What a tenant's approver
+  answers is each bridge to an outside service: the bridge names the
+  service, and the liaison is told of a bridge only once the bridge's own
+  request was answered.
+
+The platform places it in no tenant. A tenant has a liaison while an app it
+installed names it in `spec.comesWith`.
+
 **If it is unavailable**
 
 A component cannot read or renew what it keeps for a person, so what it does

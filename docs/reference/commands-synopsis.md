@@ -33,6 +33,8 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                  (--identity-file <f> | --passphrase) [--drop-custom-domain]
                                  (the bundle's custom domain is kept unless --drop-custom-domain)
   kubectl gentian tenants delegate-catalogues <name> on|off
+  kubectl gentian tenants delegate-trusted-domains <name> on|off
+                                                            whether the tenant's perimeter approver may keep trusted domains
   kubectl gentian tenants domain <name>                      the domain of its own it is bound to
   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
                                                             (a cluster with many tenants only)
@@ -95,7 +97,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                                the internet has them: present, pending, missing, or held by another record
 
   kubectl gentian apps list --tenant <tenant> [--available]
-  kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
+  kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone] [--approve-egress]
   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>]
@@ -119,6 +121,10 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                     [--acknowledge-main-address-rule] [--yes]
   kubectl gentian exposures list --tenant <tenant>            what the tenant has on the internet
   kubectl gentian exposures withdraw <app-instance> <entry> --tenant <tenant>
+  kubectl gentian trusted-domains list --tenant <tenant>      the domains trusted for this tenant alone
+  kubectl gentian trusted-domains add <domain> --tenant <tenant>
+                                                              an egress request whose hosts are all in trusted domains needs no answer
+  kubectl gentian trusted-domains remove <domain> --tenant <tenant>
   kubectl gentian exposures alias <app-instance> <entry> --tenant <tenant> (--host <name>.<cluster's domain> | --remove)
                                                               a second address for a published entry, directly under
                                                               the cluster's own domain; the cluster's administrator's

@@ -3330,6 +3330,14 @@ spec:
                               description: EndpointKey is the Helm value key for the
                                 integration's service endpoint URL.
                               type: string
+                            homeScopeKey:
+                              description: |-
+                                HomeScopeKey is the Helm value key for the scope the component asks
+                                the tenant's realm a person's token for the home with, for a contract
+                                it calls as the person (spec.integrations[].asPerson). The operator
+                                sets it while the tenant's administrator grants the contract, and
+                                leaves it out otherwise. A name, not a credential.
+                              type: string
                             passwordKey:
                               description: PasswordKey is the Helm value key for the
                                 integration password.

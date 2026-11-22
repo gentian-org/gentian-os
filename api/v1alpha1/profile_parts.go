@@ -1702,6 +1702,13 @@ type IntegrationValueMapping struct {
 	// PasswordKey is the Helm value key for the integration password.
 	// +optional
 	PasswordKey string `json:"passwordKey,omitempty"`
+	// HomeScopeKey is the Helm value key for the scope the component asks
+	// the tenant's realm a person's token for the home with, for a contract
+	// it calls as the person (spec.integrations[].asPerson). The operator
+	// sets it while the tenant's administrator grants the contract, and
+	// leaves it out otherwise. A name, not a credential.
+	// +optional
+	HomeScopeKey string `json:"homeScopeKey,omitempty"`
 }
 
 // OIDCValueMapping maps OIDC provider values to Helm chart keys.

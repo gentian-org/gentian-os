@@ -747,3 +747,24 @@ func TestHomeSyncRules(t *testing.T) {
 	expect(t, "a shared address book", tv.check(t, strings.Replace(tenant, "%s", "shared", 1), ""), "")
 	expect(t, "an address book that is neither", tv.check(t, strings.Replace(tenant, "%s", "everyone", 1), ""), "Unsupported value")
 }
+
+// A trusted domain is a name of lower-case labels, at least two: the
+// tenant's list and the cluster's take one, and refuse what is none.
+func TestTrustedDomainRules(t *testing.T) {
+	tv := loadCRD(t, "gentianos.io_tenants.yaml")
+	tenant := "apiVersion: gentianos.io/v1alpha1\nkind: Tenant\nmetadata: {name: acme}\nspec:\n  displayName: Acme\n  trustedDomains: {delegated: true, domains: [%s]}\n"
+	pv := loadCRD(t, "gentianos.io_platformsecuritypolicies.yaml")
+	policy := "apiVersion: gentianos.io/v1alpha1\nkind: PlatformSecurityPolicy\nmetadata: {name: default}\nspec:\n  trustedDomains: [%s]\n"
+	for _, c := range []struct{ name, domain, want string }{
+		{"a domain", "github.com", ""},
+		{"a name under a domain", "api.eu-1.example.org", ""},
+		{"a bare word", "com", "should match"},
+		{"upper case", "Example.org", "should match"},
+		{"a name with a port", "\"example.org:443\"", "should match"},
+		{"an address", "10.0.0.1", "should match"},
+		{"labels joined by anything but a dot", "examplexorg", "should match"},
+	} {
+		expect(t, "the tenant's list: "+c.name, tv.check(t, strings.Replace(tenant, "%s", c.domain, 1), ""), c.want)
+		expect(t, "the cluster's list: "+c.name, pv.check(t, strings.Replace(policy, "%s", c.domain, 1), ""), c.want)
+	}
+}

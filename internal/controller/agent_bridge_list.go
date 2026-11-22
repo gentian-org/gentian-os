@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -24,6 +25,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 // The list of a tenant's agent bridges, told to the components that may call
@@ -93,6 +95,36 @@ func agentBridgeList(namespace string, bridges []string, profiles map[string]*ge
 	return string(raw), err
 }
 
+// answeredBridges are bridges without the outside tool servers that still
+// wait for an answer to something they ask for. A bridge inside the tenant
+// is held by its own install and answers nobody until it runs. A bridge to
+// an outside server runs nothing of its own: being on the list is what makes
+// its callers, and whoever signs people in for them, reach the server. So it
+// is listed once what its entry asks for was granted or is answered by
+// policy, and not before.
+func answeredBridges(
+	ctx context.Context, c client.Client, tenant *gentianov1alpha1.Tenant,
+	bridges []string, profiles map[string]*gentianov1alpha1.ComponentProfile,
+) ([]string, error) {
+	out := make([]string, 0, len(bridges))
+	for _, name := range bridges {
+		profile := profiles[name]
+		if profile == nil || outsideToolServer(profile) == nil {
+			out = append(out, name)
+			continue
+		}
+		answered, err := answeredEgress(ctx, c, profile, tenant)
+		if err != nil {
+			return nil, err
+		}
+		asked := &gentianov1alpha1.Component{Spec: gentianov1alpha1.ComponentSpec{Privileges: security.TenantGrants(tenant, name)}}
+		if len(security.PendingPrivilegesUnder(profile, asked, time.Now(), answered)) == 0 {
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
 // outsideToolServer is what a bridge's entry says of an outside tool server,
 // or nil where it has none or names no address for it. The schema asks for
 // an https address; it is asked again here, because the list is what makes
@@ -111,6 +143,10 @@ func outsideToolServer(profile *gentianov1alpha1.ComponentProfile) *gentianov1al
 
 func (r *TenantReconciler) ensureAgentBridgeLists(ctx context.Context, tenant *gentianov1alpha1.Tenant, in netpolicy.BuildInput) error {
 	bridges, callers := netpolicy.AgentBridgeRoles(in)
+	bridges, err := answeredBridges(ctx, r.Client, tenant, bridges, in.Profiles)
+	if err != nil {
+		return err
+	}
 	list, err := agentBridgeList(in.Namespace, bridges, in.Profiles)
 	if err != nil {
 		return err

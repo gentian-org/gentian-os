@@ -1,0 +1,101 @@
+{{- /*
+  The liaison (internal/liaison, gentian-os#1227): keeps a person's sign-ins
+  at services outside the cluster. A person signs in at the service on the
+  liaison's page; what the service hands back is kept by the confidant, under
+  that person; a component that was granted the contract `connections` asks
+  the liaison for a short credential for one call. The lasting one never
+  leaves the liaison.
+
+  It is placed nowhere: a tenant has one while an app it installed comes with
+  it (spec.comesWith). It keeps people's secrets, which is why it is of the
+  platform's trust.
+*/ -}}
+{{- if .Values.liaison.enabled }}
+{{- /*
+  The chart is published with the image the operator runs, so it follows
+  image.tag, which Image Updater moves on every build: <branch>-<sha> was
+  published as 0.1.0-<branch>.<sha>, a release X.Y.Z as 0.1.0-vX.Y.Z;
+  anything else follows the moving chart of develop. liaison.chart.version,
+  when set, wins.
+*/ -}}
+{{- $liTag := .Values.image.tag | default "" }}
+{{- $liVersion := "0.1.0-develop" }}
+{{- if regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+$" $liTag }}
+{{- $liVersion = printf "0.1.0-v%s" $liTag }}
+{{- else if regexMatch "^[a-z0-9-]+-[0-9a-f]{7}$" $liTag }}
+{{- $liVersion = regexReplaceAll "^(.+)-([0-9a-f]{7})$" $liTag "0.1.0-${1}.${2}" }}
+{{- end }}
+{{- $liVersion = .Values.liaison.chart.version | default $liVersion }}
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: liaison
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    gentianos.io/profile-name: liaison
+spec:
+  classes: [app]
+  launch: none
+  trustTier: platform
+  version: {{ $liVersion | quote }}
+  package:
+    chart:
+      repository: {{ .Values.liaison.chart.repository | quote }}
+      name: {{ .Values.liaison.chart.name | quote }}
+      version: {{ $liVersion | quote }}
+    valueMapping:
+      platform:
+        issuerKey: auth.issuer
+      integrations:
+        # The credential the consumer of the contract presents.
+        connections:
+          passwordKey: chaperone.key
+    extraValues:
+      fullnameOverride: liaison
+      componentKey:
+        secretName: rights-check-liaison
+      auth:
+        ownAudience: liaison
+  requires:
+    services:
+      # What a service hands back for a person is kept by the confidant.
+      personSecrets: {}
+    # The platform answers this request itself, as for every profile it
+    # ships. Which services are reached is the bridges' to say, and a bridge
+    # is told to the liaison only once its own request was answered.
+    privileges:
+      egress:
+        - name: outside-services
+          reason: >-
+            Reaches the authorization servers of the outside services the
+            tenant's bridges name, over https: to register, to trade a
+            person's sign-in for a credential, to renew it and to give it up.
+          rule:
+            to:
+              - ipBlock:
+                  cidr: 0.0.0.0/0
+                  except: [10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
+            ports:
+              - protocol: TCP
+                port: 443
+  # What the consumer calls: it tells the liaison the outside services and
+  # asks for a credential per call.
+  provides:
+    - name: connections
+      protocol: http-json
+      endpoint:
+        service: liaison
+        port: 8000
+  # The person's own page, behind the tenant's sign-in. The edge hands it a
+  # token of the person made out to the liaison alone.
+  expose:
+    - name: connections
+      surface: gateway
+      authMode: oidc
+      exchangeToken: true
+      subDomain: liaison
+      paths: ["/connections/", "/api/v1/connections/"]
+      backend:
+        service: liaison
+        port: 8000
+{{- end }}

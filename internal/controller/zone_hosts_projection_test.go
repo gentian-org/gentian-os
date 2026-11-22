@@ -541,15 +541,8 @@ func TestAnAppThatCallsItsHomeOnlyWhileThePersonIsPresent(t *testing.T) {
 	ib.Spec.Consumer.App = "editor"
 	ib.Spec.Provider.App = "nextcloud"
 	ib.Status.Conditions = []metav1.Condition{{Type: conditionBindingGranted, Status: metav1.ConditionTrue, Reason: "x"}}
-	// The Secret the Composition wrote for the app, with a home's scope left
-	// from a contract it is no longer granted.
-	told := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: VouchingSecretName("editor"), Namespace: ns}}
-	told.Data = map[string][]byte{
-		VouchingClientIDKey:               []byte("vouch-editor"),
-		VouchingHomeKey("calendar-store"): []byte("home-elsewhere"),
-	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&gentianov1alpha1.IntegrationBinding{}).WithObjects(
-		tenant.DeepCopy(), editor, home, comp("editor"), comp("nextcloud"), ib, told,
+		tenant.DeepCopy(), editor, home, comp("editor"), comp("nextcloud"), ib,
 	).Build()
 	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
 	if err := r.projectZoneHosts(context.Background()); err != nil {
@@ -559,20 +552,7 @@ func TestAnAppThatCallsItsHomeOnlyWhileThePersonIsPresent(t *testing.T) {
 		t.Fatalf("vouching profiles = %q", got)
 	}
 
-	// The app is told the scope to ask for, by contract, and nothing of a
-	// home it is not granted.
-	key := types.NamespacedName{Name: told.Name, Namespace: ns}
-	if err := c.Get(context.Background(), key, told); err != nil {
-		t.Fatal(err)
-	}
-	if got := string(told.Data["VOUCHING_HOME_FILE_STORE"]); got != "home-nextcloud" {
-		t.Fatalf("VOUCHING_HOME_FILE_STORE = %q", got)
-	}
-	if _, left := told.Data[VouchingHomeKey("calendar-store")]; left || len(told.Data) != 2 {
-		t.Fatalf("the Secret holds %v", told.Data)
-	}
-
-	// The grant is taken back: the scope's name goes.
+	// The grant is taken back: the realm no longer allows the home's scope.
 	ib.Status.Conditions[0].Status = metav1.ConditionFalse
 	if err := c.Status().Update(context.Background(), ib); err != nil {
 		t.Fatal(err)
@@ -580,11 +560,10 @@ func TestAnAppThatCallsItsHomeOnlyWhileThePersonIsPresent(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Get(context.Background(), key, told); err != nil {
-		t.Fatal(err)
-	}
-	if len(told.Data) != 1 {
-		t.Fatalf("after the grant was taken back the Secret holds %v", told.Data)
+	for _, line := range vouchingProfilesOf(t, r, tenant.Name) {
+		if strings.Contains(line, "home=") {
+			t.Fatalf("after the grant was taken back the realm still allows a home: %q", line)
+		}
 	}
 }
 
@@ -660,8 +639,8 @@ func TestTheVouchingIssuerFollowsTheProfile(t *testing.T) {
 // The porter, which the platform places in every tenant, calls the tenant's
 // file home as the person at its address with nobody asked: no binding is
 // granted to it, and it is projected as a certified app that is present-only
-// is -- no keys, exchanging, narrow, with the home -- and told the scope.
-// Without a file home it is given none.
+// is -- no keys, exchanging, narrow, with the home. Its plan names the scope
+// (porter_plan.go). Without a file home it is given none.
 func TestThePlacedPorterIsGivenTheTenantsFileHome(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
@@ -687,10 +666,8 @@ func TestThePlacedPorterIsGivenTheTenantsFileHome(t *testing.T) {
 		c.Spec.Class = gentianov1alpha1.ComponentClassApp
 		return c
 	}
-	told := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: VouchingSecretName(porter.Name), Namespace: ns}}
-	told.Data = map[string][]byte{VouchingClientIDKey: []byte("vouch-porter")}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		tenant.DeepCopy(), porter, home, comp(porter.Name), comp("nextcloud"), told,
+		tenant.DeepCopy(), porter, home, comp(porter.Name), comp("nextcloud"),
 	).Build()
 	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
 	if err := r.projectZoneHosts(context.Background()); err != nil {
@@ -699,15 +676,7 @@ func TestThePlacedPorterIsGivenTheTenantsFileHome(t *testing.T) {
 	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "porter - 0 - exchange,narrow,home=nextcloud" {
 		t.Fatalf("vouching profiles = %q", got)
 	}
-	key := types.NamespacedName{Name: told.Name, Namespace: ns}
-	if err := c.Get(context.Background(), key, told); err != nil {
-		t.Fatal(err)
-	}
-	if got := string(told.Data["VOUCHING_HOME_FILE_STORE"]); got != "home-nextcloud" {
-		t.Fatalf("VOUCHING_HOME_FILE_STORE = %q", got)
-	}
-
-	// The file home is removed: the porter keeps its client and no scope.
+	// The file home is removed: the porter keeps its client and no home.
 	if err := c.Delete(context.Background(), comp("nextcloud")); err != nil {
 		t.Fatal(err)
 	}
@@ -716,11 +685,5 @@ func TestThePlacedPorterIsGivenTheTenantsFileHome(t *testing.T) {
 	}
 	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "porter - 0 - exchange,narrow" {
 		t.Fatalf("without a file home: %q", got)
-	}
-	if err := c.Get(context.Background(), key, told); err != nil {
-		t.Fatal(err)
-	}
-	if len(told.Data) != 1 {
-		t.Fatalf("without a file home the Secret holds %v", told.Data)
 	}
 }

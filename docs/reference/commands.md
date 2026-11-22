@@ -458,6 +458,7 @@ kubectl gentian apps install xwiki-ce --tenant demo                  # the build
 kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several catalogues serve the name
 kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
+kubectl gentian apps install xwiki-ce --tenant demo --approve-egress # and approves the outbound access it asks for
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
 kubectl gentian apps outdated [--tenant demo]                     # which installs are behind their catalog, and why they stay
@@ -562,6 +563,14 @@ commit, which gives the app to the position User: every person of the tenant
 then has it. It needs the right to grant in the tenant as well as to install.
 Without the flag, the app is given to positions or people in the Admin Console
 ([store-contract.md](../concepts/store-contract.md) §3).
+
+An install first says what the build, and the apps it comes with, ask for
+beyond the tenant: each egress request that would wait for an approval, with
+its hosts and the profile's reason. `--approve-egress` approves those requests
+with the install: each is recorded as a grant by you, as `apps approve` records
+one. It needs the perimeter approver's right in the tenant
+(`can_approve_privilege`); without that right nothing is installed. Without the
+flag the app is installed and waits for the approver, as before.
 
 Inspect app reconciliation:
 
@@ -674,6 +683,24 @@ again, and the platform takes away what the approval gave.
 
 ```bash
 kubectl gentian apps withdraw aluvian-commerce egress/intake --tenant team
+```
+
+A tenant can keep **trusted domains** of its own, beside those the cluster
+trusts (`PlatformSecurityPolicy` `spec.trustedDomains`): an `egress` request
+that names hosts is granted without a further answer when every host is in a
+trusted domain, or under one. The list is the tenant's
+`spec.trustedDomains.domains`. The cluster's administrator says whether the
+tenant keeps one (`spec.trustedDomains.delegated`), and the tenant's
+perimeter approver then adds and removes domains; a list that is not
+delegated answers nothing. The Admin Console's Perimeter page offers the same
+to the perimeter approver.
+
+```bash
+kubectl gentian tenants delegate-trusted-domains team on    # the cluster's administrator: team may keep a list
+kubectl gentian trusted-domains list --tenant team
+kubectl gentian trusted-domains add example.org --tenant team      # covers example.org and every name under it
+kubectl gentian trusted-domains remove example.org --tenant team   # a request it answered waits for an answer again
+kubectl gentian tenants delegate-trusted-domains team off   # the list stays and answers nothing
 ```
 
 What was approved, for every tenant at once, is read with `cluster#can_audit`

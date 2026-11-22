@@ -690,6 +690,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	mergeValues(operatorValues, placed)
+	// The scopes of the homes it calls as the person and is granted, for a
+	// profile that names keys for them (component_home_scope.go).
+	scopes, err := homeScopeValues(ctx, r.Client, comp, profile)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	mergeValues(operatorValues, scopes)
 	// The namespace is closed by default; the component's pods may reach
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.
@@ -2213,6 +2220,10 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
 		Watches(&gentianov1alpha1.Component{}, bridgesOfApp(mgr.GetClient())).
+		// A binding granted or withdrawn changes the home's scope its
+		// consumer is told (component_home_scope.go).
+		Watches(&gentianov1alpha1.IntegrationBinding{}, componentOfBinding(),
+			builder.WithPredicates(homeScopeChanged())).
 		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
 		Watches(&corev1.Secret{}, componentsOfModelCredentials()).
 		// A partner app's Secret arriving or changing rolls its pods
@@ -2237,6 +2248,10 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// tenant takes part in, declared on both tenants (signin_framers.go).
 		Watches(&gentianov1alpha1.Tenant{}, componentsFramedBySignIn(mgr.GetClient()),
 			builder.WithPredicates(signInFramersChanged(r.KernelDomain, r.TenancyMode, r.KernelRealm))).
+		// The domains a tenant trusts for itself answer its apps' egress
+		// (component_preapproved_egress.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsOfTenantAskingForEgress(mgr.GetClient()),
+			builder.WithPredicates(trustedDomainsChanged())).
 		// The edge's public address, which a component granted the internet
 		// reaches from inside through the edge's pods (own_public_address.go).
 		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),

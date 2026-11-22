@@ -1,0 +1,58 @@
+# The liaison (internal/liaison). The platform fills these in from the
+# profile's valueMapping; the defaults start nothing useful on their own.
+# The image is the platform's own: the liaison is one of its programs.
+image:
+  repository: ghcr.io/gentian-org/gentian-os
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+fullnameOverride: ""
+port: 8000
+
+# The tenant's realm, and the audience of the token the front door hands the
+# liaison's page for the person signed in: the liaison's own profile.
+auth:
+  issuer: ""
+  ownAudience: ""
+
+# The Secret the platform keeps the liaison's component key in, with the
+# confidant's address beside it (RIGHTS_CHECK_KEY, CONFIDANT_URL).
+componentKey:
+  secretName: rights-check-liaison
+
+# The key of the contract the chaperone asks for credentials under.
+chaperone:
+  key: ""
+
+# The name the liaison registers under at a service a person signs in at:
+# what the person reads on the service's consent screen.
+clientName: "Gentian workspace"
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 24Mi
+  limits:
+    cpu: 500m
+    memory: 96Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+
+podLabels: {}
+imagePullSecrets: []

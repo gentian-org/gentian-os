@@ -374,7 +374,8 @@ apps an app is installed together with. Installing the app also installs each of
 does not have yet, from the app's own catalog or another one the tenant sees, and marks the entry
 (`cameWith` in the tenant's `spec.apps`); uninstalling the app removes the entries so marked, unless
 another installed app comes with them too. An app the tenant installed itself is left as it is both
-times. The install is refused as a whole when one of them is offered nowhere or cannot be installed
+times. A build that drops a name from the list has the same effect for that one app: once the tenant
+runs the build, the app that came with the earlier one is uninstalled. The install is refused as a whole when one of them is offered nowhere or cannot be installed
 on the cluster. Each of them is otherwise an app of its own: it asks for its own privileges and
 approvals, moves to newer builds by itself, is not uninstalled by hand while the app it came with
 is installed, and keeps its data when removed until it is purged by name. What an app that came

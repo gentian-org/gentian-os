@@ -60,6 +60,7 @@ type Repository interface {
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	InstallWith(ctx context.Context, tenant, with string, apps []gitops.CameWith, defaultGrant *bool, meta gitops.Meta) (gitops.Result, []string, error)
 	UninstallWith(ctx context.Context, tenant, profile string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
+	LetGo(ctx context.Context, tenant, with string, gone []string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
 	Place(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant bool, meta gitops.Meta) (gitops.Result, error)
 	Unplace(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, grants map[string]bool, meta gitops.Meta) (gitops.Result, error)
@@ -138,6 +139,10 @@ type Repository interface {
 	RemoveTenantCatalogueSource(ctx context.Context, tenant, name string, by gitops.TenantCatalogueActor, meta gitops.Meta) (gitops.Result, error)
 	RenameCatalogueSource(ctx context.Context, tenant, old, new string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantCatalogueDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
+	TenantTrustedDomains(ctx context.Context, tenant string) (gitops.TenantTrustedDomains, error)
+	AddTenantTrustedDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	RemoveTenantTrustedDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
+	SetTenantTrustedDomainsDelegation(ctx context.Context, tenant string, delegated bool, meta gitops.Meta) (gitops.Result, error)
 	RoleHolders(ctx context.Context) ([]gitops.RoleHolder, error)
 	SetRoleHolder(ctx context.Context, h gitops.RoleHolder, meta gitops.Meta) (gitops.Result, error)
 	LastAccessReview(ctx context.Context) (*gitops.AccessReview, error)
@@ -163,9 +168,10 @@ type Repository interface {
 	TenantExposureChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
 	SetAppGrant(ctx context.Context, tenant, app string, grant gitops.AppGrant, meta gitops.Meta) (gitops.Result, error)
-	PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, meta gitops.Meta) (gitops.Result, error)
+	PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, reason string, meta gitops.Meta) (gitops.Result, error)
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
+	EgressPolicy(ctx context.Context) (catalogs, trustedDomains []string, err error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	AllowMacWaiver(ctx context.Context, waiver gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	PlatformClusterRoles(ctx context.Context) ([]gitops.ClusterRoleAllowance, error)
@@ -533,6 +539,9 @@ func (s *Server) routes() {
 	// may see what it could install.
 	s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
 	s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries", "can_view", tenantObject, s.listCatalogueEntries)
+	// What one build of an entry asks for, before it is installed
+	// (install_asks.go).
+	s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries/{p}/asks", "can_view", tenantObject, s.catalogueEntryAsks)
 	// A tenant's administrator adding a catalog for their own tenant.
 	// can_install_app, the relation an install asks: a catalog decides
 	// what the tenant can install, and nobody who may not install should be
@@ -675,6 +684,10 @@ func (s *Server) routes() {
 		s.action("POST /v1/clusters/{c}/tenants/{t}/catalogues/{s}/actions/rename", "can_configure", s.clusterObject, s.renameTenantCatalogue)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.delegateCatalogues)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/catalogue-delegation", "can_configure", s.clusterObject, s.undelegateCatalogues)
+		// Whether a tenant may keep its own trusted domains
+		// (trusted_domains.go): the cluster administrator's to say.
+		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/trusted-domains-delegation", "can_configure", s.clusterObject, s.delegateTrustedDomains)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/trusted-domains-delegation", "can_configure", s.clusterObject, s.undelegateTrustedDomains)
 		if s.cfg.Lifecycle != nil {
 			// Import: a bundle in, a tenant out (data-lifecycle.md §4).
 			s.guarded("POST /v1/clusters/{c}/bundles", "can_configure", s.clusterObject, s.uploadBundle)
@@ -794,6 +807,13 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/privileges", "can_view", tenantObject, s.tenantPrivileges)
 	s.guarded("PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.grantPrivilege)
 	s.guarded("DELETE /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.revokePrivilege)
+
+	// The tenant's own trusted domains (trusted_domains.go). A domain on the
+	// list answers egress requests, so adding one is whose answer such a
+	// request is: can_approve_privilege, the perimeter approver's.
+	s.guarded("GET /v1/tenants/{t}/trusted-domains", "can_view", tenantObject, s.tenantTrustedDomains)
+	s.guarded("PUT /v1/tenants/{t}/trusted-domains/{domain}", "can_approve_privilege", tenantObject, s.addTrustedDomain)
+	s.guarded("DELETE /v1/tenants/{t}/trusted-domains/{domain}", "can_approve_privilege", tenantObject, s.removeTrustedDomain)
 
 	// No reads of live state here. What the cluster made of a tenant -- the
 	// state of its apps, its ceiling and usage, the plans it may move to, its
@@ -1122,6 +1142,12 @@ type installRequest struct {
 	// leaves an installed app's entry as it is; a list, empty or not,
 	// replaces what the entry said, defaultGrant included.
 	Positions *[]string `json:"positions,omitempty"`
+	// Approve names egress requests of this build, or of the apps it comes
+	// with, that the caller approves with the install (install_asks.go):
+	// each is recorded as a grant by the caller once the app is installed.
+	// It needs can_approve_privilege on the tenant, and a request the build
+	// does not state refuses the install.
+	Approve []approvedRequest `json:"approve,omitempty"`
 }
 
 // givenTo reads the positions an install names: whether user is among them,
@@ -1262,6 +1288,12 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		c.meta.Decision += " and can_grant " + target
 	}
+	// Approvals given with the install are the perimeter approver's to
+	// give, asked like the rest before anything is fetched or written.
+	approving, ok := s.mayApproveWithInstall(w, r, c, tenant, body.Approve)
+	if !ok {
+		return
+	}
 	// The profile itself (AD-3).
 	//
 	// Before the app entry, not after: an entry naming a profile the cluster
@@ -1331,6 +1363,26 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 
+	// What the build asks for, read before the apps it comes with are
+	// written: an approval of something it does not state is refused with
+	// nothing of the tenant's changed.
+	var asks []askedEgress
+	if len(body.Approve) > 0 {
+		origin := ""
+		if source != nil {
+			origin = source.origin(tenant)
+		}
+		if asks, err = s.installAsks(ctx, tenant, profile, definition, origin, catalogueName); err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if missing := notAsked(body.Approve, asks); missing != "" {
+			s.fail(w, r, http.StatusUnprocessableEntity, "the install approves "+approveSummary(body.Approve)+
+				", and this build and the apps it comes with do not ask for "+missing+". Nothing was installed")
+			return
+		}
+	}
+
 	// The apps it comes with, before its own entry: an app is not installed
 	// without them, and one that cannot be had refuses the install with
 	// nothing of the tenant's changed.
@@ -1348,9 +1400,22 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	res, err := s.cfg.Repo.InstallFor(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, body.Positions, c.meta)
+	if err == nil && definition != nil && len(definition.Spec.ComesWith) > 0 {
+		s.approveAmong(ctx, tenant)
+	}
+	var approved []approvedRequest
+	if err == nil && len(body.Approve) > 0 {
+		approved = s.grantWithInstall(ctx, c, tenant, approving, body.Approve, asks)
+	}
 	if err != nil || retry == nil {
-		if err == nil && len(came) > 0 {
-			out := map[string]any{"status": res.Status, "installedWith": came}
+		if err == nil && (len(came) > 0 || len(body.Approve) > 0) {
+			out := map[string]any{"status": res.Status}
+			if len(came) > 0 {
+				out["installedWith"] = came
+			}
+			if len(body.Approve) > 0 {
+				out["approved"] = approved
+			}
 			if res.Changed {
 				out["commit"] = res.Commit
 			}

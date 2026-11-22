@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -184,5 +185,50 @@ func TestABridgeToAnOutsideToolServerIsListedWithWhatItsEntrySays(t *testing.T) 
 	want := `{"recorder":{"url":"https://tools.example/mcp","app":"recorder","outside":{"tools":[{"name":"list-files","tool":"list_files","version":1,"class":"read","description":"Lists recordings.","inputSchema":{"type":"object","properties":{"limit":{"type":"integer"}}}}],"signIn":{"oauth":{"issuer":"https://tools.example"}}}}}`
 	if raw != want {
 		t.Fatalf("the list:\n%s\nwant:\n%s", raw, want)
+	}
+}
+
+// A bridge to an outside tool server that asks for a way out is on no list
+// until the request is answered: by a grant on the install, or by policy. A
+// bridge inside the tenant is listed as it always was, held or not -- it
+// answers nobody until it runs.
+func TestABridgeToAnOutsideToolServerIsListedOnceItsRequestIsAnswered(t *testing.T) {
+	ctx := context.Background()
+	bridge := []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge}
+	asking := func(p *gentianov1alpha1.ComponentProfile) {
+		fromCatalogue(p)
+		p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
+			Egress: []gentianov1alpha1.EgressRequest{{Name: "recorder", Reason: "calls the tool server", Hosts: []string{"tools.example"}}},
+		}}
+	}
+	outside := bridgeListProfile(bridge, func(p *gentianov1alpha1.ComponentProfile) {
+		asking(p)
+		p.Spec.Package.API = &gentianov1alpha1.APIIntegration{BaseURL: "https://tools.example/mcp"}
+		p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{Ways: []gentianov1alpha1.BridgeWay{{
+			Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents, Callee: gentianov1alpha1.BridgeCalleeOutside,
+			Protocol: gentianov1alpha1.BridgeProtocolMCP, SpeaksAs: gentianov1alpha1.BridgeSpeakerPerson,
+			Outside: &gentianov1alpha1.OutsideToolServer{},
+		}}}
+	})
+	inside := bridgeListProfile(bridge, asking)
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{"recorder": outside, "odoo-bridge": inside}
+	names := []string{"odoo-bridge", "recorder"}
+	c := fake.NewClientBuilder().WithScheme(outgoingScheme()).Build()
+	tenant := rightsTenant("acme")
+
+	got, err := answeredBridges(ctx, c, tenant, names, profiles)
+	if err != nil || strings.Join(got, " ") != "odoo-bridge" {
+		t.Fatalf("before any answer: %v, %v", got, err)
+	}
+	tenant.Spec.Privileges = []gentianov1alpha1.TenantPrivilegeGrant{{
+		Install: "recorder", Privilege: "egress/recorder", Approver: "tom", ApprovedAt: metav1.Now(),
+	}}
+	if got, err := answeredBridges(ctx, c, tenant, names, profiles); err != nil || strings.Join(got, " ") != "odoo-bridge recorder" {
+		t.Fatalf("with the grant: %v, %v", got, err)
+	}
+	tenant.Spec.Privileges = nil
+	tenant.Spec.TrustedDomains = &gentianov1alpha1.TenantTrustedDomains{Domains: []string{"tools.example"}, Delegated: true}
+	if got, err := answeredBridges(ctx, c, tenant, names, profiles); err != nil || strings.Join(got, " ") != "odoo-bridge recorder" {
+		t.Fatalf("with a trusted domain: %v, %v", got, err)
 	}
 }

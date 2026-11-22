@@ -32,7 +32,9 @@ import (
 //
 // A move to another build does the same for what that build comes with, and
 // a pass beside the platform's mover does it for every installed app, so
-// that a tenant already at a build has what the build comes with.
+// that a tenant already at a build has what the build comes with. The pass
+// also uninstalls what came with an app and the build it has arrived at no
+// longer names.
 
 // comesWithWait bounds the writes of an install that brings other apps: the
 // profile of each, their entries and the app's own. They are made whether or
@@ -117,9 +119,14 @@ func (s *Server) bringComesWith(
 
 // findCompanion answers where the build of an app that comes with another
 // is: the catalog the other app is from first, then the others the tenant
-// sees, then the profile the cluster already holds for this tenant. why says
-// in words that it was found nowhere.
+// sees, then the profile the cluster already holds for this tenant. A
+// profile the platform ships for the apps that come with it is in no catalog
+// and not in the repository: the cluster holds it, for every tenant. why
+// says in words that it was found nowhere.
 func (s *Server) findCompanion(ctx context.Context, tenant, name, preferred string) (companion, string, error) {
+	if gitops.BroughtPlatformProfile(name) {
+		return companion{name: name}, "", nil
+	}
 	sources, _, err := s.visibleSources(ctx, tenant)
 	if err != nil {
 		return companion{}, "", err
@@ -199,10 +206,78 @@ func (s *Server) runComesWith(ctx context.Context) (installed int) {
 		return 0
 	}
 	c := call{meta: gitops.Meta{Principal: comesWithPrincipal, Decision: "the build an app is at comes with it"}}
+	rollouts, _, _ := s.clusterSide(ctx)
 	for _, tenant := range tenants {
 		installed += s.bringToTenant(ctx, c, tenant)
+		s.letGo(ctx, c, tenant, rollouts)
 	}
 	return installed
+}
+
+// letGo uninstalls, in one tenant, the apps that came with an app and that
+// the build the app is at no longer names. Their data stays, as after any
+// uninstall. One that another installed app comes with too stays and is
+// marked with that app.
+//
+// Only once the app has arrived: the operator reports that it runs the build
+// it is pinned to. A move under way may still be rolled back to the build
+// that names the app, and a cluster that cannot be asked says nothing.
+// An app with no pin runs the profile the cluster holds, which is read as it
+// is. Nothing is removed where the build's profile cannot be read, or where
+// the app an entry came with is not installed.
+func (s *Server) letGo(ctx context.Context, c call, tenant string, rollouts map[string]operatorRollout) (removed int) {
+	log := s.cfg.Log.With("worker", "comes-with", "tenant", tenant)
+	apps, err := s.cfg.Repo.Apps(ctx, tenant)
+	if err != nil {
+		return 0
+	}
+	// names[app] are what the build an installed app is at comes with; no
+	// entry where that cannot be said yet.
+	names := map[string][]string{}
+	for _, a := range apps {
+		if a.Placed || a.CameWith != "" {
+			continue
+		}
+		if a.Digest != "" {
+			if ro, ok := rollouts[tenant+"/"+a.Profile]; !ok || ro.Running != a.Digest {
+				continue
+			}
+		}
+		if definition := s.definitionAt(ctx, a); definition != nil {
+			names[a.Profile] = append([]string{}, definition.Spec.ComesWith...)
+		}
+	}
+	gone := map[string][]string{}
+	for _, a := range apps {
+		if a.Placed || a.CameWith == "" {
+			continue
+		}
+		if with, known := names[a.CameWith]; known && !slices.Contains(with, a.Profile) {
+			gone[a.CameWith] = append(gone[a.CameWith], a.Profile)
+		}
+	}
+	for with, list := range gone {
+		// An heir is an app that has arrived at a build naming the entry.
+		heirs := map[string]string{}
+		for _, name := range list {
+			for _, other := range apps {
+				if other.Profile != with && slices.Contains(names[other.Profile], name) {
+					heirs[name] = other.Profile
+					break
+				}
+			}
+		}
+		res, went, err := s.cfg.Repo.LetGo(ctx, tenant, with, list, heirs, c.meta)
+		if err != nil {
+			log.WarnContext(ctx, "what an app no longer comes with could not be uninstalled", "app", with, "error", err.Error())
+			continue
+		}
+		if res.Changed {
+			removed += len(went)
+			log.InfoContext(ctx, "uninstalled what an app no longer comes with", "app", with, "apps", went, "commit", res.Commit)
+		}
+	}
+	return removed
 }
 
 // bringToTenant is runComesWith for one tenant.
@@ -240,7 +315,67 @@ func (s *Server) bringToTenant(ctx context.Context, c call, tenant string) (inst
 			log.InfoContext(ctx, "installed what an app comes with", "app", a.Profile, "with", came)
 		}
 	}
+	s.approveAmong(ctx, tenant)
 	return installed
+}
+
+// approveAmong pre-approves, in one tenant, the contracts among an app and
+// the apps that came with it: what one of them asks of another, at the build
+// each is at. The tenant's administrator said yes to all of them by
+// installing the one, and it does nothing without the others. A contract
+// with any other app of the tenant -- one the tenant installed itself, one
+// the platform places -- still waits for the administrator; so does more of
+// a contract the grant already names. It is asked after an install, after a
+// move and by the pass, so a contract a later build adds among the same apps
+// is pre-approved as the first ones were.
+func (s *Server) approveAmong(ctx context.Context, tenant string) (approved int) {
+	log := s.cfg.Log.With("worker", "comes-with", "tenant", tenant)
+	apps, err := s.cfg.Repo.Apps(ctx, tenant)
+	if err != nil {
+		if !errors.Is(err, gitops.ErrTenantNotFound) {
+			log.WarnContext(ctx, "the tenant's apps could not be read; no contract is pre-approved", "error", err.Error())
+		}
+		return 0
+	}
+	// together[app] is the app a came-with app came with, and an app that
+	// brought others is its own.
+	together := map[string]string{}
+	for _, a := range apps {
+		if a.CameWith != "" && !a.Placed {
+			together[a.Profile] = a.CameWith
+			together[a.CameWith] = a.CameWith
+		}
+	}
+	if len(together) == 0 {
+		return 0
+	}
+	meta := gitops.Meta{Principal: comesWithPrincipal, Decision: "the apps were installed together"}
+	for _, a := range apps {
+		if a.Placed || together[a.Profile] == "" {
+			continue
+		}
+		definition := s.definitionAt(ctx, a)
+		if definition == nil {
+			continue
+		}
+		for _, in := range definition.Spec.Integrations {
+			if in.Provider == "" || in.Provider == a.Profile || len(in.Capabilities) == 0 || together[in.Provider] != together[a.Profile] {
+				continue
+			}
+			res, err := s.cfg.Repo.PreApproveConsume(ctx, tenant, a.Profile, in.Contract, in.Capabilities, gitops.CameTogetherReason, meta)
+			if err != nil {
+				log.WarnContext(ctx, "a contract among apps that came together could not be pre-approved",
+					"app", a.Profile, "contract", in.Contract, "error", err.Error())
+				continue
+			}
+			if res.Changed {
+				approved++
+				log.InfoContext(ctx, "pre-approved a contract among apps that came together",
+					"app", a.Profile, "contract", in.Contract, "provider", in.Provider, "commit", res.Commit)
+			}
+		}
+	}
+	return approved
 }
 
 // definitionAt reads the profile of the build a tenant's app is at: the

@@ -1088,7 +1088,7 @@ type TenantTrustedDomains struct {
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=253
-	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`
 	Domains []string `json:"domains,omitempty"`
 }
 

@@ -62,6 +62,7 @@ func runsProfile(name string) *gentianov1alpha1.ComponentProfile {
 // it asks for and whether that was granted.
 func actionFixture(tenant, name string, granted bool) (*gentianov1alpha1.Component, *gentianov1alpha1.ComponentProfile) {
 	profile := profileFixture(name, false, gentianov1alpha1.ComponentClassAction)
+	fromCatalogue(profile)
 	profile.Spec.Version = "1.0.0"
 	profile.Spec.Package.Images = []gentianov1alpha1.PinnedImage{{Repository: "registry.example/steps/" + name, Digest: stepDigest}}
 	cpu := resource.MustParse("500m")

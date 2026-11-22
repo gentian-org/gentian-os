@@ -511,6 +511,37 @@ fresh
 gentian apps decline aluvian-commerce hostNetwork/x --tenant team --reason "because it must not"
 refused "a decline of no known kind is a usage error"
 
+# A tenant's own trusted domains: read, add, remove, and the cluster
+# administrator's switch for whether the tenant keeps a list.
+fresh; reply GET /v1/tenants/team/trusted-domains 200 '{"tenant":"team","delegated":true,"domains":["example.org","github.com"]}'
+gentian trusted-domains list --tenant team
+has "trusted-domains list names each domain" "${OUT}" "  github.com"
+fresh; reply GET /v1/tenants/team/trusted-domains 200 '{"tenant":"team","delegated":false,"domains":[]}'
+gentian trusted-domains list --tenant team
+has "trusted-domains list says when the list is not delegated" "${OUT}" "Trusted domains are not delegated to team"
+has "... and when it is empty" "${OUT}" "team has no trusted domains of its own."
+fresh; reply PUT /v1/tenants/team/trusted-domains/example.org 202 '{"status":"added","commit":"0f1e2d3c4b5a"}'
+gentian trusted-domains add example.org --tenant team
+is "trusted-domains add sends one PUT" "$(writes | tr -d '\n' | tr -s ' ')" 'PUT /v1/tenants/team/trusted-domains/example.org '
+has "... and says it is trusted" "${OUT}" "example.org is now trusted for team: committed"
+fresh; reply DELETE /v1/tenants/team/trusted-domains/example.org 202 '{"status":"removed","commit":"0f1e2d3c4b5a"}'
+gentian trusted-domains remove example.org --tenant team
+is "trusted-domains remove sends one DELETE" "$(writes | tr -d '\n' | tr -s ' ')" 'DELETE /v1/tenants/team/trusted-domains/example.org '
+fresh
+gentian trusted-domains add 'Example.org' --tenant team
+refused "what is no domain is a usage error"
+is "... and asks the director nothing" "$(cat "${CALLS}")" ""
+fresh
+gentian trusted-domains add example.org
+refused "a trusted domain needs its tenant"
+fresh; reply PUT /v1/clusters/c1/tenants/globex/trusted-domains-delegation 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
+gentian tenants delegate-trusted-domains globex on
+is "delegate-trusted-domains on sends one PUT" "$(writes | tr -d '\n' | tr -s ' ')" 'PUT /v1/clusters/c1/tenants/globex/trusted-domains-delegation '
+fresh; reply DELETE /v1/clusters/c1/tenants/globex/trusted-domains-delegation 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
+gentian tenants delegate-trusted-domains globex off
+is "delegate-trusted-domains off sends one DELETE" "$(writes | tr -d '\n' | tr -s ' ')" 'DELETE /v1/clusters/c1/tenants/globex/trusted-domains-delegation '
+has "... and says the list stays" "${OUT}" "Its list stays"
+
 # Withdrawing takes an approval back: one DELETE, no body.
 fresh; reply DELETE /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0f1e2d3c4b5a"}'
 gentian apps withdraw aluvian-commerce egress/intake --tenant team
@@ -1135,6 +1166,7 @@ OLD="sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
 apps_catalogue() {
     reply GET /v1/tenants/acme/catalogues 200 '{"catalogues":[{"name":"gentian"}]}'
     reply GET /v1/tenants/acme/catalogues/gentian/entries 200 '{"entries":[{"name":"notes","version":"2.0.0","digest":"'"${PINNED}"'"}]}'
+    reply GET "/v1/tenants/acme/catalogues/gentian/entries/notes/asks?digest=${PINNED}" 200 "${ASKS:-{\"egress\":[],\"mayApprove\":false\}}"
 }
 
 fresh; apps_catalogue
@@ -1147,6 +1179,32 @@ fresh; apps_catalogue
 reply POST /v1/tenants/acme/apps/notes 200 '{"status":"already_installed"}'
 gentian apps install notes --tenant acme
 has "a current app installed again commits nothing" "${OUT}" "notes is already installed in acme at this build; nothing was committed."
+
+# A build that asks for outbound access says so before it is installed, and
+# --approve-egress sends the approval with the install.
+ASKS_ONE='"egress":[{"install":"notes","privilege":"egress/sync","reason":"reads the calendars","hosts":["cal.example.org"]}]'
+ASKS="{${ASKS_ONE},\"mayApprove\":true}"
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef"}'
+gentian apps install notes --tenant acme
+has "an install says what the build asks for" "${OUT}" "notes egress/sync  to cal.example.org  -- reads the calendars"
+has "... and that it waits, with the way to approve" "${OUT}" "install with --approve-egress"
+has "... and installs" "$(writes)" "POST /v1/tenants/acme/apps/notes"
+lacks "... and approves nothing unasked" "$(writes)" "approve"
+
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef","approved":[{"install":"notes","privilege":"egress/sync"}]}'
+gentian apps install notes --tenant acme --approve-egress
+is "--approve-egress sends what was listed with the install" \
+    "$(writes | sed 's/^POST [^ ]* //' | jq -c '.approve')" '[{"install":"notes","privilege":"egress/sync"}]'
+has "... and says it is approved" "${OUT}" "Its outbound access is approved, by you."
+
+ASKS="{${ASKS_ONE},\"mayApprove\":false}"
+fresh; apps_catalogue
+gentian apps install notes --tenant acme --approve-egress
+refused "--approve-egress by somebody who is not the perimeter approver installs nothing"
+is "... and asks the director for no write" "$(writes)" ""
+unset ASKS
 
 # An entry the catalog leaves to the store (me or ee) is not in the
 # listing, only counted, so by name it is not installed from here: the store

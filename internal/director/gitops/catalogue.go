@@ -106,10 +106,20 @@ func (e *ErrProfileNameTaken) Error() string {
 // a catalog entry of the same name would have Argo CD and Helm each
 // applying their own profile over the other's. A test holds this list to the
 // chart.
-var platformProfiles = map[string]bool{"admin-console": true, "concierge": true, "desktop": true, "homesync": true, "porter": true}
+var platformProfiles = map[string]bool{"admin-console": true, "concierge": true, "desktop": true, "homesync": true, "liaison": true, "porter": true}
 
 // PlatformProfile reports whether name is a profile the platform ships.
 func PlatformProfile(name string) bool { return platformProfiles[name] }
+
+// broughtPlatformProfiles are the profiles the platform ships and places
+// nowhere: a tenant has one while an app it installed comes with it
+// (ComponentProfile spec.comesWith). The same test holds this list to the
+// chart: the templates that state no placement.
+var broughtPlatformProfiles = map[string]bool{"liaison": true}
+
+// BroughtPlatformProfile reports whether name is a profile the platform
+// ships for the apps that come with it.
+func BroughtPlatformProfile(name string) bool { return broughtPlatformProfiles[name] }
 
 // retiredPlatformProfiles are profiles an earlier release of the platform
 // placed on every tenant as its own component and this release no longer
