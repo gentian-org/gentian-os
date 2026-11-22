@@ -590,7 +590,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.hooks.postInstall.script` | string | yes | `Script` is the shell script body, run via `/bin/sh -c`. |
 | `spec.hooks.postInstall.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount in the tenant namespace (e.g. |
 | `spec.hooks.provisioning` | object |  | `Provisioning` configures the component through its own API after install and on resync. |
-| `spec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` maps gentian:tenant:\<t>:app-admins members to an in-app administrator role (for example the Nextcloud "admin" group). |
+| `spec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` is the in-app administrator role the app's administrators -- whoever holds admin on it in the rights store -- are put in, for an app that… |
 | `spec.hooks.provisioning.privilegedRole.kind` | string | yes | `Kind` is the application's native role type. |
 | `spec.hooks.provisioning.privilegedRole.name` | string | yes | `Name` is the in-app role identifier (for example Nextcloud group "admin"). |
 | `spec.hooks.provisioning.syncJob` | object |  | `SyncJob` is how this app applies PrivilegedRole. |
@@ -1502,7 +1502,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.hooks.postInstall.script` | string | yes | `Script` is the shell script body, run via `/bin/sh -c`. |
 | `status.profileSpec.hooks.postInstall.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount in the tenant namespace (e.g. |
 | `status.profileSpec.hooks.provisioning` | object |  | `Provisioning` configures the component through its own API after install and on resync. |
-| `status.profileSpec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` maps gentian:tenant:\<t>:app-admins members to an in-app administrator role (for example the Nextcloud "admin" group). |
+| `status.profileSpec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` is the in-app administrator role the app's administrators -- whoever holds admin on it in the rights store -- are put in, for an app that… |
 | `status.profileSpec.hooks.provisioning.privilegedRole.kind` | string | yes | `Kind` is the application's native role type. |
 | `status.profileSpec.hooks.provisioning.privilegedRole.name` | string | yes | `Name` is the in-app role identifier (for example Nextcloud group "admin"). |
 | `status.profileSpec.hooks.provisioning.syncJob` | object |  | `SyncJob` is how this app applies PrivilegedRole. |

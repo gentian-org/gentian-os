@@ -110,9 +110,9 @@ spec:
                   description: >
                     The tenant lets the platform's administrators sign in to
                     it (Tenant spec.platformAccess.adminsEnter). The realm
-                    then carries the identity provider "kernel", for members
-                    of gentian:platform:admin only, who land in the tenant's
-                    admins group at every sign-in through it.
+                    then carries the identity provider "kernel", for the
+                    cluster's administrators only; the operator gives whoever
+                    arrives through it the position Tenant administrator.
                 kernelEnter:
                   type: array
                   maxItems: 1000
