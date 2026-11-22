@@ -332,14 +332,10 @@ spec:
           model
             schema 1.1
           type user
-          type group
-            relations
-              define member: [user]
           type project
             relations
-              define owner: [user, group#member]
-              define viewer: [user, group#member, user:*] or owner
-        groups: mirror              # optional: keep the realm's groups in the store
+              define owner: [user]
+              define viewer: [user, user:*] or owner
         tuples:                     # optional: written by the platform
           - {user: "user:*", relation: viewer, object: "project:handbook"}
 ```
@@ -352,15 +348,8 @@ with the store and model taken from the key: `POST /v1/check`,
 `/v1/batch-check` (50), `/v1/list-objects`, `/v1/list-users`, `/v1/read`
 (pages of 100), `/v1/write` (100 tuples), `GET /v1/model`, each with
 `Authorization: Bearer <AUTHORIZATION_KEY>`; an unknown key is 401, and a key
-is limited to 100 calls a second. People are `user:<realm>/<subject>`. With
-`groups: mirror` the platform keeps every top-level group of the tenant's
-realm as `group:<realm>/<name>#member` (`:` in a name becomes `/`, so the
-tenant's members are `group:<realm>/gentian/tenant/<tenant>/members`); the
-model needs a `type group` with `define member: [user]`, and a store created
-after a membership was made holds it from that person's next change in the
-realm on. An app's key may not write a tuple whose object is a group (403);
-it gives its own objects to a group's members (`group:<realm>/<name>#member`
-as the user) as to a person. A starting tuple the profile drops is taken out again; what the app
+is limited to 100 calls a second. People are `user:<realm>/<subject>`.
+A starting tuple the profile drops is taken out again; what the app
 wrote is never touched. The store is the tenant's data: exported, restored
 into a fresh store, kept on uninstall and deleted by a purge.
 
@@ -371,6 +360,43 @@ and it hard-codes an assumption about where the service lives. `${SMTP_HOST}`,
 a placeholder reaches the cluster verbatim. The identity placeholders
 (`${TENANT_ID}`, `${TENANT_DOMAIN}`, `${TENANT_NAMESPACE}`, `${KERNEL_DOMAIN}`,
 `${NODE_IP}`) are — those describe who the tenant is, not where a service lives.
+
+### 1.2 Declaring the app's roles
+
+Who may do what inside an app is the platform's to say
+([iam.md §1.2](../concepts/iam.md)), in the app's own words. A profile
+declares what each role is called inside the app:
+
+```yaml
+spec:
+  roles:
+    claim: gentian_app_roles         # the default
+    user:
+      inApp: [base.group_user]
+    admin:
+      inApp: [base.group_system]
+    declared:
+      - name: sales-manager
+        title: Sales manager
+        includes: [salesperson]
+        inApp: [sales_team.group_sale_manager]
+      - name: salesperson
+        inApp: [sales_team.group_sale_salesman]
+```
+
+- `user` and `admin` are roles every app has; `declared` are the roles
+  between them. `admin` holds them all.
+- The app reads two claims from its sign-in token: `claim`, the in-app names
+  of the roles the person holds, and `<claim>_mapped`, every in-app name the
+  profile lists. It gives the first, takes the rest of the second, and
+  leaves alone what is in neither.
+- An add-on declares its own roles; they reach the token of the app it is
+  activated in.
+- An app that cannot read a token is told through its sync Job
+  (`spec.hooks.provisioning.syncJob`) or the sign-in sidecar (§2.3a).
+
+How the token is written and what happens when a role is taken away is in
+[iam.md §1.8](../concepts/iam.md).
 
 ---
 
@@ -749,7 +775,7 @@ The handler is the ConfigMap `<profile>.sign-in-handler` of the profile's bundle
 | | By | |
 |---|---|---|
 | Registers the sidecar at the tenant's realm | the operator | a SAML client named `https://<app host>/sso`, with one address its answer may be posted to, `https://<app host>/sso/acs`; the response and the assertion both signed; the person named by e-mail address |
-| Has the realm say who administers the app | the operator | one role at that client, `gentian-app-admin`, granted to the tenant's group `gentian:tenant:<tenant>:app-admins`, and a mapper that lists a person's roles at that client in the signed assertion. No other role is in the client's scope, and no group is named |
+| Has the realm say who administers the app | the operator | the platform's mapper on that client, which asks the rights store which roles the person holds on the app and lists them in the signed assertion as `Role`, in the names the profile gives them (`spec.roles`). A profile that names none gets `gentian-app-admin` for the app's administrator |
 | Runs the sidecar beside the app | the operator | one pod, with the handler from the bundle, told where the realm is. No service-account token, read-only, not root |
 | Hands the handler what was declared | the operator | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; `SECRET_<NAME>`; `APP_URL`. From this app's own vault paths; a profile names which, never where |
 | Routes two paths of the app's host to it | the operator | `/sso/login` as a rule of the app's own route, behind the session and the bouncer; `/sso/acs` on a route of its own with no session ([routing.md §4.1](../concepts/routing.md)) |
@@ -783,14 +809,11 @@ anybody in the app. So it runs only where it is known to be the reviewed file:
 `/sso/login`, which only a person the front door admits to this app reaches, and the answer the
 sidecar accepts has to be about that same person.
 
-**Who administers the app** is who holds the platform's **App Admin** role in that tenant, and
-nobody else: not the tenant's administrator for being that, and not the first person to open the
-app. The role is membership of the tenant's group `gentian:tenant:<tenant>:app-admins`. A tenant's
-administrator appoints somebody in the admin console — *Groups*, under *Roles*, the group
-`app-admins`: add the person; or the person's own page, under their groups — and withdraws it in
-the same place. It
-is one role per tenant, the one `provisioning.privilegedRole` already maps for other apps: who
-holds it administers every app of the tenant that maps it.
+**Who administers the app** is who holds the role `admin` on it, and nobody else: not the tenant's
+administrator for being that, and not the first person to open the app. A tenant's administrator
+gives it in the admin console: the position App administrator, which holds `admin` on every app,
+or the role on this one app, on the app's or the person's page
+([iam.md §1.2](../concepts/iam.md)).
 
 The realm states it in the assertion it signs; the sidecar reads it there and nowhere else — no
 header, no form field — and tells the handler (`person.appAdmin`). At every sign-in the handler
@@ -879,7 +902,7 @@ uninstalled app destroys it ([store-contract.md](../concepts/store-contract.md) 
 
 **Multi-tenancy is the sharp edge here.** An addon loaded into a shared runtime affects every
 tenant on that runtime. The existing Odoo pattern is the right precedent — per-tenant addon sets
-driven by group attributes (`gentianos.io/keycloak-group-attributes: {"gentianOdooModules":["crm"]}`)
+driven by the add-ons the tenant activated (`Tenant.spec.apps[].addons`)
 rather than per-tenant addon *binaries*. The framework makes this explicit:
 
 > **L3 rule (namespace test).** Per-tenant addons are allowed **only if the app instance runs in
@@ -1431,15 +1454,15 @@ addon is activated only from a
 profile shown to be that build, and its base is held as it runs until it is.
 See [store-contract.md](../concepts/store-contract.md) §3 and §4.
 
-An addon is **entitled on its own**: its group is
-`gentian:tenant:<t>:app:<addon>` and its tile asks `can_launch` on
-`app:<t>/<addon>`. An addon for everyone is listed in
-`Tenant.spec.apps[].addonGrants` (`name`, `defaultGrant: true`) and is granted
-once per install like an app's `defaultGrant`; any other addon is given per
-person. The director's `PUT .../apps/{p}/addons` takes `"defaultGrant"` on an
+An addon is **an app of its own** in the rights store, with its own roles
+(`spec.roles` of its profile): its tile asks `can_launch` on
+`app:<t>/<addon>`, a role on it lets a person into its base, and the base's
+administrator administers it. An addon for everyone is listed in
+`Tenant.spec.apps[].addonGrants` (`name`, `defaultGrant: true`), which gives
+it to the position User; any other addon is given per position or person.
+The director's `PUT .../apps/{p}/addons` takes `"defaultGrant"` on an
 object entry (`{coordinate, digest, defaultGrant}` or `{name, defaultGrant}`),
-and needs `can_grant` for `true`. An addon installed with its app takes the
-app's choice; one added later is asked for on its own.
+and needs `can_grant` for `true`.
 
 **Editions** are `ce · me · ie · pe · ee`, and say *who maintains and supports
 the entry*, not who publishes it:

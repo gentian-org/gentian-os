@@ -3,10 +3,10 @@ audience: architect, auditor
 type: decision
 ---
 
-# AD-16 Every cluster role but `admin` and `breakGlass` is held by a person named in git
+# AD-16 Every cluster role is held by a person named in git
 
-`admin` and `breakGlass` are held by a group of the kernel realm
-(`spec.platformRoles`). Every other role is held by name on the Cluster claim
+No cluster role is held by a group of a realm. Every role, `admin` and
+`breakGlass` included, is held by name on the Cluster claim
 (`spec.platformAccess.roleHolders`), written through the director under
 `can_configure`, with a reason and an optional `expiresAt`; the operator
 writes the tuple as the account of its realm and removes it with the entry.

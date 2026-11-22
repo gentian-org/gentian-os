@@ -558,10 +558,9 @@ What each act keeps and destroys, kind by kind, is in
 [store-contract.md](../concepts/store-contract.md) §8.
 
 `--for-everyone` writes `defaultGrant: true` on the app's entry in the same
-commit. Every member of the tenant then has the app by default: the people who
-are members when the app's group first exists are added to it once, and
-somebody invited later has it preselected. It needs the right to grant in the
-tenant as well as to install. Without the flag, access is given per person
+commit, which gives the app to the position User: every person of the tenant
+then has it. It needs the right to grant in the tenant as well as to install.
+Without the flag, the app is given to positions or people in the Admin Console
 ([store-contract.md](../concepts/store-contract.md) §3).
 
 Inspect app reconciliation:
@@ -577,16 +576,15 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 `--env`/`--stage` flag; they always target the one cluster selected by
 `GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
 
-### Groups, and people of another tenant signing in
+### People of another tenant signing in
 
-A tenant's own groups are declared in git, made by the platform and filled
-in the Admin Console. People of another tenant of the cluster may sign in to
-a tenant with their account there, given some of its groups (`members`, or
-its own); see [identity-brokering.md](../guides/identity-brokering.md).
+People of another tenant of the cluster may sign in to a tenant with their
+account there, given some of its positions when they arrive (`user`, or
+positions the tenant declares); see
+[identity-brokering.md](../guides/identity-brokering.md).
 
 ```bash
-kubectl gentian tenants groups customers website-editors store-editors
-kubectl gentian tenants sign-in customers --from team --groups website-editors,members
+kubectl gentian tenants sign-in customers --from team --positions website-editor,user
 kubectl gentian tenants sign-in customers                 # what it declares
 ```
 
@@ -998,15 +996,16 @@ own credential — which is also the way in when nobody can sign in.
 
 ### Cluster roles held by name
 
-`admin` and `breakGlass` are held through a group of the kernel realm
-(`spec.platformRoles`). Every other cluster role is held by a person the
-cluster's administrator names on the Cluster claim, who keeps their own
-account: an entry of `spec.platformAccess.roleHolders`, with a reason and an
+Every cluster role is held by a person the cluster's administrator names on
+the Cluster claim, who keeps their own account; while the claim names no
+`admin`, the account the install made holds that role. Each is an entry of `spec.platformAccess.roleHolders`, with a reason and an
 optional expiry ([iam.md §1.1c](../concepts/iam.md)). The role is held only with a
 token of that person's realm, and used from their tenant's console.
 
 | Role | Who may be named | Scope |
 |---|---|---|
+| `admin` -- administering the cluster (`can_configure`, `can_deploy_tenant`) | a person of the platform tenant | `cluster` |
+| `breakGlass` -- admission overlays and raw file edits (`can_set_admission`, `can_edit_raw`), with a reason and until a time | a person of the platform tenant | `cluster` |
 | `securityOfficer` -- approving what escapes the default posture: a pod-security waiver, a cluster role, `trustTier: platform` (`cluster#can_approve`) | a person of the platform tenant, or an administrator of another tenant | `cluster` |
 | `auditor` -- reading across the cluster (`cluster#can_audit`) | the same | `cluster` |
 | `serviceAdmin` -- the claim's system section (`can_operate_system`) | a person of the platform tenant | `cluster` |
@@ -1017,7 +1016,7 @@ token of that person's realm, and used from their tenant's console.
 ```bash
 kubectl gentian platform-roles candidates                               # who could hold one: the platform tenant's people, every other tenant's administrators
 kubectl gentian platform-roles holders                                  # ROLE SCOPE TENANT LOGIN EMAIL EXPIRES REASON IN EFFECT, as the claim declares
-kubectl gentian platform-roles members                                  # who holds admin and breakGlass through their kernel Keycloak group
+kubectl gentian platform-roles members                                  # the platform tenant's people the claim names, by role, as the kernel realm knows them
 kubectl gentian platform-roles review [--next <RFC 3339>]              # show both, type "reviewed", and the review is one commit
 kubectl gentian platform-roles holders add securityOfficer acme it@acme.example --reason "acme's CISO approves waivers"   # one commit
 kubectl gentian platform-roles holders add perimeterApprover acme it@acme.example --reason "acme publishes its shop" --expires 2027-06-30T00:00:00Z
@@ -1071,7 +1070,7 @@ default, and it is not the tenant's `operated_by` consent (that one covers the
 director, this one the sign-in).
 
 ```bash
-kubectl gentian tenants platform-access acme on      # members of gentian:platform:admin may enter acme as its administrators
+kubectl gentian tenants platform-access acme on      # the cluster's administrators may enter acme as its administrators
 kubectl gentian tenants platform-access acme off
 ```
 
@@ -1087,8 +1086,7 @@ kubectl get secret keycloak-idp-credentials -n kernel-authentication \
 ```
 
 ArgoCD has no local admin: D-03 sets `admin.enabled: "false"` and deletes
-`argocd-initial-admin-secret`. Sign in through Keycloak as a member of
-`gentian:platform:admin`. Break glass, when Keycloak itself is down, is
+`argocd-initial-admin-secret`. Sign in through Keycloak as an administrator of the cluster. Break glass, when Keycloak itself is down, is
 kubectl in the gitops namespace: set a new password, switch the account on,
 and reach the server by port-forward (the edge needs Keycloak too):
 

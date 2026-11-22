@@ -61,12 +61,11 @@ realm):
   the sector identifier `<P issuer>` and a salt the operator derives once per
   tenant and partner; and a roles mapper putting the person's role on the
   tenant in the access token as the multi-valued claim `gentian_roles`:
-  `tenant-admin` for a member of `gentian:tenant:<t>:admins`, `cluster-admin`
-  for a member of `gentian:tenant:<t>:platform-admins`, both for a person in
-  both, and no claim for anybody else. It is Keycloak's user attribute mapper
-  aggregating the group attribute `gentianPartnerRole` over the person's
-  groups, which only those two groups carry, so the claim follows from group
-  membership and from nothing else ([iam.md §1.2](iam.md)); in the access
+  `tenant-admin` for a person who administers the tenant, `cluster-admin`
+  for a cluster administrator -- an account of the kernel realm, or one
+  that entered the tenant from it -- both for a person who is both, and an
+  empty claim for anybody else. The platform's mapper asks the rights store
+  for every token ([iam.md §1.8](iam.md)); in the access
   token only, never in an ID token or at userinfo, and on this scope only, so
   no other client of the realm sees it. The same scope is the partner
   client's default and an optional scope of every app client allowed to call

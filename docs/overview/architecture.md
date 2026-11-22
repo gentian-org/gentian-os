@@ -96,7 +96,7 @@ graph TD
 | **Operator** (`kernel-control`) | Reconciles `Tenant`, `Component` and the other kinds of §4: seeds secrets in OpenBao, writes the tenant's composite, renders and applies what each app's chart is installed with, routes, policies, and status. Projects tenants, installs and group memberships into OpenFGA. | Writes to the cluster only; holds no git credential. |
 | **Crossplane** (`kernel-provisioning`) | Composes `XCluster` and `XTenant` into managed resources (namespaces, vault policies, Jobs, `ExternalSecret`s), and an `App` claim for a profile that brings its own Composition. Its providers reconcile the managed resources the operator renders for an app, Helm `Release`s among them. | Owns what can be written down before it happens (below). |
 | **OpenBao + ESO** (`kernel-secrets`) | The one secret store, synced into Kubernetes Secrets that charts read. | Secrets never touch git or a resource's spec. |
-| **Usher, custodian, registrar** (`kernel-control`) | The other three services people's requests reach: the usher answers reads (what is here, what may I open), the custodian sets credentials in the vault, the registrar manages people and groups at Keycloak. Each asks OpenFGA first and holds one credential only. | None of them writes git. |
+| **Usher, custodian, registrar** (`kernel-control`) | The other three services people's requests reach: the usher answers reads (what is here, what may I open), the custodian sets credentials in the vault, the registrar manages people at Keycloak and asks the operator to give or take what they hold. Each asks OpenFGA first and holds one credential only. | None of them writes git. |
 | **Arbiter** (`system-authorization`, on demand) | The one way into the app instance of OpenFGA, which holds the components' authorization stores. The operator deploys it when a component declares a store. | Serves the app stores only; the kernel's rights store is separate. |
 | **Bouncer** (`kernel-edge`, beside the Gateways) | Asks OpenFGA, per request, whether the signed-in person may reach the host. | Decides nothing else ([routing.md §4.1](../concepts/routing.md)). |
 
@@ -657,8 +657,9 @@ and [security/design.md](../security/design.md) §2.9.
 
 ## 13. Operational Roles
 
-A role is membership of a Keycloak group; what a role may do is a relation
-in OpenFGA, asked by the director, the custodian, the registrar, the usher
+A role is held in OpenFGA, by a person directly, through a position, or for
+a cluster role by name on the Cluster claim ([iam.md §1.2](../concepts/iam.md));
+what a role may do is a relation there, asked by the director, the custodian, the registrar, the usher
 and the bouncer before they act. Nobody is given Kubernetes RBAC on the
 platform's kinds to do their work.
 
