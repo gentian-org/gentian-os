@@ -36,9 +36,8 @@ type linkingRealm struct {
 	mu sync.Mutex
 	// providers is the aliases the realm has an identity provider for.
 	providers map[string]bool
-	// users is username by id; groups is the group paths a user holds.
-	users  map[string]string
-	groups map[string][]string
+	// users is username by id.
+	users map[string]string
 	// links is the stored links, by user id and alias, shown or not.
 	links map[string]federatedIdentityRep
 	// writes is every request that was not a read.
@@ -50,13 +49,12 @@ func newLinkingRealm(t *testing.T, protected ...string) (*linkingRealm, *Client,
 	f := &linkingRealm{
 		providers: map[string]bool{"vouch-notary": true, "corporate-sso": true},
 		users:     map[string]string{"u-mia": "mia@example.com", "u-root": "root@example.com"},
-		groups:    map[string][]string{"u-root": {platformAdmins}},
 		links:     map[string]federatedIdentityRep{},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
 	if len(protected) == 0 {
-		protected = []string{platformAdmins}
+		protected = []string{"u-root"}
 	}
 	c := clientProtecting(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "d", ClientSecret: "s"}}, protected...)
 	realm, err := c.Realm("demo")
@@ -97,12 +95,6 @@ func (f *linkingRealm) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(seg) == 2 && r.Method == http.MethodGet:
 		_ = json.NewEncoder(w).Encode(userRep{ID: id, Username: username, Enabled: true})
-	case len(seg) == 3 && seg[2] == "groups":
-		out := []groupRep{}
-		for _, p := range f.groups[id] {
-			out = append(out, groupRep{ID: "g-" + p, Name: p, Path: "/" + p})
-		}
-		_ = json.NewEncoder(w).Encode(out)
 	case len(seg) == 3 && seg[2] == "federated-identity" && r.Method == http.MethodGet:
 		out := []federatedIdentityRep{}
 		for key, l := range f.links {

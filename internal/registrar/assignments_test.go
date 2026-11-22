@@ -63,6 +63,26 @@ func (f *fakeRights) administrators(tenant string) []string {
 	return out
 }
 
+// People answers the holders of the position user.
+func (f *fakeRights) People(_ context.Context, tenant string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return nil, f.fail
+	}
+	var out []string
+	for subject, held := range f.held[tenant] {
+		for _, a := range held {
+			if a.Position == authz.PositionUser {
+				out = append(out, subject)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (f *fakeRights) positionsOf(tenant, subject string) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()

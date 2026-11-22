@@ -213,3 +213,23 @@ func TestAChangeOfRightsIsFollowedUp(t *testing.T) {
 		t.Errorf("told = %v, want %v: once per change, not per request", told, want)
 	}
 }
+
+// Who a tenant's people are is answered to the registrar, which confines
+// itself to them in a realm several tenants share.
+func TestThePeopleOfATenantAreTheHoldersOfItsPositionUser(t *testing.T) {
+	_, auth := cluster()
+	mux := (&HTTPServer{Auth: auth, Rights: demoRights()}).routes()
+	for _, sub := range []string{"u2", "u1"} {
+		if code, body := askAssignments(mux, "POST", "/v1/tenants/demo/people/"+sub+"/actions/give", "registrar", `{"position":"user"}`); code != http.StatusOK {
+			t.Fatalf("give user to %s: %d %v", sub, code, body)
+		}
+	}
+	code, body := askAssignments(mux, "GET", "/v1/tenants/demo/people-subjects", "registrar", "")
+	list, _ := body["subjects"].([]any)
+	if code != http.StatusOK || len(list) != 2 || list[0] != "u1" || list[1] != "u2" {
+		t.Errorf("people: %d %v", code, body)
+	}
+	if code, _ := askAssignments(mux, "GET", "/v1/tenants/demo/people-subjects", "usher", ""); code == http.StatusOK {
+		t.Errorf("the usher was answered who a tenant's people are")
+	}
+}

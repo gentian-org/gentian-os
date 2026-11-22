@@ -47,6 +47,9 @@ type Rights interface {
 	Assignments(ctx context.Context, tenant, subject string) ([]authz.Assignment, error)
 	// Administrators reads the accounts that administer tenant as its own.
 	Administrators(ctx context.Context, tenant string) ([]string, error)
+	// People reads the accounts that are tenant's people: the holders of
+	// its position user.
+	People(ctx context.Context, tenant string) ([]string, error)
 }
 
 // ErrRefusedAssignment is an act the operator refused as not an assignment
@@ -135,6 +138,21 @@ func (o operatorRights) Administrators(ctx context.Context, tenant string) ([]st
 		return nil, err
 	}
 	var answer applifecycle.AdministratorsAnswer
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		return nil, fmt.Errorf("the operator's answer could not be read: %w", err)
+	}
+	return answer.Subjects, nil
+}
+
+func (o operatorRights) People(ctx context.Context, tenant string) ([]string, error) {
+	status, raw, err := o.c.Get(ctx, assignmentPath(applifecycle.PeopleSubjectsPath, tenant, ""), nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := refusal(status, raw); err != nil {
+		return nil, err
+	}
+	var answer applifecycle.PeopleSubjectsAnswer
 	if err := json.Unmarshal(raw, &answer); err != nil {
 		return nil, fmt.Errorf("the operator's answer could not be read: %w", err)
 	}

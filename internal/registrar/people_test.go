@@ -40,16 +40,12 @@ type fakeIdentity struct {
 	// shownOnly is whether the last activation was marked to be shown and
 	// never mailed.
 	shownOnly bool
-	// groups is what each realm has.
-	groups map[string][]identity.Group
 	// requestIDs is what traveled with each call.
 	requestIDs []string
 	// lastInvite is what the last invitation asked for.
 	lastInvite identity.Invitation
 	// landing is what the zone client says its root is.
 	landing string
-	// lastGroup is the path the last group operation named.
-	lastGroup string
 	// removed is every person removed.
 	removed []string
 	// people overrides who Person answers, by id; removeErr fails removals.
@@ -65,7 +61,7 @@ type fakeIdentity struct {
 }
 
 func newFakeIdentity(realms ...string) *fakeIdentity {
-	f := &fakeIdentity{held: map[string]bool{}, groups: map[string][]identity.Group{}}
+	f := &fakeIdentity{held: map[string]bool{}}
 	for _, r := range realms {
 		f.held[r] = true
 	}
@@ -79,9 +75,9 @@ func (f *fakeIdentity) Realm(name string) (identity.Realm, error) {
 	// The real client hands back an opaque token; a fake cannot construct one
 	// with the unexported field set, so it uses the real constructor.
 	c, err := identity.New(identity.Config{
-		BaseURL:            "https://unused.invalid",
-		Source:             identity.StaticSource{name: {Realm: name, ClientID: "x", ClientSecret: "y"}},
-		PlatformRoleGroups: func(context.Context) ([]string, error) { return []string{platformAdmins}, nil },
+		BaseURL:             "https://unused.invalid",
+		Source:              identity.StaticSource{name: {Realm: name, ClientID: "x", ClientSecret: "y"}},
+		PlatformRoleHolders: func(context.Context) ([]string, error) { return nil, nil },
 	})
 	if err != nil {
 		return identity.Realm{}, err
@@ -118,11 +114,6 @@ func (f *fakeIdentity) Person(ctx context.Context, r identity.Realm, id string) 
 	return identity.Person{ID: "u1", Username: "ada@example.com"}, nil
 }
 
-func (f *fakeIdentity) Groups(ctx context.Context, r identity.Realm) ([]identity.Group, error) {
-	f.note(ctx, r)
-	return f.groups[r.Name()], nil
-}
-
 func (f *fakeIdentity) Invite(ctx context.Context, r identity.Realm, inv identity.Invitation) (identity.Person, error) {
 	f.note(ctx, r)
 	f.mu.Lock()
@@ -135,14 +126,6 @@ func (f *fakeIdentity) Invite(ctx context.Context, r identity.Realm, inv identit
 		return identity.Person{}, identity.ErrConflict
 	}
 	return identity.Person{ID: "new", Username: inv.Email, Email: inv.Email, Pending: true}, nil
-}
-
-func (f *fakeIdentity) SetMembership(ctx context.Context, r identity.Realm, _, group string, _ bool) error {
-	f.note(ctx, r)
-	if strings.HasPrefix(group, "gentian:platform:") {
-		return identity.ErrOutOfScope
-	}
-	return nil
 }
 
 func (f *fakeIdentity) SendPasswordReset(ctx context.Context, r identity.Realm, userID, _, _ string) error {
@@ -231,7 +214,7 @@ func TestInviteIsAnActionAndReportsWhoWasCreated(t *testing.T) {
 	tok := h.token(t, "tenant-demo", "tom")
 
 	status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person", tok,
-		`{"email":"ada@example.com","groups":["gentian:tenant:demo:members"]}`)
+		`{"email":"ada@example.com"}`)
 	if status != http.StatusAccepted {
 		t.Fatalf("invite: %d %v", status, body)
 	}
@@ -256,34 +239,6 @@ func TestInvitingSomebodyAlreadyThereIsAConflict(t *testing.T) {
 		h.token(t, "tenant-demo", "tom"), `{"email":"taken@example.com"}`)
 	if status != http.StatusConflict {
 		t.Fatalf("status %d, want 409", status)
-	}
-}
-
-// A group outside what this tenant may touch is a bad request, not a refusal:
-// the caller holds the relation, and "forbidden" would send them to ask for a
-// permission that would not help.
-func TestAGroupOutsideTheTenantIsABadRequest(t *testing.T) {
-	f := newFakeIdentity("demo")
-	h := startWithIdentity(t, f)
-
-	status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/set-membership",
-		h.token(t, "tenant-demo", "tom"),
-		`{"person":"u1","group":"gentian:platform:admin","member":true}`)
-	if status != http.StatusBadRequest {
-		t.Fatalf("status %d, want 400", status)
-	}
-}
-
-// Membership has to say which way. Without it the request is ambiguous and
-// defaulting either way is a change nobody asked for.
-func TestSetMembershipRequiresSayingWhich(t *testing.T) {
-	f := newFakeIdentity("demo")
-	h := startWithIdentity(t, f)
-
-	status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/set-membership",
-		h.token(t, "tenant-demo", "tom"), `{"person":"u1","group":"gentian:tenant:demo:members"}`)
-	if status != http.StatusBadRequest {
-		t.Fatalf("status %d, want 400", status)
 	}
 }
 
@@ -445,30 +400,6 @@ func (f *fakeIdentity) RemoveTOTP(ctx context.Context, r identity.Realm, _ strin
 	return nil
 }
 
-func (f *fakeIdentity) CreateGroup(ctx context.Context, r identity.Realm, path string) (identity.Group, error) {
-	f.note(ctx, r)
-	f.mu.Lock()
-	f.lastGroup = path
-	f.mu.Unlock()
-	return identity.Group{ID: "g-new", Path: path, Name: path, Custom: true}, nil
-}
-
-func (f *fakeIdentity) DeleteGroup(ctx context.Context, r identity.Realm, path string) error {
-	f.note(ctx, r)
-	f.mu.Lock()
-	f.lastGroup = path
-	f.mu.Unlock()
-	return nil
-}
-
-func (f *fakeIdentity) RenameGroup(ctx context.Context, r identity.Realm, _, newPath string) (identity.Group, error) {
-	f.note(ctx, r)
-	f.mu.Lock()
-	f.lastGroup = newPath
-	f.mu.Unlock()
-	return identity.Group{ID: "g", Path: newPath, Name: newPath, Custom: true}, nil
-}
-
 func (f *fakeIdentity) FindUser(ctx context.Context, r identity.Realm, username string) (identity.Person, error) {
 	f.note(ctx, r)
 	return identity.Person{ID: "admin-id", Username: username}, nil
@@ -485,19 +416,6 @@ func (f *fakeIdentity) ActivateAccount(ctx context.Context, r identity.Realm, id
 		return identity.Activation{Mailed: true, Email: email, Actions: actions}, nil
 	}
 	return identity.Activation{Link: "https://id.example/link?key=" + id, ExpiresAt: 1, Actions: actions}, nil
-}
-
-func (f *fakeIdentity) GroupMembers(ctx context.Context, r identity.Realm, path string) ([]identity.Person, error) {
-	f.note(ctx, r)
-	f.mu.Lock()
-	f.lastGroup = path
-	f.mu.Unlock()
-	// Each realm's admins group holds its administrator; every other group
-	// is empty here.
-	if strings.HasSuffix(path, ":admins") {
-		return []identity.Person{{ID: "a1", Username: "admin@" + r.Name() + ".example", Email: "admin@" + r.Name() + ".example", Enabled: true}}, nil
-	}
-	return nil, nil
 }
 
 // The form sends the part before the @; the registrar composes the login under
@@ -536,30 +454,6 @@ func TestInviteComposesTheLoginUnderTheTenantsDomain(t *testing.T) {
 	}
 }
 
-// A custom group is made inside the tenant's subtree from a label, and a label
-// cannot name one of the platform's own groups or reach past a colon.
-func TestCustomGroupsLiveInTheTenantsSubtree(t *testing.T) {
-	f := newFakeIdentity("demo")
-	h := startWithIdentity(t, f)
-	tok := h.token(t, "tenant-demo", "tom")
-
-	status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/create-group", tok, `{"name":"Sales"}`)
-	if status != http.StatusCreated {
-		t.Fatalf("create: %d %v", status, body)
-	}
-	f.mu.Lock()
-	got := f.lastGroup
-	f.mu.Unlock()
-	if got != "gentian:tenant:demo:sales" {
-		t.Fatalf("created %q", got)
-	}
-	for _, bad := range []string{`{"name":"admin"}`, `{"name":"platform-admins"}`, `{"name":"app:x"}`, `{"name":""}`} {
-		if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/create-group", tok, bad); status != http.StatusBadRequest {
-			t.Errorf("%s: %d, want 400", bad, status)
-		}
-	}
-}
-
 // Nobody removes themselves from here.
 func TestRemovingYourselfIsRefused(t *testing.T) {
 	f := newFakeIdentity("demo")
@@ -578,28 +472,6 @@ func TestRemovingYourselfIsRefused(t *testing.T) {
 	defer f.mu.Unlock()
 	if len(f.removed) != 1 || f.removed[0] != "u1" {
 		t.Fatalf("removed %v", f.removed)
-	}
-}
-
-func TestRenamingAGroupKeepsItInTheTenantsSubtree(t *testing.T) {
-	f := newFakeIdentity("demo")
-	h := startWithIdentity(t, f)
-	tok := h.token(t, "tenant-demo", "tom")
-
-	status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/rename-group", tok,
-		`{"group":"gentian:tenant:demo:sales","name":"Field-Sales"}`)
-	if status != http.StatusOK {
-		t.Fatalf("rename: %d %v", status, body)
-	}
-	f.mu.Lock()
-	got := f.lastGroup
-	f.mu.Unlock()
-	if got != "gentian:tenant:demo:field-sales" {
-		t.Fatalf("renamed to %q", got)
-	}
-	if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/rename-group", tok,
-		`{"group":"gentian:tenant:demo:sales","name":"admin"}`); status != http.StatusBadRequest {
-		t.Fatalf("renaming onto a platform name: %d, want 400", status)
 	}
 }
 
