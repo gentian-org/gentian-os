@@ -517,13 +517,11 @@ type AuthorizationRequirement struct {
 	// +kubebuilder:validation:MaxLength=65536
 	Model string `json:"model"`
 
-	// Groups "mirror" has the platform keep the tenant realm's group
-	// memberships in the store, as tuples
-	// group:<realm>/<group name>#member of user:<realm>/<subject>: every
-	// top-level group of the realm, kept equal to the realm as people join
-	// and leave. The model must define a type group with a relation member
-	// users are written with. A component's own key cannot write a tuple
-	// whose user or object is a group, mirrored or not.
+	// Groups "mirror" is accepted and has no effect. It had the platform
+	// keep the tenant realm's group memberships in the store; no group of
+	// the realm carries a right any more, so nothing is written for it. A
+	// component's own key still cannot write a tuple whose user or object
+	// is a group.
 	// +optional
 	// +kubebuilder:validation:Enum=mirror
 	Groups string `json:"groups,omitempty"`
@@ -538,7 +536,8 @@ type AuthorizationRequirement struct {
 	Tuples []AuthorizationTuple `json:"tuples,omitempty"`
 }
 
-// MirrorsGroups reports whether the store holds the realm's memberships.
+// MirrorsGroups reports whether the profile declares groups "mirror",
+// which reserves the type group in its store and mirrors nothing.
 func (a *AuthorizationRequirement) MirrorsGroups() bool {
 	return a != nil && a.Groups == AuthorizationGroupsMirror
 }

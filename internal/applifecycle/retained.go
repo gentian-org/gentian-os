@@ -27,8 +27,8 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/arbiter"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	rights "github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -107,9 +107,8 @@ type retainedSources struct {
 	// credentials are the keys below the tenant's apps path in the vault: an
 	// app's name, or "{app}-{extension}".
 	credentials map[string]bool
-	// groups are the names an access group exists for: an app's, or
-	// "{app}-{extension}".
-	groups map[string]bool
+	// access are the apps the rights store still holds something on.
+	access map[string]bool
 	// claims are the volume claims in the tenant's namespace.
 	claims []corev1.PersistentVolumeClaim
 	// authorization are the apps the arbiter recorded a store for.
@@ -153,8 +152,8 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 
 	// Every name something is held under. The names data is held under --
 	// a store on record, a volume claim -- are read by the one rule an
-	// export copies that data by (backup.DataHolders); credentials and
-	// access groups are added here, which hold no data a bundle carries. A
+	// export copies that data by (backup.DataHolders); credentials are
+	// added here, which hold no data a bundle carries. A
 	// name that is an extension's key or release is folded into the app that
 	// declares the extension; any other name stands for itself, which is
 	// also how a purge would treat it.
@@ -164,14 +163,39 @@ func (s *Service) RetainedApps(ctx context.Context, tenantName string) (*Retaine
 	}, backup.Profiles(profiles)) {
 		names[name] = true
 	}
-	for key := range src.groups {
-		names[extensionOwner(key, profiles)] = true
-	}
 	for key := range src.credentials {
 		names[extensionOwner(key, profiles)] = true
 	}
 	for name := range src.authorization {
 		names[name] = true
+	}
+
+	// What the rights store still holds on each of them.
+	if s.Rights == nil {
+		src.failed[KindAccessGroup] = "the operator has no connection to the rights store"
+	} else {
+		for name := range names {
+			if name == "" || !rights.ValidName(name) {
+				continue
+			}
+			profile, _ := profiles(name)
+			failed := false
+			for _, key := range ownedKeys(tenant, name, backup.SidecarNames(profile)) {
+				if !rights.ValidName(key) {
+					continue
+				}
+				entries, err := rights.AppEntries(ctx, s.Rights, tenantName, key)
+				if err != nil {
+					src.failed[KindAccessGroup] = "the rights store could not be read: " + err.Error()
+					failed = true
+					break
+				}
+				src.access[name] = src.access[name] || len(entries) > 0
+			}
+			if failed {
+				break
+			}
+		}
 	}
 
 	out := &RetainedApps{Tenant: tenantName, Apps: []RetainedApp{}, Unknown: map[string]string{}}
@@ -291,12 +315,11 @@ func (s *Service) retainedApp(tenant *gentianov1alpha1.Tenant, name string, prof
 	}
 	app.Kinds[KindCredentials] = state(KindCredentials, held)
 
-	// Access groups: the ones a purge would delete.
-	grouped := false
-	for _, key := range ownedKeys(tenant, name, backup.SidecarNames(profile)) {
-		grouped = grouped || src.groups[key]
-	}
-	app.Kinds[KindAccessGroup] = state(KindAccessGroup, grouped)
+	// Access: what the rights store still holds on the app, which a purge
+	// would remove. Asked per app: the store cannot be asked which apps it
+	// holds something on, so an app that left nothing else behind is not
+	// found by this alone.
+	app.Kinds[KindAccessGroup] = state(KindAccessGroup, src.access[name])
 	return app
 }
 
@@ -306,7 +329,7 @@ func (s *Service) retainedApp(tenant *gentianov1alpha1.Tenant, name string, prof
 func (s *Service) retainedSources(ctx context.Context, tenant *gentianov1alpha1.Tenant, ns string) retainedSources {
 	tenantName := tenant.Name
 	src := retainedSources{
-		databases: map[string]bool{}, credentials: map[string]bool{}, groups: map[string]bool{},
+		databases: map[string]bool{}, credentials: map[string]bool{}, access: map[string]bool{},
 		failed: map[string]string{},
 	}
 
@@ -352,18 +375,6 @@ func (s *Service) retainedSources(ctx context.Context, tenant *gentianov1alpha1.
 	} else {
 		for _, key := range keys {
 			src.credentials[strings.TrimSuffix(key, "/")] = true
-		}
-	}
-
-	// Access groups, in the tenant's own realm.
-	prefix := keycloak.TenantAppGroup(tenantName, "")
-	if groups, err := s.accessGroups(ctx); err != nil {
-		src.failed[KindAccessGroup] = "the identity provider could not be asked: " + err.Error()
-	} else if found, err := groups.GroupNames(ctx, keycloak.RealmName(tenant), prefix); err != nil {
-		src.failed[KindAccessGroup] = "the identity provider's groups could not be listed: " + err.Error()
-	} else {
-		for _, g := range found {
-			src.groups[strings.TrimPrefix(g, prefix)] = true
 		}
 	}
 

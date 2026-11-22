@@ -405,71 +405,6 @@ func (c *KeycloakAdminClient) ListGroupMembers(ctx context.Context, realm, group
 	return out, nil
 }
 
-// GroupExists reports whether the realm has a group of this name.
-func (c *KeycloakAdminClient) GroupExists(ctx context.Context, realm, groupName string) (bool, error) {
-	id, err := c.findGroupID(ctx, realm, groupName)
-	return id != "", err
-}
-
-// DeleteGroup removes a realm's group of this name, and with it every
-// membership in it. existed is false, with no error, when there was no such
-// group: asked twice, the second call finds nothing and says so.
-//
-// The group is looked for again afterwards, and one that is still there is an
-// error whatever the delete answered: a caller that reports the group gone
-// has to have seen it gone.
-func (c *KeycloakAdminClient) DeleteGroup(ctx context.Context, realm, groupName string) (existed bool, err error) {
-	id, err := c.findGroupID(ctx, realm, groupName)
-	if err != nil {
-		return false, err
-	}
-	if id == "" {
-		return false, nil
-	}
-	token, err := c.adminToken(ctx)
-	if err != nil {
-		return true, err
-	}
-	path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(id))
-	status, err := c.doAdmin(ctx, token, http.MethodDelete, path, nil)
-	if err != nil && status != http.StatusNotFound {
-		return true, fmt.Errorf("keycloak delete group %s: %w", groupName, err)
-	}
-	left, err := c.findGroupID(ctx, realm, groupName)
-	if err != nil {
-		return true, err
-	}
-	if left != "" {
-		return true, fmt.Errorf("keycloak still has group %s after deleting it", groupName)
-	}
-	return true, nil
-}
-
-// GroupNames lists the realm's top-level groups whose name starts with prefix.
-func (c *KeycloakAdminClient) GroupNames(ctx context.Context, realm, prefix string) ([]string, error) {
-	token, err := c.adminToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-	base := fmt.Sprintf("/admin/realms/%s/groups", url.PathEscape(realm))
-	var out []string
-	for first := 0; ; first += keycloakAdminPageSize {
-		var page []keycloakGroupRecord
-		if err := c.getAdminJSON(ctx, token, paginatedAdminPath(base, first, keycloakAdminPageSize), &page); err != nil {
-			return nil, fmt.Errorf("keycloak list groups: %w", err)
-		}
-		for _, g := range page {
-			if strings.HasPrefix(g.Name, prefix) {
-				out = append(out, g.Name)
-			}
-		}
-		if len(page) < keycloakAdminPageSize {
-			break
-		}
-	}
-	return out, nil
-}
-
 // builtInClientScopes are the client scopes Keycloak gives every realm. They
 // are the realm's own, whatever a catalog names its packs' scopes: a pack
 // that called its scope "profile" must not get the realm's profile scope
@@ -627,26 +562,6 @@ func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName 
 	return "", nil
 }
 
-// mergeGroupAttributes returns the group's current attributes with updates
-// applied over them. Keys not named in updates are carried through unchanged.
-func (c *KeycloakAdminClient) mergeGroupAttributes(
-	ctx context.Context, token, realm, groupID string, updates map[string][]string,
-) (map[string][]string, error) {
-	var current keycloakGroupRecord
-	path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(groupID))
-	if err := c.getAdminJSON(ctx, token, path, &current); err != nil {
-		return nil, fmt.Errorf("keycloak get group %s: %w", groupID, err)
-	}
-	merged := make(map[string][]string, len(current.Attributes)+len(updates))
-	for k, v := range current.Attributes {
-		merged[k] = v
-	}
-	for k, v := range updates {
-		merged[k] = v
-	}
-	return merged, nil
-}
-
 func (c *KeycloakAdminClient) adminToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -740,77 +655,6 @@ func (c *KeycloakAdminClient) newAdminRequest(ctx context.Context, token, method
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	return req, nil
-}
-
-func (c *KeycloakAdminClient) EnsureGroup(ctx context.Context, realm, groupName string, attributes map[string][]string) (string, error) {
-	id, err := c.findGroupID(ctx, realm, groupName)
-	if err != nil {
-		return "", err
-	}
-	if id != "" {
-		if len(attributes) > 0 {
-			token, err := c.adminToken(ctx)
-			if err != nil {
-				return "", err
-			}
-			// Merge, because Keycloak's group update replaces the attribute map
-			// wholesale and this is not its only writer. The tenant identity Job
-			// writes the keys a ComponentProfile declares, the App Store writes the
-			// default-grant marker, and an administrator sets others by hand in
-			// the console. Sending only our own keys deleted everyone else's on
-			// every pass.
-			merged, err := c.mergeGroupAttributes(ctx, token, realm, id, attributes)
-			if err != nil {
-				return "", err
-			}
-			body := map[string]any{
-				"name":       groupName,
-				"attributes": merged,
-			}
-			path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(id))
-			_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, body, http.StatusNoContent, http.StatusOK)
-			if err != nil {
-				return "", err
-			}
-		}
-		return id, nil
-	}
-
-	token, err := c.adminToken(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	body := map[string]any{
-		"name": groupName,
-	}
-	if len(attributes) > 0 {
-		body["attributes"] = attributes
-	}
-
-	path := fmt.Sprintf("/admin/realms/%s/groups", url.PathEscape(realm))
-	status, err := c.doAdminExpect(ctx, token, http.MethodPost, path, body, http.StatusCreated, http.StatusConflict)
-	if err != nil {
-		return "", err
-	}
-
-	if status == http.StatusCreated {
-		// Attempt to resolve ID from Location header or find it
-		// For simplicity, find it again
-		return c.findGroupID(ctx, realm, groupName)
-	}
-
-	return c.findGroupID(ctx, realm, groupName)
-}
-
-func (c *KeycloakAdminClient) AddUserToGroup(ctx context.Context, realm, userID, groupID string) error {
-	token, err := c.adminToken(ctx)
-	if err != nil {
-		return err
-	}
-	path := fmt.Sprintf("/admin/realms/%s/users/%s/groups/%s", url.PathEscape(realm), url.PathEscape(userID), url.PathEscape(groupID))
-	_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, nil, http.StatusNoContent, http.StatusOK)
-	return err
 }
 
 // UserIDByUsername answers the id of the realm's account of exactly that
