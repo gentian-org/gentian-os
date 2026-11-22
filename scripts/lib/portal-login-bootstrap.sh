@@ -1600,9 +1600,9 @@ ${admin_clients_shell}
               # Grafana, the platform's metrics dashboards. Made on every
               # cluster, as monitoring is switched on by a setting; nothing
               # answers at its address until then. Confidential, like Headlamp;
-              # it reads a person's role from the groups claim (the platform administrator
+              # it reads a person's role from the cluster roles claim (the administrator
               # is Grafana's Admin, everyone else who reaches it a Viewer), so
-              # it gets the groups scope too. The edge already decided who may
+              # it gets the cluster-roles scope too. The edge already decided who may
               # reach it at all: can_audit on the cluster.
               GRAFANA_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=grafana" \\
@@ -1647,7 +1647,7 @@ ${admin_clients_shell}
               # carries their own token, which the director checks like any
               # other. Public, because a CLI on a workstation cannot keep a
               # secret; device grant only, so it cannot be used to collect a
-              # password; the director's audience and the groups claim, so the
+              # password; the director's audience and the cluster roles claim, so the
               # token is one the director accepts and decides on.
               CLI_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-cli" \\

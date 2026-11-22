@@ -21,12 +21,10 @@ kernelRealm: kernel
 # by that chart, in its own scope -- so a value the ApplicationSet supplies
 # reaches an init container's image only this way.
 global:
-  # The event listener that keeps OpenFGA's memberships equal to Keycloak's.
-  #
-  # Keycloak is the only place a membership changes; the director holds a
-  # projection of it and never edits that in place. Without this provider the
-  # projection is empty, so nobody holds a group, and every permission that
-  # follows from group membership is refused to everyone.
+  # The platform's extension inside Keycloak: it tells the operator that a
+  # person came into a realm through an identity provider or was removed, and
+  # its token mappers ask the rights store which roles a person holds. Rights
+  # themselves are not kept in Keycloak.
   eventListener:
     # Overridden by the ApplicationSet with the ref the manifests come from.
     # The default only matters for a `helm template` run by hand.

@@ -151,17 +151,20 @@ func (r *ProfileRoles) InAppNames() map[string][]string {
 
 // ProvisioningSpec declares app-specific user lifecycle mappings.
 type ProvisioningSpec struct {
-	// PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
-	// administrator role (for example the Nextcloud "admin" group).
+	// PrivilegedRole is the in-app administrator role the app's
+	// administrators -- whoever holds admin on it in the rights store -- are
+	// put in, for an app that cannot read its people's roles from a token
+	// (for example the Nextcloud "admin" group).
 	// +optional
 	PrivilegedRole *PrivilegedRoleSpec `json:"privilegedRole,omitempty"`
 
-	// SyncJob is how this app applies PrivilegedRole. The operator resolves
-	// app-admins membership, publishes it, and runs this Job; the script inside
-	// speaks whatever protocol the application happens to expose.
+	// SyncJob is how this app applies PrivilegedRole. The operator reads who
+	// administers and who uses the app from the rights store, publishes both
+	// lists, and runs this Job; the script inside speaks whatever protocol the
+	// application happens to expose.
 	//
-	// The division is deliberate and load-bearing: resolving a Keycloak group,
-	// detecting membership changes and running a Job to completion are platform
+	// The division is deliberate and load-bearing: reading the rights store,
+	// detecting changes and running a Job to completion are platform
 	// concerns, so they live here. Knowing that one app wants a JSON-RPC call
 	// and another an OCS POST is not, so it lives in the catalog entry that
 	// owns that app. No application's protocol, endpoint or account model may
@@ -249,11 +252,11 @@ type ProvisioningSecretKeyRef struct {
 type PrivilegedRoleKind string
 
 const (
-	// PrivilegedRoleKindGroup maps app-admins to an application-native group.
+	// PrivilegedRoleKindGroup puts the app's administrators in an application-native group.
 	PrivilegedRoleKindGroup PrivilegedRoleKind = "group"
 )
 
-// PrivilegedRoleSpec identifies the in-app privileged role for app-admins members.
+// PrivilegedRoleSpec identifies the in-app privileged role of the app's administrators.
 type PrivilegedRoleSpec struct {
 	// Kind is the application's native role type. Only "group" is supported today.
 	// +kubebuilder:validation:Required
