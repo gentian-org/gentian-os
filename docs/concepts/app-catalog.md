@@ -738,6 +738,10 @@ the cluster's repository, and the director keeps it across its own writes of
 the file. Removing a catalog makes its apps' egress requests pending again.
 Every other kind of privilege still needs its approver.
 
+A profile the platform ships itself, which no catalog brought, has its egress
+requests answered by the platform: nobody in a tenant chose it, and what it
+reaches is decided with the release that ships it.
+
 ---
 
 ## 16. Secrets: three kinds

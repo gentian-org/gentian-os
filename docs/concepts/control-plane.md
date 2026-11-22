@@ -1282,8 +1282,11 @@ It keeps a person's sign-ins at services outside the cluster:
 - A component that was granted the contract `connections` tells the liaison
   which services there are and asks it for a short credential for one call.
   The lasting credential never leaves the liaison.
-- It reaches outside services over https only once its egress privilege
-  `outside-services` is approved.
+- It reaches outside services over https. The platform answers that request
+  itself, as it does for every profile it ships. What a tenant's approver
+  answers is each bridge to an outside service: the bridge names the
+  service, and the liaison is told of a bridge only once the bridge's own
+  request was answered.
 
 The platform places it in no tenant. A tenant has a liaison while an app it
 installed names it in `spec.comesWith`.

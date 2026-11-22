@@ -60,6 +60,9 @@ spec:
     services:
       # What a service hands back for a person is kept by the confidant.
       personSecrets: {}
+    # The platform answers this request itself, as for every profile it
+    # ships. Which services are reached is the bridges' to say, and a bridge
+    # is told to the liaison only once its own request was answered.
     privileges:
       egress:
         - name: outside-services
