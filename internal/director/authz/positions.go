@@ -99,13 +99,18 @@ type PositionSpec struct {
 func ShippedPositions(apps []InstalledApp) []PositionSpec {
 	user := PositionSpec{Name: PositionUser, Roles: []RoleGrant{{Role: RoleUser}}}
 	appAdmin := PositionSpec{Name: PositionAppAdministrator}
+	tenantAdmin := PositionSpec{Name: PositionTenantAdministrator, Roles: []RoleGrant{{Role: RoleAdmin}}}
 	for _, app := range apps {
 		if app.Profile == "" {
 			continue
 		}
 		appAdmin.Roles = append(appAdmin.Roles, RoleGrant{App: app.Profile, Role: RoleAdmin})
-		if app.ForEveryone {
+		if app.ForEveryone || app.GivenTo(PositionUser) {
 			user.Roles = append(user.Roles, RoleGrant{App: app.Profile, Role: RoleUser})
+		}
+		// App administrator holds admin on the app, which is user too.
+		if app.GivenTo(PositionTenantAdministrator) {
+			tenantAdmin.Roles = append(tenantAdmin.Roles, RoleGrant{App: app.Profile, Role: RoleUser})
 		}
 		for _, addon := range app.Addons {
 			if addon.ForEveryone && addon.Profile != "" {
@@ -113,11 +118,36 @@ func ShippedPositions(apps []InstalledApp) []PositionSpec {
 			}
 		}
 	}
-	return []PositionSpec{
-		user,
-		appAdmin,
-		{Name: PositionTenantAdministrator, Roles: []RoleGrant{{Role: RoleAdmin}}},
+	return []PositionSpec{user, appAdmin, tenantAdmin}
+}
+
+// GivenTo reports whether the tenant gave the app to a position by name.
+func (a InstalledApp) GivenTo(position string) bool {
+	for _, name := range a.Positions {
+		if name == position {
+			return true
+		}
 	}
+	return false
+}
+
+// WithAppsGivenTo is a tenant's own position with the role user of every
+// app the tenant gave to it, beside the roles it declares. A role it
+// already declares is not added twice.
+func WithAppsGivenTo(position PositionSpec, apps []InstalledApp) PositionSpec {
+	has := map[RoleGrant]bool{}
+	for _, role := range position.Roles {
+		has[role] = true
+	}
+	for _, app := range apps {
+		grant := RoleGrant{App: app.Profile, Role: RoleUser}
+		if app.Profile == "" || has[grant] || !app.GivenTo(position.Name) {
+			continue
+		}
+		has[grant] = true
+		position.Roles = append(position.Roles, grant)
+	}
+	return position
 }
 
 // Shipped reports whether name is one of the positions every tenant has.

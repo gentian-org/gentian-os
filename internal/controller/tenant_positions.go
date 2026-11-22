@@ -49,7 +49,10 @@ func installedAppsOf(ctx context.Context, c client.Client, tenant *gentianov1alp
 				"tenant", tenant.Name, "error", err.Error())
 			continue
 		}
-		entry := authz.InstalledApp{Profile: profile, ForEveryone: app.DefaultGrant, Roles: declaredRolesOf(ctx, c, profile)}
+		entry := authz.InstalledApp{
+			Profile: profile, ForEveryone: app.DefaultGrant, Positions: app.Positions,
+			Roles: declaredRolesOf(ctx, c, profile),
+		}
 		for _, addon := range app.Addons {
 			entry.Addons = append(entry.Addons, authz.InstalledApp{
 				Profile: addon, ForEveryone: app.AddonDefaultGranted(addon), Roles: declaredRolesOf(ctx, c, addon),
@@ -99,7 +102,8 @@ func declaredRoles(roles *gentianov1alpha1.ProfileRoles) []authz.DeclaredRole {
 }
 
 // positionsOf is the tenant's positions: the three every tenant has, for
-// its installed apps, and the ones its spec declares. A declared position
+// its installed apps, and the ones its spec declares, each with the role
+// user of every app the tenant gave to it (spec.apps[].positions). A declared position
 // under one of the three names is left out; admission refuses it, and the
 // three are not a tenant's to redefine.
 func positionsOf(tenant *gentianov1alpha1.Tenant, apps []authz.InstalledApp) []authz.PositionSpec {
@@ -112,7 +116,7 @@ func positionsOf(tenant *gentianov1alpha1.Tenant, apps []authz.InstalledApp) []a
 		for _, role := range p.Roles {
 			spec.Roles = append(spec.Roles, authz.RoleGrant{App: role.App, Role: role.Role})
 		}
-		out = append(out, spec)
+		out = append(out, authz.WithAppsGivenTo(spec, apps))
 	}
 	return out
 }

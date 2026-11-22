@@ -1884,6 +1884,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.apps[].movedAt` | string |  | `MovedAt` is when the pin was last moved to another build, RFC 3339, and MovedBy who or what moved it: a person's id, or the policy that did ("policy:latest"). |
 | `spec.apps[].movedBy` | string |  |  |
 | `spec.apps[].placed` | boolean |  | `Placed` says the platform put this app here, because its profile is placeable (ComponentProfile spec.placement). |
+| `spec.apps[].positions` | []string |  | `Positions` names the positions of the tenant whose holders use this app: each holds the app's role user. |
 | `spec.apps[].profile` | string |  | `Profile` is the name of the ComponentProfile to install. |
 | `spec.apps[].profileRef` | object |  | `ProfileRef` selects a ComponentProfile by catalog identity (family, version, edition, offering tier). |
 | `spec.apps[].profileRef.identity` | object |  | `Identity` selects a profile by catalog tuple when Name is empty. |

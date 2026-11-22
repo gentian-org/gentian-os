@@ -55,6 +55,7 @@ type Authenticator interface {
 // Repository is the git backend.
 type Repository interface {
 	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
+	InstallFor(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, positions *[]string, meta gitops.Meta) (gitops.Result, error)
 	RetryMove(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	InstallWith(ctx context.Context, tenant, with string, apps []gitops.CameWith, defaultGrant *bool, meta gitops.Meta) (gitops.Result, []string, error)
@@ -1119,6 +1120,44 @@ type installRequest struct {
 	// Absent leaves an installed app's entry as it is; false states that
 	// access is given per person.
 	DefaultGrant *bool `json:"defaultGrant,omitempty"`
+	// Positions are the positions of the tenant the app is given to: the
+	// holders of each use it. A name is one of the three every tenant has
+	// or one the tenant declares. "user" among them is every person of the
+	// tenant, the same as defaultGrant, and is written as that. Absent
+	// leaves an installed app's entry as it is; a list, empty or not,
+	// replaces what the entry said, defaultGrant included.
+	Positions *[]string `json:"positions,omitempty"`
+}
+
+// givenTo reads the positions an install names: whether user is among them,
+// and the others, each once. It refuses a name that is no position of the
+// tenant, with the sentence to answer with.
+func (s *Server) givenTo(ctx context.Context, tenant string, names []string) (everyone bool, others []string, refusal string, err error) {
+	own, err := s.cfg.Repo.TenantPositions(ctx, tenant)
+	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+		return false, nil, "", err
+	}
+	known := map[string]bool{}
+	for _, p := range own {
+		known[p.Name] = true
+	}
+	seen := map[string]bool{}
+	others = []string{}
+	for _, name := range names {
+		if !authz.Shipped(name) && !known[name] {
+			return false, nil, fmt.Sprintf("%q is not a position of the tenant", name), nil
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		if name == authz.PositionUser {
+			everyone = true
+			continue
+		}
+		others = append(others, name)
+	}
+	return everyone, others, "", nil
 }
 
 // install commits an app to a tenant's manifest.
@@ -1201,7 +1240,19 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		s.fail(w, r, http.StatusBadRequest, "the coordinate names a different app than the one being installed")
 		return
 	}
-	if body.DefaultGrant != nil && *body.DefaultGrant {
+	if body.Positions != nil {
+		everyone, others, refusal, err := s.givenTo(ctx, tenant, *body.Positions)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if refusal != "" {
+			s.fail(w, r, http.StatusBadRequest, refusal)
+			return
+		}
+		body.DefaultGrant, body.Positions = &everyone, &others
+	}
+	if (body.DefaultGrant != nil && *body.DefaultGrant) || (body.Positions != nil && len(*body.Positions) > 0) {
 		target := authz.Tenant(tenant)
 		ok, err := s.can(ctx, c, "can_grant", target)
 		if err != nil {
@@ -1210,8 +1261,8 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		if !ok {
 			s.fail(w, r, http.StatusForbidden,
-				"installing an app for everyone gives people access to it, which needs can_grant on the tenant; "+
-					"install it without defaultGrant, or ask somebody who may grant")
+				"installing an app for everyone or for a position gives people access to it, which needs can_grant on the tenant; "+
+					"install it without defaultGrant and positions, or ask somebody who may grant")
 			return
 		}
 		c.meta.Decision += " and can_grant " + target
@@ -1301,7 +1352,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	if !ok {
 		return
 	}
-	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, c.meta)
+	res, err := s.cfg.Repo.InstallFor(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, body.Positions, c.meta)
 	if err != nil || retry == nil {
 		if err == nil && len(came) > 0 {
 			out := map[string]any{"status": res.Status, "installedWith": came}

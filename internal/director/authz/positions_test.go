@@ -128,3 +128,39 @@ func TestNamesOfPositionsAndRoles(t *testing.T) {
 		t.Error("the objects are not named as the model names them")
 	}
 }
+
+// An app given to positions: each named position holds its role user, a
+// tenant's own beside the roles it declares, and a name that is no position
+// gives nothing.
+func TestAnAppGivenToPositions(t *testing.T) {
+	apps := []InstalledApp{
+		{Profile: "wiki", Positions: []string{PositionUser}},
+		{Profile: "shop", Positions: []string{PositionTenantAdministrator, "sales", "gone"}},
+	}
+	own := WithAppsGivenTo(PositionSpec{Name: "sales", Roles: []RoleGrant{{App: "shop", Role: RoleUser}, {App: "wiki", Role: RoleAdmin}}}, apps)
+	if len(own.Roles) != 2 {
+		t.Fatalf("a role the position already declares was added again: %v", own.Roles)
+	}
+	plain := WithAppsGivenTo(PositionSpec{Name: "sales"}, apps)
+	if len(plain.Roles) != 1 || plain.Roles[0] != (RoleGrant{App: "shop", Role: RoleUser}) {
+		t.Fatalf("the position does not hold the app it was given: %v", plain.Roles)
+	}
+	got, err := positionTuples("acme", append(ShippedPositions(apps), plain))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"position:acme/user#holder|user|app:acme/wiki",
+		"position:acme/tenant-administrator#holder|user|app:acme/shop",
+		"position:acme/sales#holder|user|app:acme/shop",
+	} {
+		if _, ok := got[want]; !ok {
+			t.Errorf("missing %s", want)
+		}
+	}
+	for k := range got {
+		if strings.Contains(k, "gone") || k == "position:acme/user#holder|user|app:acme/shop" {
+			t.Errorf("unexpected %s", k)
+		}
+	}
+}
