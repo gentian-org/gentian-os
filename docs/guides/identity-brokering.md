@@ -7,8 +7,8 @@ type: guide
 
 People who already have an account in one realm — another tenant of this
 cluster, or a tenant of another cluster — sign in to a second realm with that
-account, and get rights there according to where they come from. Keycloak
-does all of it; this page is the configuration, done in Keycloak's
+account. Keycloak makes the account; what the person may do there is a
+position a tenant's administrator gives them. This page is the configuration, done in Keycloak's
 administration console, except between two tenants of one cluster, which is
 [declared in git](#both-on-this-cluster-declared-in-git).
 
@@ -38,10 +38,11 @@ account in the target for anybody they make.
   identity providers `kernel` and `vouch-*`, which the platform composes and
   hides on the sign-in page. Leave them alone, and do not add the kernel
   realm as a source by hand.
-- **Rights come from groups in the target.** A person who arrives through a
+- **Rights come from positions in the target.** A person who arrives through a
   broker gets an account in the target realm, and nothing else — like a
-  person who signed up. What they may do is what the groups you map them into
-  give (step 3). This holds even in a target that takes no sign-ups: brokering
+  person who signed up. What they may do is what the positions they are
+  given hold (step 3). No group of a realm grants anything
+  ([iam.md §1.2](../concepts/iam.md)). This holds even in a target that takes no sign-ups: brokering
   makes accounts there regardless.
 
 ## 1. In the source realm: a client for the target
@@ -77,52 +78,39 @@ alias below is filled in.
 | Client authentication | Client secret sent as post |
 | Client ID / Client secret | from step 1 |
 | Trust email | On — the source has confirmed it; otherwise the target asks again |
-| Sync mode (under *Advanced settings*) | Force — name, e-mail and the mapped groups (step 3) follow the source at every sign-in |
+| Sync mode (under *Advanced settings*) | Force — name and e-mail follow the source at every sign-in |
 | Hide on login page | Off — the button appears under the sign-in form |
 
 A person whose e-mail address already has an account in the target is asked,
 once, to confirm that it is theirs before the two are linked (Keycloak's
 *first broker login* flow).
 
-## 3. In the target realm: map arrivals into groups
+## 3. In the target tenant: give arrivals a position
 
-Create the groups first (*Groups* → *Create group*), with names of your own.
-Do not use the platform's `gentian:tenant:<t>:*` groups for a whole source:
-`app-admins`, for instance, administers every app of the tenant.
+A person who arrived holds nothing until they are given a position. They
+appear in the target tenant's Admin Console under *Members* after their
+first sign-in; give them the position User, which lets them enter the
+tenant, and any position of the tenant's own.
 
-Then, on the identity provider, *Mappers* → *Add mapper*:
-
-- **Everybody from this source gets a group:** *Hardcoded Group*, the
-  group. One identity provider per origin, each with its own group, is
-  rights by where people come from.
-- **Only some of them:** *Advanced Claim to Group*. The source's tokens carry
-  its people's groups in the `groups` claim, by name; match the source group
-  and pick the target group. With sync mode *Force* the target group is taken
-  away at the next sign-in once the person has left the source group.
-
-## 4. Use the group
-
-Whatever is to recognize these people is configured with the target group:
-an app that edits for a group, a role in the tenant's Admin Console given to
-the group. Try it with a person of the source: the target's sign-in page
-shows the button (or, to go straight to the source, add
-`&kc_idp_hint=<alias>` to a sign-in URL of the target); after signing in at the source, they are back in the
-target, in the group.
+Try it with a person of the source: the target's sign-in page shows the
+button (or, to go straight to the source, add `&kc_idp_hint=<alias>` to a
+sign-in URL of the target). After signing in at the source they are back in
+the target, and refused until the position is given.
 
 ## Both on this cluster: declared in git
 
 When source and target are tenants of the same cluster, steps 1 to 3 are not
-done by hand at all. The target names the source and the groups its people
-are given; the source consents:
+done by hand at all. The target names the source and the positions its
+people are given; the source consents:
 
 ```yaml
 # the target, e.g. customers
 spec:
-  groups:
-    - name: website-editors          # declared groups: made by the platform
+  positions:
+    - name: website-editor           # a position of the tenant's own
   signInFrom:
     - tenant: team
-      groups: [website-editors, members]
+      positions: [website-editor, user]
 ---
 # the source, e.g. team
 spec:
@@ -133,18 +121,17 @@ Written with the CLI, as the cluster's administrator (one commit of both
 tenants' line):
 
 ```bash
-kubectl gentian tenants groups customers website-editors
-kubectl gentian tenants sign-in customers --from team --groups website-editors,members
+kubectl gentian tenants sign-in customers --from team --positions website-editor,user
 kubectl gentian tenants sign-in customers --remove team     # ends it
 ```
 
 The platform then makes, in the source realm, the client `broker-to-<target>`
 (authenticated by a JWT the target realm signs: no secret), and in the target
 realm the identity provider `tenant-<source>`, shown on the login page under
-the source tenant's name. It trusts the source's verified addresses and puts
-each person in the groups named at every sign-in. A group may be one of
-`spec.groups` or `members` (who may enter the tenant), never the tenant's
-administrators or perimeter approvers. Either side taking its line away ends
+the source tenant's name. It trusts the source's verified addresses, and
+the operator gives each person who arrives the positions named. A position
+may be `user` (who may enter the tenant) or one of `spec.positions`, never
+an administrator's. Either side taking its line away ends
 the sign-in.
 
 The source's desktop may then frame the target's apps, so a tile on it opens
@@ -152,10 +139,6 @@ one of them in a window ([routing.md](../concepts/routing.md) §4.3). Only on
 the same site: an app on another registrable domain than the source's desktop
 gets no session in the frame and has to be opened in a tab
 ([routing.md](../concepts/routing.md) §4.3, the `SameSite=Lax` cookie).
-
-Declared groups are made as plain groups: the Admin Console puts people in
-them and neither renames nor deletes them. A group of the same name made by
-hand earlier is in the way, and is removed first.
 
 ## Another cluster: partners, declared
 
@@ -190,9 +173,9 @@ kubectl gentian tenants partners customers remove acme     # ends it
   login page, authenticating by a JWT this realm signs, with the JWT
   authorization grant on. A first arrival is linked to an account that
   exists here (`link`), made (`create`), or a member of an organization of
-  the realm with the domain given (`organization`). It maps no group and
+  the realm with the domain given (`organization`). It gives no position and
   trusts the partner's address only with `organization`, where Keycloak
-  requires a verified one for membership; groups are still given by hand
+  requires a verified one for membership; positions are still given by hand
   (step 3). With
   `create`, the arrival is first asked what this realm's profile requires
   and the partner did not give, the e-mail address above all: the person
@@ -221,8 +204,8 @@ kubectl gentian tenants partners customers remove acme     # ends it
 ## Removing it
 
 Delete the identity provider in the target, and the client in the source.
-The accounts it made stay in the target — as accounts of nothing, without
-the mapped groups after their next sign-in — until you delete them (*Users*,
+The accounts it made stay in the target, with the positions they were
+given, until you remove them (*Users*,
 filter by the provider).
 
 ## What is not covered

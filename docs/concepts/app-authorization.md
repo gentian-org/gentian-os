@@ -17,11 +17,11 @@ server.
 
 | | Kernel authorization | App authorization |
 |---|---|---|
-| Holds | the platform's model: clusters, tenants, apps, groups ([authorization.md](authorization.md)) | one store per tenant and component, each with the component's own model |
+| Holds | the platform's model: clusters, tenants, apps, positions and roles ([authorization.md](authorization.md)) | one store per tenant and component, each with the component's own model |
 | Runs in | `kernel-authorization` | `system-authorization` |
 | Asked by | the enforcement points: bouncer, director, usher, custodian, registrar, the operator | the arbiter, and nothing else |
-| Written by | the operator's projection and the membership listener | the arbiter, for the component that holds the store |
-| Its data | structure rebuilt from git and the Cluster claim; memberships return from Keycloak as each person's groups next change | tenant data: exported, restored and purged with the tenant |
+| Written by | the operator, and nothing else | the arbiter, for the component that holds the store |
+| Its data | structure rebuilt from git and the Cluster claim; who holds which position and role is in the store alone and travels with a tenant's backup | tenant data: exported, restored and purged with the tenant |
 | Database | `kernel-postgres` | the tenants' data plane, `system-postgresql` |
 
 OpenFGA's credential opens every store on its server, so a key that reached
@@ -47,7 +47,7 @@ gone is replaced by a new one.
 ### 2.1 What a profile declares
 
 `requires.services.authorization`: the model in the OpenFGA DSL, and
-optionally `groups: mirror` (§2.5) and `tuples` (§2.6). The field, the Secret
+optionally `tuples` (§2.6). The field, the Secret
 `authorization-<component>` the app receives (`AUTHORIZATION_URL`,
 `AUTHORIZATION_KEY`) and the network path to the arbiter's port alone are in
 [app-customization.md §1.1](../guides/app-customization.md).
@@ -67,8 +67,7 @@ new profile build is written as a new model of the same store, and the
 tuples stay: OpenFGA models are immutable and versioned, and the arbiter
 always decides against the latest one the operator handed it.
 
-People are named as the platform names them, `user:<realm>/<subject>`, and
-groups `group:<realm>/<group name>`, through the one mapping every identifier
+People are named as the platform names them, `user:<realm>/<subject>`, through the one mapping every identifier
 crosses into OpenFGA by (`internal/arbiter/naming.go`), so a customer of one
 realm and a person of another can never be one user, and an app's tuples and
 the platform's agree on who someone is. The arbiter does not enforce the
@@ -89,10 +88,8 @@ Every call carries `Authorization: Bearer <AUTHORIZATION_KEY>`. A key the
 table does not name is `401`; nothing a caller sends can name another store,
 and a field the API does not have is `400`. Each key has a rate limit (100
 calls a second, burst 200), so no app can slow another's decisions. A key may
-not write or delete a tuple whose object is of type `group` (`403`): who is
-in a group is the realm's to say (§2.5). What a group's members hold of the
-component's own objects is the component's: a tuple whose user is
-`group:<realm>/<name>#member` is written like any other. A refusal is
+not write or delete a tuple whose object is of type `group` (`403`): the
+type is the platform's (§2.5). A refusal is
 `{code, message}`.
 
 The arbiter runs from the operator's image with its own command, and the
@@ -115,28 +112,12 @@ admits the director. Only the operator's ServiceAccount is admitted: a
 component's key is no token the API server vouches for, and a component's
 own token for that audience names the component's account.
 
-### 2.5 The realm's groups
+### 2.5 The type `group`
 
-`groups: mirror` has the platform keep the tenant realm's group memberships
-in the store: every top-level group of the realm, not only the platform's
-vocabulary, as `group:<realm>/<group name>#member` of
-`user:<realm>/<subject>`, `:` in a name written as `/`. The tenant's own
-members group, `gentian:tenant:<t>:members`, is
-`group:<realm>/gentian/tenant/<t>/members`. The model must define a type
-`group` whose relation `member` users are written with.
-
-The memberships come from the signed state events the membership listener
-receives for the kernel's store, after the kernel's projection, which is
-unchanged (`internal/membership/events.go`): a person's whole set of groups,
-compared with the store and written; a deleted group loses its members. A
-realm reaches the stores of the components of its one tenant and no other; a
-realm no tenant has, or several share, reaches none. A nested group is not
-mirrored, as the kernel's store holds none. An event the stores did not take
-is refused, and the listener sends it again.
-
-Keycloak sends memberships as they change and the kernel's projection keeps
-no list of them, so a store made after a membership was holds it from that
-person's next change on.
+The type `group` is the platform's in every app's store: no component's key
+writes or deletes a tuple whose object is one, and the platform writes none.
+A store knows people by `user:<realm>/<subject>` and what the component
+itself wrote about them.
 
 ### 2.6 Starting tuples
 
@@ -144,7 +125,7 @@ person's next change on.
 whenever the profile's list changes; one the profile no longer names is
 taken out again. The arbiter records which tuples it wrote, so a tuple the
 app wrote itself is never touched. They are held to the compiled model at
-admission; a store that mirrors groups names no group as an object here.
+admission, and name no group as an object.
 
 ### 2.7 Lifecycle
 
@@ -177,6 +158,6 @@ purges an engine and which engines are on every cluster is in
 |---|---|
 | that a component has a store | its profile |
 | the model of the store | its profile, compiled by the operator |
-| the tuples | the component, through the arbiter; group memberships the realm, starting tuples the profile |
+| the tuples | the component, through the arbiter; starting tuples the profile |
 | which engines run | the profiles installed, and the claim |
 | that an engine is removed | a person, by purge |
