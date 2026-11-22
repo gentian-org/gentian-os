@@ -97,7 +97,7 @@ func arrivalPositions(tenant *gentianov1alpha1.Tenant, provider string) (positio
 		return nil, false
 	}
 	for _, from := range tenant.Spec.SignInFrom {
-		if from.Tenant != source || !slices.Contains(tenantNamesSigningInTo(tenant), source) {
+		if from.Tenant != source {
 			continue
 		}
 		for _, p := range from.Positions {
@@ -109,17 +109,6 @@ func arrivalPositions(tenant *gentianov1alpha1.Tenant, provider string) (positio
 		}
 	}
 	return positions, false
-}
-
-// tenantNamesSigningInTo are the sources a tenant names; the other half of
-// the consent, the source naming this tenant, is what made the realm's
-// identity provider, without which nobody arrives through it.
-func tenantNamesSigningInTo(tenant *gentianov1alpha1.Tenant) []string {
-	out := make([]string, 0, len(tenant.Spec.SignInFrom))
-	for _, f := range tenant.Spec.SignInFrom {
-		out = append(out, f.Tenant)
-	}
-	return out
 }
 
 // PersonEntered implements membership.Arrivals.
