@@ -4553,8 +4553,7 @@ spec:
             - keycloak-registration-exec-.*
             - keycloak-registration-bindings.*
           # The platform's administrators entering a tenant: the provider's
-          # Secret before the provider, the provider before its mapper.
+          # Secret before the provider.
           - sequence:
             - ^kernel-idp-client$
             - ^keycloak-kernel-idp$
-            - ^keycloak-kernel-idp-admins-mapper$

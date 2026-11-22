@@ -69,6 +69,7 @@ spec:
   # Where this cluster runs.
   platform: self-hosted
 EOF
+# shellcheck disable=SC2016 # $1 is the inner shell's, given after the script.
 env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" KERNEL_DOMAIN=k.example \
     bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
         ensure_claim_names_no_role_group "$1"; ensure_claim_names_no_role_group "$1"' _ "${OLD}" >"${SANDBOX}/old.log" 2>&1
