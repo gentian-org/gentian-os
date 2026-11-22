@@ -17,65 +17,74 @@ import (
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
-// Who holds each platform role through its group: the members of the
-// kernel-realm group the Cluster claim names for the role
-// (spec.platformRoles). Read only. Those groups are managed in Keycloak and
-// the registrar refuses to change them (identity/guard.go); this says who is
-// in them, beside the named role holders the director reads from the claim.
+// Who of the platform tenant holds each cluster role: the people of the
+// kernel realm the Cluster claim names a role holder
+// (spec.platformAccess.roleHolders), the cluster's administrators among
+// them, each as the kernel realm knows them now. Read only: who holds a
+// role is written on the claim, by the director, and the registrar refuses
+// to change those accounts (identity/guard.go).
 //
 // Under can_audit on the cluster, like every other read of who holds what
 // over it.
 
 // platformRoleMembers is one role's line in the answer.
 type platformRoleMembers struct {
-	RoleGroup
-	// Members is null when the group could not be read; the answer then
-	// says it is incomplete rather than passing the role off as unheld.
+	// Role is the role as the claim spells it.
+	Role string `json:"role"`
+	// Members are the role's holders. One the realm could not be asked
+	// about, or no longer knows, is listed as the claim names them, and the
+	// answer says it is incomplete.
 	Members     []identity.Person `json:"members"`
 	Unavailable bool              `json:"unavailable,omitempty"`
 }
 
 func (s *Server) listPlatformRoleMembers(w http.ResponseWriter, r *http.Request, _ call) {
-	if s.cfg.PlatformRoles == nil {
-		s.fail(w, r, http.StatusServiceUnavailable, "this registrar does not read the platform roles")
+	if s.cfg.RoleHolders == nil {
+		s.fail(w, r, http.StatusServiceUnavailable, "this registrar does not read the cluster's role holders")
 		return
 	}
-	roles, err := s.cfg.PlatformRoles(r.Context())
+	holders, err := s.cfg.RoleHolders(r.Context())
 	if err != nil {
-		s.cfg.Log.ErrorContext(r.Context(), "platform roles not read", "request_id", guard.ID(r.Context()), "error", err.Error())
-		s.fail(w, r, http.StatusServiceUnavailable, "the Cluster claim's platform roles could not be read")
+		s.cfg.Log.ErrorContext(r.Context(), "role holders not read", "request_id", guard.ID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusServiceUnavailable, "the Cluster claim's role holders could not be read")
 		return
 	}
 	// The kernel realm is the platform tenant's.
 	var realm identity.Realm
-	t, err := s.cfg.Tenants.Tenant(r.Context(), platformTenant)
-	if err == nil {
-		realm, err = s.cfg.Identity.Realm(t.Realm)
+	t, rerr := s.cfg.Tenants.Tenant(r.Context(), platformTenant)
+	if rerr == nil {
+		realm, rerr = s.cfg.Identity.Realm(t.Realm)
+	}
+	if rerr != nil {
+		s.cfg.Log.WarnContext(r.Context(), "the kernel realm was not reached",
+			"request_id", guard.ID(r.Context()), "error", rerr.Error())
 	}
 	out := []platformRoleMembers{}
+	index := map[string]int{}
 	complete := true
-	for _, role := range roles {
-		entry := platformRoleMembers{RoleGroup: role}
-		if err == nil {
-			people, merr := s.cfg.Identity.GroupMembers(identityContext(r), realm, role.Group)
-			if merr == nil {
-				if people == nil {
-					people = []identity.Person{}
-				}
-				entry.Members = people
-				out = append(out, entry)
-				continue
-			}
-			s.cfg.Log.WarnContext(r.Context(), "platform role members not read",
-				"request_id", guard.ID(r.Context()), "role", role.Role, "group", role.Group, "error", merr.Error())
+	for _, h := range holders {
+		if h.Tenant != platformTenant {
+			continue
 		}
-		entry.Unavailable = true
-		complete = false
-		out = append(out, entry)
-	}
-	if err != nil {
-		s.cfg.Log.WarnContext(r.Context(), "the kernel realm was not reached",
-			"request_id", guard.ID(r.Context()), "error", err.Error())
+		i, ok := index[h.Role]
+		if !ok {
+			i = len(out)
+			index[h.Role] = i
+			out = append(out, platformRoleMembers{Role: h.Role, Members: []identity.Person{}})
+		}
+		person := identity.Person{ID: h.Subject, Username: h.Username, Email: h.Email}
+		if rerr == nil {
+			if known, err := s.cfg.Identity.Person(identityContext(r), realm, h.Subject); err == nil {
+				person = known
+			} else {
+				s.cfg.Log.WarnContext(r.Context(), "a role holder was not read from the kernel realm",
+					"request_id", guard.ID(r.Context()), "role", h.Role, "subject", h.Subject, "error", err.Error())
+				out[i].Unavailable, complete = true, false
+			}
+		} else {
+			out[i].Unavailable, complete = true, false
+		}
+		out[i].Members = append(out[i].Members, person)
 	}
 	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "complete": complete, "roles": out})
 }

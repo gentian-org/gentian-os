@@ -42,9 +42,6 @@ import (
 
 const audience = "gentian-director"
 
-// platformAdmins is the group the registrar must not touch.
-const platformAdmins = "gentian:platform:admin"
-
 // facts is what model v1 answers for the fixture, for the questions these
 // tests ask.
 var facts = dt.Table{
@@ -164,8 +161,13 @@ func startWithTenants(t *testing.T, ident registrar.Identity, decides authz.Chec
 		Invitations: invitations,
 		Now:         clock.Now,
 		Log:         slog.New(slog.NewTextHandler(logged, nil)),
-		PlatformRoles: func(context.Context) ([]registrar.RoleGroup, error) {
-			return []registrar.RoleGroup{{Role: "admin", Group: platformAdmins}, {Role: "securityOfficer", Group: "gentian:platform:security"}}, nil
+		RoleHolders: func(context.Context) ([]registrar.RoleHolder, error) {
+			return []registrar.RoleHolder{
+				{Role: "admin", Tenant: "platform", Subject: "u1", Username: "ada@example.com"},
+				{Role: "admin", Tenant: "platform", Subject: "gone", Username: "former@example.com", Email: "former@example.com"},
+				{Role: "perimeterApprover", Tenant: "demo", Subject: "t1", Username: "tom@demo.example"},
+				{Role: "securityOfficer", Tenant: "platform", Subject: "u1", Username: "ada@example.com"},
+			}, nil
 		},
 	})
 	if err != nil {
@@ -215,20 +217,14 @@ func routes() []route {
 	return []route{
 		{"GET", "/v1/tenants/demo/people", "", "can_manage_users", tenant},
 		{"GET", "/v1/tenants/demo/people/u1", "", "can_manage_users", tenant},
-		{"GET", "/v1/tenants/demo/groups", "", "can_manage_users", tenant},
 		{"GET", "/v1/tenants/demo/identity", "", "can_manage_users", tenant},
-		{"GET", "/v1/tenants/demo/group-members?group=gentian:tenant:demo:members", "", "can_manage_users", tenant},
 		{"GET", "/v1/tenants/demo/templates", "", "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/invite-person", `{"email":"ada@example.com"}`, "can_manage_users", tenant},
-		{"POST", "/v1/tenants/demo/actions/set-membership", `{"person":"u1","group":"gentian:tenant:demo:members","member":true}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/send-password-reset", `{"person":"u1"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/update-person", `{"person":"u1"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/remove-person", `{"person":"u1"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/require-totp", `{"person":"u1"}`, "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/remove-totp", `{"person":"u1"}`, "can_manage_users", tenant},
-		{"POST", "/v1/tenants/demo/actions/create-group", `{"name":"sales"}`, "can_manage_users", tenant},
-		{"POST", "/v1/tenants/demo/actions/delete-group", `{"group":"gentian:tenant:demo:sales"}`, "can_manage_users", tenant},
-		{"POST", "/v1/tenants/demo/actions/rename-group", `{"group":"gentian:tenant:demo:sales","name":"field"}`, "can_manage_users", tenant},
 		{"GET", "/v1/tenants/demo/removed-mailboxes", "", "can_manage_users", tenant},
 		{"POST", "/v1/tenants/demo/actions/delete-archived-mailbox", `{"mailbox":"demo-arch1"}`, "can_manage_users", tenant},
 		{"POST", c + "/tenants/demo/actions/activate-admin", "", "can_configure", cluster},

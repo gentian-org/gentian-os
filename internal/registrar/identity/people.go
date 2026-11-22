@@ -28,11 +28,58 @@ import (
 // the screens that offer them need. Nothing here decides anything: each one is
 // reached only from a route that has already asked OpenFGA about the caller.
 
-// ErrOutOfScope is a group this realm token may not touch. A tenant that has
-// its own realm is confined by the credential; a tenant that adopts the
-// kernel realm shares it with every other administrator, and there the
-// confinement has to be the group subtree.
-var ErrOutOfScope = errors.New("group is outside this scope")
+// ErrOutOfScope is a person this realm token may not touch. A tenant that has
+// its own realm is confined by the credential; a tenant that shares a realm
+// shares it with every other tenant in it, and there the confinement is the
+// tenant's own people (Scoped).
+var ErrOutOfScope = errors.New("person is outside this scope")
+
+// Subjects answers the accounts a realm token is confined to, by subject.
+// Asked on every call rather than read once: who the tenant's people are
+// changes with every invitation.
+type Subjects func(ctx context.Context) (map[string]bool, error)
+
+// Scoped confines a realm token to the accounts subjects answers.
+//
+// A tenant with its own realm needs no scope: the credential is the boundary.
+// A tenant that shares a realm shares it with the platform's own
+// administrators and with any other tenant in it, and there the only
+// boundary left is who the tenant's people are, which the rights store says
+// (the holders of its position user) -- so it is stated rather than assumed.
+//
+// A person is listed and read only when they are among them, and written to
+// only then (guard). Creating a person is let through: an invited person is
+// nobody's until the invitation gives them the tenant's position.
+func (r Realm) Scoped(subjects Subjects) Realm {
+	r.subjects = subjects
+	return r
+}
+
+// within reports whether an account is inside this realm token's scope.
+// An unanswered question is an error and never "everybody".
+func (r Realm) within(ctx context.Context, id string) (bool, error) {
+	if r.subjects == nil {
+		return true, nil
+	}
+	// The account this very call made: an invitation mails the person it
+	// has just created, before anybody could have given them the tenant's
+	// position.
+	if made, _ := ctx.Value(madeKey{}).(string); made != "" && made == id {
+		return true, nil
+	}
+	in, err := r.subjects(ctx)
+	if err != nil {
+		return false, fmt.Errorf("%w: the tenant's people could not be read: %v", ErrScopeUnavailable, err)
+	}
+	return in[id], nil
+}
+
+// madeKey carries the id of the account a call has just created.
+type madeKey struct{}
+
+// ErrScopeUnavailable means a shared realm's scope could not be read. The
+// call is refused, because answering would be answering for the whole realm.
+var ErrScopeUnavailable = errors.New("the scope of this realm could not be determined")
 
 // maxPeople bounds one answer. A realm's whole membership is not what a
 // screen opens with, and a search is how somebody finds one person.
@@ -53,7 +100,7 @@ type Person struct {
 	Enabled   bool   `json:"enabled"`
 	// TOTPConfigured reports an authenticator the person has enrolled;
 	// TOTPRequired one they must enrol at their next sign-in. Filled only by
-	// the call that reads one person, like Groups.
+	// the call that reads one person.
 	TOTPConfigured bool `json:"totpConfigured"`
 	TOTPRequired   bool `json:"totpRequired"`
 	// Pending reports somebody who has been invited and has not finished:
@@ -65,37 +112,7 @@ type Person struct {
 	// the realm: it is what tells a screen that removing this person comes
 	// with a question about their mail.
 	Mailbox string `json:"mailbox,omitempty"`
-	// Groups are the group paths this person holds, without the leading '/'.
-	// Filled only by the call that asks for them; listing a realm does not
-	// read every person's groups.
-	Groups []string `json:"groups,omitempty"`
 }
-
-// Group is one group in a realm.
-type Group struct {
-	ID string `json:"id"`
-	// Path is Keycloak's path without the leading '/'. This is the name the
-	// authorization graph uses, so it is what the console and the record
-	// should say too.
-	Path string `json:"path"`
-	Name string `json:"name"`
-	// Custom marks a group an administrator made, as opposed to one the
-	// platform composes (a tenant's admin group, an app's entitlement).
-	// Only a custom group can be deleted from here.
-	Custom bool `json:"custom"`
-	// DefaultGrant marks an app's group whose app the tenant provisioned for
-	// everybody rather than only installed: the console ticks it when a
-	// person is added, so such an app is opt-out for new people and an
-	// installed one is opt-in. It decides nothing about who may enter.
-	DefaultGrant bool `json:"defaultGrant,omitempty"`
-}
-
-// DefaultGrantAttribute is the Keycloak group attribute the operator sets
-// when an app is provisioned for a tenant's people (keycloak.DefaultGrantAttribute).
-const DefaultGrantAttribute = "gentianDefaultGrant"
-
-// CustomGroupAttribute marks a group created through CreateGroup.
-const CustomGroupAttribute = "gentian.custom"
 
 // configureTOTP is Keycloak's required action for enrolling an authenticator.
 const configureTOTP = "CONFIGURE_TOTP"
@@ -104,26 +121,6 @@ const configureTOTP = "CONFIGURE_TOTP"
 // whoever reads Keycloak's own console; the email field is what Keycloak
 // actually mails.
 const inviteEmailAttribute = "gentian.inviteEmail"
-
-// Scoped confines a realm token to one group subtree.
-//
-// A tenant with its own realm needs no scope: the credential is the boundary.
-// A tenant that adopts the kernel realm shares it with the platform's own
-// administrators and with any other tenant that adopted it, and there the
-// only boundary left is the group prefix the platform assigns -- so it is
-// stated rather than assumed.
-func (r Realm) Scoped(prefix string) Realm {
-	r.groupPrefix = prefix
-	return r
-}
-
-// permits reports whether a group path is inside this realm token's scope.
-func (r Realm) permits(path string) bool {
-	if r.groupPrefix == "" {
-		return true
-	}
-	return strings.HasPrefix(strings.TrimPrefix(path, "/"), r.groupPrefix)
-}
 
 // People lists a realm's people, optionally filtered by a search string that
 // Keycloak matches against username, address and name.
@@ -139,11 +136,22 @@ func (c *Client) People(ctx context.Context, r Realm, search string, limit int) 
 		q.Set("search", search)
 	}
 	var raw []userRep
-	if err := c.call(ctx, r, http.MethodGet, "/users", q, nil, &raw); err != nil {
+	err := c.call(ctx, r, http.MethodGet, "/users", q, nil, &raw)
+	if err != nil {
 		return nil, err
+	}
+	var in map[string]bool
+	if r.subjects != nil {
+		if in, err = r.subjects(ctx); err != nil {
+			return nil, fmt.Errorf("%w: the tenant's people could not be read: %v", ErrScopeUnavailable, err)
+		}
 	}
 	people := make([]Person, 0, len(raw))
 	for _, u := range raw {
+		// In a shared realm, only the tenant's own people.
+		if r.subjects != nil && !in[u.ID] {
+			continue
+		}
 		people = append(people, u.person())
 	}
 	sort.Slice(people, func(i, j int) bool { return people[i].Username < people[j].Username })
@@ -161,9 +169,16 @@ func (c *Client) UserCount(ctx context.Context, r Realm) (int, error) {
 	return n, nil
 }
 
-// Person reads one person, with the groups they hold.
+// Person reads one person.
 func (c *Client) Person(ctx context.Context, r Realm, id string) (Person, error) {
 	if !plainID(id) {
+		return Person{}, fmt.Errorf("%w: user %q", ErrNotFound, id)
+	}
+	// A person of a shared realm who is not this tenant's is not found
+	// here: saying "outside your scope" would say that they exist.
+	if in, err := r.within(ctx, id); err != nil {
+		return Person{}, err
+	} else if !in {
 		return Person{}, fmt.Errorf("%w: user %q", ErrNotFound, id)
 	}
 	var u userRep
@@ -183,44 +198,7 @@ func (c *Client) Person(ctx context.Context, r Realm, id string) (Person, error)
 			p.TOTPConfigured = true
 		}
 	}
-	var groups []groupRep
-	if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(id)+"/groups", nil, nil, &groups); err != nil {
-		return Person{}, err
-	}
-	for _, g := range groups {
-		path := strings.TrimPrefix(g.Path, "/")
-		// A person in a shared realm may hold groups from outside this
-		// scope. Reporting them here would leak another tenant's membership
-		// into this tenant's screen.
-		if !r.permits(path) {
-			continue
-		}
-		p.Groups = append(p.Groups, path)
-	}
-	sort.Strings(p.Groups)
 	return p, nil
-}
-
-// Groups lists the groups this realm token may administer.
-func (c *Client) Groups(ctx context.Context, r Realm) ([]Group, error) {
-	var raw []groupRep
-	// The full representation, for the attribute that marks a custom group.
-	q := url.Values{"max": {strconv.Itoa(maxPeople)}, "briefRepresentation": {"false"}}
-	if err := c.call(ctx, r, http.MethodGet, "/groups", q, nil, &raw); err != nil {
-		return nil, err
-	}
-	out := []Group{}
-	for _, g := range raw {
-		path := strings.TrimPrefix(g.Path, "/")
-		if !r.permits(path) {
-			continue
-		}
-		custom := len(g.Attributes[CustomGroupAttribute]) > 0 && g.Attributes[CustomGroupAttribute][0] == "true"
-		defaultGrant := len(g.Attributes[DefaultGrantAttribute]) > 0 && g.Attributes[DefaultGrantAttribute][0] == "true"
-		out = append(out, Group{ID: g.ID, Path: path, Name: g.Name, Custom: custom, DefaultGrant: defaultGrant})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out, nil
 }
 
 // ZoneLanding is where the realm's own zone client says a person should land.
@@ -278,9 +256,6 @@ type Invitation struct {
 	FirstName, LastName string
 	// RequireTOTP makes enrolling an authenticator part of accepting.
 	RequireTOTP bool
-	// Groups are the group paths to put them in, each of which must be
-	// inside the realm token's scope.
-	Groups []string
 	// RedirectURI is where the link lands once they have set a password, and
 	// ClientID is the client that link is for -- Keycloak refuses an
 	// action-token email that names neither.
@@ -312,16 +287,9 @@ func (c *Client) Invite(ctx context.Context, r Realm, inv Invitation) (Person, e
 	if !looksLikeAddress(username) {
 		return Person{}, fmt.Errorf("not an address: %q", inv.Username)
 	}
-	groups, err := c.resolveGroups(ctx, r, inv.Groups)
-	if err != nil {
-		return Person{}, err
-	}
-
-	// The group paths go in the creation itself. Creating the person and then
-	// adding them leaves a window in which somebody exists in the realm and
-	// belongs to nothing, and a failure in the second call would leave them
-	// there permanently -- signed in, entitled to nothing, and invisible on
-	// the screen that lists a group's members.
+	// What the person holds is not written here: the caller gives them the
+	// tenant's positions once the account exists, and an account that holds
+	// none may sign in and enter nothing.
 	body := map[string]any{
 		"username":      username,
 		"email":         email,
@@ -329,7 +297,6 @@ func (c *Client) Invite(ctx context.Context, r Realm, inv Invitation) (Person, e
 		"lastName":      strings.TrimSpace(inv.LastName),
 		"enabled":       true,
 		"emailVerified": false,
-		"groups":        groupPaths(groups),
 	}
 	if username != email {
 		body["attributes"] = map[string][]string{inviteEmailAttribute: {email}}
@@ -347,6 +314,8 @@ func (c *Client) Invite(ctx context.Context, r Realm, inv Invitation) (Person, e
 	if id == "" || !plainID(id) {
 		return Person{}, fmt.Errorf("keycloak created a user and named no id")
 	}
+
+	ctx = context.WithValue(ctx, madeKey{}, id)
 
 	// VERIFY_EMAIL proves the address reaches them, UPDATE_PASSWORD is what
 	// they came to do. Both in one link, so an invitation is one mail.
@@ -371,7 +340,7 @@ func (c *Client) Invite(ctx context.Context, r Realm, inv Invitation) (Person, e
 	}
 	return Person{ID: id, Username: username, Email: email, Enabled: true, Pending: true,
 		FirstName: strings.TrimSpace(inv.FirstName), LastName: strings.TrimSpace(inv.LastName),
-		TOTPRequired: inv.RequireTOTP, Groups: groupPaths(groups)}, nil
+		TOTPRequired: inv.RequireTOTP}, nil
 }
 
 // SendPasswordReset mails somebody a link that lets them set a new password.
@@ -404,27 +373,6 @@ func (c *Client) SendPasswordReset(ctx context.Context, r Realm, userID, clientI
 	return c.call(ctx, r, http.MethodPut,
 		"/users/"+url.PathEscape(userID)+"/execute-actions-email", q,
 		[]string{"UPDATE_PASSWORD"}, nil)
-}
-
-// SetMembership adds or removes one person from one group.
-//
-// The group is named by path rather than by id, because the path is what the
-// authorization graph, the console and the record all call it, and an id is
-// what only Keycloak calls it.
-func (c *Client) SetMembership(ctx context.Context, r Realm, userID, groupPath string, member bool) error {
-	if !plainID(userID) {
-		return fmt.Errorf("%w: user %q", ErrNotFound, userID)
-	}
-	groups, err := c.resolveGroups(ctx, r, []string{groupPath})
-	if err != nil {
-		return err
-	}
-	path := "/users/" + url.PathEscape(userID) + "/groups/" + url.PathEscape(groups[0].ID)
-	method := http.MethodDelete
-	if member {
-		method = http.MethodPut
-	}
-	return c.call(ctx, r, method, path, nil, nil, nil)
 }
 
 // PersonUpdate names what to change; a nil field is left as it is.
@@ -565,47 +513,6 @@ func (c *Client) setRequiredAction(ctx context.Context, r Realm, id, action stri
 	}
 	cur["requiredActions"] = actions
 	return c.call(ctx, r, http.MethodPut, "/users/"+url.PathEscape(id), nil, cur, nil)
-}
-
-// CreateGroup makes a custom group at the given path. The caller composes
-// the path inside its tenant's subtree; it must be inside this token's scope.
-func (c *Client) CreateGroup(ctx context.Context, r Realm, path string) (Group, error) {
-	path = strings.TrimPrefix(path, "/")
-	if path == "" || strings.Contains(path, "/") {
-		return Group{}, fmt.Errorf("%w: group %q", ErrNotFound, path)
-	}
-	if !r.permits(path) {
-		return Group{}, fmt.Errorf("%w: %q", ErrOutOfScope, path)
-	}
-	body := map[string]any{
-		"name":       path,
-		"attributes": map[string][]string{CustomGroupAttribute: {"true"}},
-	}
-	if err := c.call(ctx, r, http.MethodPost, "/groups", nil, body, nil); err != nil {
-		return Group{}, err
-	}
-	groups, err := c.resolveGroups(ctx, r, []string{path})
-	if err != nil {
-		return Group{}, err
-	}
-	return groups[0], nil
-}
-
-// ErrNotCustom is a group the platform composes, which is not deleted from here.
-var ErrNotCustom = errors.New("group is the platform's, not a custom one")
-
-// DeleteGroup removes a custom group. A group the platform composed -- an
-// app's entitlement, the tenant's admins -- is refused: its owner would only
-// make it again, and everybody in it would lose access until it did.
-func (c *Client) DeleteGroup(ctx context.Context, r Realm, path string) error {
-	groups, err := c.resolveGroups(ctx, r, []string{path})
-	if err != nil {
-		return err
-	}
-	if !groups[0].Custom {
-		return c.notCustom(ctx, groups[0].Path)
-	}
-	return c.call(ctx, r, http.MethodDelete, "/groups/"+url.PathEscape(groups[0].ID), nil, nil, nil)
 }
 
 // Activation is how an account was handed over: mailed to an address, or a
@@ -851,56 +758,6 @@ func (c *Client) ActivateAccount(ctx context.Context, r Realm, id, email string,
 	return Activation{Link: out.Link, ExpiresAt: out.ExpiresAt, Actions: actions, Email: mailTo, MailError: mailError}, nil
 }
 
-// RenameGroup gives a custom group a new path. The platform's own groups keep
-// their names: other things find them by name.
-func (c *Client) RenameGroup(ctx context.Context, r Realm, path, newPath string) (Group, error) {
-	newPath = strings.TrimPrefix(newPath, "/")
-	if newPath == "" || strings.Contains(newPath, "/") {
-		return Group{}, fmt.Errorf("%w: group %q", ErrNotFound, newPath)
-	}
-	if !r.permits(newPath) {
-		return Group{}, fmt.Errorf("%w: %q", ErrOutOfScope, newPath)
-	}
-	groups, err := c.resolveGroups(ctx, r, []string{path})
-	if err != nil {
-		return Group{}, err
-	}
-	if !groups[0].Custom {
-		return Group{}, c.notCustom(ctx, groups[0].Path)
-	}
-	var cur map[string]any
-	if err := c.call(ctx, r, http.MethodGet, "/groups/"+url.PathEscape(groups[0].ID), nil, nil, &cur); err != nil {
-		return Group{}, err
-	}
-	if cur == nil {
-		cur = map[string]any{}
-	}
-	cur["name"] = newPath
-	if err := c.call(ctx, r, http.MethodPut, "/groups/"+url.PathEscape(groups[0].ID), nil, cur, nil); err != nil {
-		return Group{}, err
-	}
-	return Group{ID: groups[0].ID, Path: newPath, Name: newPath, Custom: true}, nil
-}
-
-// GroupMembers lists the people in one group.
-func (c *Client) GroupMembers(ctx context.Context, r Realm, path string) ([]Person, error) {
-	groups, err := c.resolveGroups(ctx, r, []string{path})
-	if err != nil {
-		return nil, err
-	}
-	var raw []userRep
-	q := url.Values{"max": {strconv.Itoa(maxPeople)}, "briefRepresentation": {"true"}}
-	if err := c.call(ctx, r, http.MethodGet, "/groups/"+url.PathEscape(groups[0].ID)+"/members", q, nil, &raw); err != nil {
-		return nil, err
-	}
-	out := make([]Person, 0, len(raw))
-	for _, u := range raw {
-		out = append(out, u.person())
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
-	return out, nil
-}
-
 func containsString(list []string, s string) bool {
 	for _, v := range list {
 		if v == s {
@@ -910,54 +767,7 @@ func containsString(list []string, s string) bool {
 	return false
 }
 
-// resolveGroups turns group paths into groups, refusing any outside scope.
-//
-// The scope check happens here, once, rather than in each caller: every write
-// that names a group goes through this function, so a new one cannot forget.
-func (c *Client) resolveGroups(ctx context.Context, r Realm, paths []string) ([]Group, error) {
-	if len(paths) == 0 {
-		return nil, nil
-	}
-	known, err := c.Groups(ctx, r)
-	if err != nil {
-		return nil, err
-	}
-	byPath := make(map[string]Group, len(known))
-	for _, g := range known {
-		byPath[g.Path] = g
-	}
-	out := make([]Group, 0, len(paths))
-	for _, p := range paths {
-		p = strings.TrimPrefix(p, "/")
-		if !r.permits(p) {
-			return nil, fmt.Errorf("%w: %q", ErrOutOfScope, p)
-		}
-		g, ok := byPath[p]
-		if !ok {
-			// Out of scope and not there are different answers, and this is
-			// the second: Groups() already dropped anything outside scope,
-			// so what is left is a group this realm does not have.
-			return nil, fmt.Errorf("%w: group %q", ErrNotFound, p)
-		}
-		out = append(out, g)
-	}
-	return out, nil
-}
-
-func groupPaths(groups []Group) []string {
-	if len(groups) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(groups))
-	for _, g := range groups {
-		// Keycloak's user representation wants the path with its leading
-		// slash; everything else in this platform says it without.
-		out = append(out, "/"+g.Path)
-	}
-	return out
-}
-
-// userRep and groupRep are the parts of Keycloak's representations this reads.
+// userRep is the part of Keycloak's representation this reads.
 type userRep struct {
 	ID              string   `json:"id"`
 	Username        string   `json:"username"`
@@ -985,13 +795,6 @@ func (u userRep) person() Person {
 		Pending:      !u.EmailVerified || containsString(u.RequiredActions, "UPDATE_PASSWORD"),
 		TOTPRequired: containsString(u.RequiredActions, configureTOTP),
 	}
-}
-
-type groupRep struct {
-	ID         string              `json:"id"`
-	Name       string              `json:"name"`
-	Path       string              `json:"path"`
-	Attributes map[string][]string `json:"attributes"`
 }
 
 // plainID rejects anything that is not a Keycloak id, before it reaches a

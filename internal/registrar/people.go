@@ -29,7 +29,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/registrar/record"
 )
 
-// People and groups — the registrar speaking for
+// People — the registrar speaking for
 // Keycloak on a caller's behalf (S7A.17).
 //
 // The rule is the same as for git and for the authorization graph: a write
@@ -103,15 +103,28 @@ func (s *Server) realmFor(w http.ResponseWriter, r *http.Request) (identity.Real
 		return identity.Realm{}, false
 	}
 	// A tenant that has a realm to itself is confined by the credential. A
-	// tenant that shares the kernel realm is not, and there the group subtree
-	// is the only boundary left -- so it is stated rather than assumed.
+	// tenant that shares a realm is not, and there the only boundary left is
+	// who the tenant's people are -- the holders of its position user, as
+	// the rights store names them -- so it is stated rather than assumed.
 	//
 	// Except the platform tenant, which does not share the kernel realm but
-	// owns it: its people are the kernel realm's administrators and its groups
-	// are gentian:platform:*, so confining it to gentian:tenant:platform:
-	// showed it none of its own groups.
+	// owns it: its people are the kernel realm's accounts.
 	if tenant.Realm != tenant.Name && tenant.Name != platformTenant {
-		token = token.Scoped(tenantGroupPrefix(tenant.Name))
+		rights, name := s.cfg.Rights, tenant.Name
+		token = token.Scoped(func(ctx context.Context) (map[string]bool, error) {
+			if rights == nil {
+				return nil, errors.New("this registrar has no way to the rights store")
+			}
+			subjects, err := rights.People(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+			in := make(map[string]bool, len(subjects))
+			for _, sub := range subjects {
+				in[sub] = true
+			}
+			return in, nil
+		})
 	}
 	return token, true
 }
@@ -134,22 +147,27 @@ func (s *Server) identityError(w http.ResponseWriter, r *http.Request, err error
 		// Not 403. The caller holds the relation; what they named is outside
 		// what this tenant may touch, and saying "forbidden" would send them
 		// to ask for a permission that would not help.
-		s.fail(w, r, http.StatusBadRequest, "that group does not belong to this tenant")
+		s.fail(w, r, http.StatusBadRequest, "that person does not belong to this tenant")
 	case errors.Is(err, identity.ErrNoCredential):
 		s.fail(w, r, http.StatusServiceUnavailable, "this registrar holds no credential for that realm")
 	case errors.Is(err, identity.ErrProtected):
 		// Whoever asks. The caller holds the relation the route requires, and
-		// this is refused all the same: who holds a platform role is not
+		// this is refused all the same: who holds a cluster role is not
 		// changed through the registrar (identity/guard.go).
-		s.cfg.Log.WarnContext(r.Context(), "refused: the holders of the platform's roles are not managed here",
+		s.cfg.Log.WarnContext(r.Context(), "refused: the holders of the cluster's roles are not managed here",
 			"request_id", guard.ID(r.Context()), "tenant", r.PathValue("t"), "reason", err.Error())
 		s.fail(w, r, http.StatusForbidden, "refused: "+err.Error()+
-			". Who holds a platform role is not changed through the registrar.")
+			". Who holds a cluster role is not changed through the registrar.")
 	case errors.Is(err, identity.ErrGuardUnavailable):
-		s.cfg.Log.ErrorContext(r.Context(), "the platform role groups could not be read; nothing was written",
+		s.cfg.Log.ErrorContext(r.Context(), "the cluster's role holders could not be read; nothing was written",
 			"request_id", guard.ID(r.Context()), "error", err.Error())
 		s.fail(w, r, http.StatusServiceUnavailable,
-			"the platform role groups could not be read from the Cluster claim, so nothing was changed")
+			"the cluster's role holders could not be read from the Cluster claim, so nothing was changed")
+	case errors.Is(err, identity.ErrScopeUnavailable):
+		s.cfg.Log.ErrorContext(r.Context(), "the tenant's people could not be read from the rights store",
+			"request_id", guard.ID(r.Context()), "tenant", r.PathValue("t"), "error", err.Error())
+		s.fail(w, r, http.StatusServiceUnavailable,
+			"this tenant shares its realm, and who its people are could not be read, so nothing was answered or changed")
 	case errors.Is(err, identity.ErrUnguarded):
 		s.cfg.Log.ErrorContext(r.Context(), "a write the registrar has no rule for was refused",
 			"request_id", guard.ID(r.Context()), "error", err.Error())
@@ -235,7 +253,7 @@ func (s *Server) clusterUserCount(w http.ResponseWriter, r *http.Request, _ call
 	})
 }
 
-// getPerson answers one person and the groups they hold.
+// getPerson answers one person.
 func (s *Server) getPerson(w http.ResponseWriter, r *http.Request, _ call) {
 	realm, ok := s.realmFor(w, r)
 	if !ok {
@@ -250,20 +268,6 @@ func (s *Server) getPerson(w http.ResponseWriter, r *http.Request, _ call) {
 		person.Mailbox = mailboxOf(tenant, person)
 	}
 	s.json(w, http.StatusOK, person)
-}
-
-// listGroups answers the groups this tenant may put somebody in.
-func (s *Server) listGroups(w http.ResponseWriter, r *http.Request, _ call) {
-	realm, ok := s.realmFor(w, r)
-	if !ok {
-		return
-	}
-	groups, err := s.cfg.Identity.Groups(identityContext(r), realm)
-	if err != nil {
-		s.identityError(w, r, err)
-		return
-	}
-	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "groups": groups})
 }
 
 // tenantIdentitySettings answers what the member screens need to know about
@@ -301,12 +305,11 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 		Email string `json:"email"`
 		// Username is the part before @<login domain>; empty makes the
 		// address the login, as before.
-		Username         string   `json:"username"`
-		FirstName        string   `json:"firstName"`
-		LastName         string   `json:"lastName"`
-		RequireTOTP      bool     `json:"requireTotp"`
-		SettingsTemplate string   `json:"settingsTemplate"`
-		Groups           []string `json:"groups"`
+		Username         string `json:"username"`
+		FirstName        string `json:"firstName"`
+		LastName         string `json:"lastName"`
+		RequireTOTP      bool   `json:"requireTotp"`
+		SettingsTemplate string `json:"settingsTemplate"`
 		// Positions are the positions the person holds from the start,
 		// beside user, which every invited person of a tenant holds.
 		Positions []string `json:"positions"`
@@ -351,7 +354,6 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 		FirstName:   body.FirstName,
 		LastName:    body.LastName,
 		RequireTOTP: body.RequireTOTP,
-		Groups:      body.Groups,
 		ClientID:    client,
 		RedirectURI: redirect,
 	})
@@ -438,22 +440,6 @@ func invitedPositions(tenant string, asked []string) ([]string, bool) {
 
 // localPart is what a person may type before @<login domain>.
 var localPart = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
-
-// tenantGroupPrefix is the subtree a tenant's own groups live in.
-func tenantGroupPrefix(tenant string) string {
-	if tenant == platformTenant {
-		return "gentian:platform:"
-	}
-	return "gentian:tenant:" + tenant + ":"
-}
-
-// groupLabel is the part of a custom group's name an administrator types.
-// No colon, so a label can never reach into the names the platform composes
-// (":app:<profile>", ":admin").
-var groupLabel = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
-
-// reservedGroupLabels are names the platform composes itself.
-var reservedGroupLabels = map[string]bool{"admin": true, "admins": true, "app-admins": true, "members": true, "perimeter": true, "platform-admins": true}
 
 // updatePerson changes somebody's names, delivery address or whether they may
 // sign in.
@@ -664,94 +650,6 @@ func (s *Server) removeTOTP(w http.ResponseWriter, r *http.Request, c call) {
 	s.json(w, http.StatusOK, map[string]any{"person": body.Person, "totpRequired": false, "totpConfigured": false})
 }
 
-// createGroup makes a custom group in the tenant's subtree.
-func (s *Server) createGroup(w http.ResponseWriter, r *http.Request, c call) {
-	realm, ok := s.realmFor(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		Name string `json:"name"`
-	}
-	if !s.decode(w, r, &body) {
-		return
-	}
-	label := strings.ToLower(strings.TrimSpace(body.Name))
-	if !groupLabel.MatchString(label) || reservedGroupLabels[label] {
-		s.fail(w, r, http.StatusBadRequest, "a group name is lower-case letters, digits and dashes, and not one the platform uses")
-		return
-	}
-	group, err := s.cfg.Identity.CreateGroup(identityContext(r), realm, tenantGroupPrefix(r.PathValue("t"))+label)
-	if err != nil {
-		if errors.Is(err, identity.ErrConflict) {
-			s.fail(w, r, http.StatusConflict, "that group already exists")
-			return
-		}
-		s.identityError(w, r, err)
-		return
-	}
-	s.recordIdentityAction(r, c, "create-group", realm, group.Path)
-	s.json(w, http.StatusCreated, group)
-}
-
-// deleteGroup removes a custom group.
-func (s *Server) deleteGroup(w http.ResponseWriter, r *http.Request, c call) {
-	realm, ok := s.realmFor(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		Group string `json:"group"`
-	}
-	if !s.decode(w, r, &body) {
-		return
-	}
-	if err := s.cfg.Identity.DeleteGroup(identityContext(r), realm, body.Group); err != nil {
-		if errors.Is(err, identity.ErrNotCustom) {
-			s.fail(w, r, http.StatusBadRequest, "this group is the platform's: it is removed with the app or tenant it belongs to")
-			return
-		}
-		s.identityError(w, r, err)
-		return
-	}
-	s.recordIdentityAction(r, c, "delete-group", realm, body.Group)
-	s.json(w, http.StatusOK, map[string]any{"group": body.Group, "deleted": true})
-}
-
-// renameGroup gives a custom group a new label within the tenant's subtree.
-func (s *Server) renameGroup(w http.ResponseWriter, r *http.Request, c call) {
-	realm, ok := s.realmFor(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		Group string `json:"group"`
-		Name  string `json:"name"`
-	}
-	if !s.decode(w, r, &body) {
-		return
-	}
-	label := strings.ToLower(strings.TrimSpace(body.Name))
-	if !groupLabel.MatchString(label) || reservedGroupLabels[label] {
-		s.fail(w, r, http.StatusBadRequest, "a group name is lower-case letters, digits and dashes, and not one the platform uses")
-		return
-	}
-	group, err := s.cfg.Identity.RenameGroup(identityContext(r), realm, body.Group, tenantGroupPrefix(r.PathValue("t"))+label)
-	if err != nil {
-		switch {
-		case errors.Is(err, identity.ErrNotCustom):
-			s.fail(w, r, http.StatusBadRequest, "this group is the platform's, and keeps its name")
-		case errors.Is(err, identity.ErrConflict):
-			s.fail(w, r, http.StatusConflict, "a group with that name already exists")
-		default:
-			s.identityError(w, r, err)
-		}
-		return
-	}
-	s.recordIdentityAction(r, c, "rename-group", realm, group.Path)
-	s.json(w, http.StatusOK, group)
-}
-
 // activateAdmin hands a tenant's administrator account to its holder.
 //
 // The account has no password (the operator creates it without one). This
@@ -872,21 +770,6 @@ func (s *Server) handOverAdmin(ctx context.Context, name, email string) (handedO
 	return out, err
 }
 
-// listGroupMembers answers who is in one group.
-func (s *Server) listGroupMembers(w http.ResponseWriter, r *http.Request, _ call) {
-	realm, ok := s.realmFor(w, r)
-	if !ok {
-		return
-	}
-	group := r.URL.Query().Get("group")
-	people, err := s.cfg.Identity.GroupMembers(identityContext(r), realm, group)
-	if err != nil {
-		s.identityError(w, r, err)
-		return
-	}
-	s.json(w, http.StatusOK, map[string]any{"group": group, "people": people})
-}
-
 // listTemplates answers the desktop's settings templates for this tenant.
 //
 // They live in the desktop, which keeps a person's settings; the registrar
@@ -998,35 +881,6 @@ func (s *Server) inviteClientID(realm identity.Realm) string {
 		return s.cfg.InviteClientID
 	}
 	return "gentian-edge-" + realm.Name()
-}
-
-// setMembership adds or removes one person from one group.
-func (s *Server) setMembership(w http.ResponseWriter, r *http.Request, c call) {
-	realm, ok := s.realmFor(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		Person string `json:"person"`
-		Group  string `json:"group"`
-		Member *bool  `json:"member"`
-	}
-	if !s.decode(w, r, &body) {
-		return
-	}
-	if body.Member == nil {
-		s.fail(w, r, http.StatusBadRequest, "say whether they are a member: true or false")
-		return
-	}
-	if err := s.cfg.Identity.SetMembership(identityContext(r), realm,
-		body.Person, body.Group, *body.Member); err != nil {
-		s.identityError(w, r, err)
-		return
-	}
-	s.recordIdentityAction(r, c, "set-membership", realm, body.Group)
-	s.json(w, http.StatusOK, map[string]any{
-		"person": body.Person, "group": body.Group, "member": *body.Member,
-	})
 }
 
 // sendPasswordReset mails somebody a link to set a new password.

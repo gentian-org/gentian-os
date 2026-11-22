@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -47,7 +48,11 @@ const NotifyAdministratorsPath = "/v1/actions/notify-administrators"
 
 const (
 	keycloakSMTPCredentialsSecret = "keycloak-smtp-credentials"
-	defaultPlatformAdminGroup     = "gentian:platform:admin"
+	// administratorRole is the cluster's administrator among the Cluster
+	// claim's role holders (spec.platformAccess.roleHolders), and
+	// platformTenantName the tenant whose people hold it.
+	administratorRole  = "admin"
+	platformTenantName = "platform"
 )
 
 // The events the administrators are mailed on.
@@ -61,8 +66,8 @@ const (
 )
 
 var (
-	// ErrNoAdministratorAddress is a platform admin group with nobody in
-	// it who has an address.
+	// ErrNoAdministratorAddress is a cluster none of whose administrators
+	// has an address.
 	ErrNoAdministratorAddress = errors.New("no administrator of this cluster has a mail address")
 	// ErrNotification is a request that names no known event, or a
 	// release the index does not list.
@@ -166,9 +171,9 @@ func (h *HTTPServer) handleNotifyAdministrators(w http.ResponseWriter, r *http.R
 	}
 }
 
-// NotifyAdministrators mails the members of the cluster's platform admin
-// group (spec.platformRoles.admin on the Cluster claim) through the
-// platform's SMTP settings (keycloak-smtp-credentials, in either mail
+// NotifyAdministrators mails the cluster's administrators -- the people of
+// the platform tenant the Cluster claim names holders of the role admin
+// (spec.platformAccess.roleHolders) -- through the platform's SMTP settings (keycloak-smtp-credentials, in either mail
 // mode). Refused when mail is not configured or nobody has an address.
 func (s *Service) NotifyAdministrators(ctx context.Context, req NotifyAdministratorsRequest) (*NotifyAdministratorsResult, error) {
 	write, ok := adminMails[req.Event]
@@ -195,9 +200,9 @@ func (s *Service) NotifyAdministrators(ctx context.Context, req NotifyAdministra
 		return nil, err
 	}
 	kernelDomain, _, _ := unstructured.NestedString(claim.Object, "spec", "kernelDomain")
-	group, _, _ := unstructured.NestedString(claim.Object, "spec", "platformRoles", "admin")
-	if group == "" {
-		group = defaultPlatformAdminGroup
+	subjects, err := clusterAdministrators(claim, time.Now())
+	if err != nil {
+		return nil, err
 	}
 	secret := &corev1.Secret{}
 	if err := s.client.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: layout.Namespace(layout.Authentication)}, secret); err != nil {
@@ -211,13 +216,19 @@ func (s *Service) NotifyAdministrators(ctx context.Context, req NotifyAdministra
 	if realm == "" {
 		realm = "kernel"
 	}
-	members, err := s.groupMembers(ctx, realm, group)
+	accounts, err := s.realmUsers(ctx, realm)
 	if err != nil {
-		return nil, fmt.Errorf("the members of %s could not be read: %w", group, err)
+		return nil, fmt.Errorf("the accounts of realm %s could not be read: %w", realm, err)
+	}
+	var members []authz.KeycloakUser
+	for _, a := range accounts {
+		if subjects[a.ID] {
+			members = append(members, a)
+		}
 	}
 	to := administratorAddresses(members)
 	if len(to) == 0 {
-		return nil, fmt.Errorf("%w (group %s of realm %s)", ErrNoAdministratorAddress, group, realm)
+		return nil, fmt.Errorf("%w (%d named on the Cluster claim, realm %s)", ErrNoAdministratorAddress, len(subjects), realm)
 	}
 	cluster := kernelDomain
 	if cluster == "" {
@@ -250,17 +261,47 @@ func (s *Service) releaseIndex(ctx context.Context) (releaseindex.Index, error) 
 	return idx, nil
 }
 
-// groupMembers lists a group's enabled members, through the Keycloak admin
-// client the operator already holds; a test sets listGroupMembers.
-func (s *Service) groupMembers(ctx context.Context, realm, group string) ([]authz.KeycloakUser, error) {
-	if s.listGroupMembers != nil {
-		return s.listGroupMembers(ctx, realm, group)
+// clusterAdministrators is the subjects of the cluster's administrators as
+// the claim names them: the platform tenant's holders of the role admin
+// whose entry has not expired. The claim is the whole of who holds a
+// cluster role; the operator writes the rights store from it.
+func clusterAdministrators(claim *unstructured.Unstructured, now time.Time) (map[string]bool, error) {
+	entries, _, err := unstructured.NestedSlice(claim.Object, "spec", "platformAccess", "roleHolders")
+	if err != nil {
+		return nil, fmt.Errorf("reading spec.platformAccess.roleHolders of the Cluster claim: %w", err)
+	}
+	out := map[string]bool{}
+	for _, e := range entries {
+		m, _ := e.(map[string]interface{})
+		if role, _ := m["role"].(string); role != administratorRole {
+			continue
+		}
+		if tenant, _ := m["tenant"].(string); tenant != platformTenantName {
+			continue
+		}
+		if until, _ := m["expiresAt"].(string); until != "" {
+			if t, err := time.Parse(time.RFC3339, until); err != nil || !t.After(now) {
+				continue
+			}
+		}
+		if sub, _ := m["subject"].(string); sub != "" {
+			out[sub] = true
+		}
+	}
+	return out, nil
+}
+
+// realmUsers lists a realm's enabled accounts, through the Keycloak admin
+// client the operator already holds; a test sets listRealmUsers.
+func (s *Service) realmUsers(ctx context.Context, realm string) ([]authz.KeycloakUser, error) {
+	if s.listRealmUsers != nil {
+		return s.listRealmUsers(ctx, realm)
 	}
 	kc, err := authz.LoadKeycloakAdminClient(ctx, s.client)
 	if err != nil {
 		return nil, err
 	}
-	return kc.ListGroupMembers(ctx, realm, group)
+	return kc.ListRealmUsers(ctx, realm)
 }
 
 // administratorAddresses is where the members receive mail: the login
