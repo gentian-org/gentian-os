@@ -3008,6 +3008,20 @@ spec:
                       - name: length
                         config:
                           max: "255"
+                  {{- /* The mark the sign-in flow reads: an account that
+                       administers gives a second factor. The platform writes it
+                       from the rights store; the person neither sees nor changes
+                       it, or could take the rule off their own account. */}}
+                  - name: gentianRequiresMFA
+                    displayName: Second factor required
+                    multiValued: false
+                    permissions:
+                      - view: [admin]
+                        edit: [admin]
+                    validator:
+                      - name: options
+                        config:
+                          options: ["true"]
               providerConfigRef:
                 name: keycloak
 

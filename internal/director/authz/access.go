@@ -143,6 +143,9 @@ type AccessReader interface {
 	// AppRoles answers which roles the account sub holds on one app of
 	// tenant, the ones that follow from what it was given included.
 	AppRoles(ctx context.Context, requestID, tenant, profile, sub string) ([]string, error)
+	// PositionsHeld answers the names of the tenant's positions the account
+	// sub holds.
+	PositionsHeld(ctx context.Context, tenant, sub string) ([]string, error)
 }
 
 // PersonAccess implements AccessReader.
@@ -321,6 +324,28 @@ func positionsHeld(ctx context.Context, read readFunc, tenant, user string) (map
 		}
 	}
 	return held, nil
+}
+
+// PositionsHeld answers the names of the tenant's positions the account sub
+// holds, the ones that follow from an inclusion among them. Sorted.
+func (c *OpenFGA) PositionsHeld(ctx context.Context, tenant, sub string) ([]string, error) {
+	user, err := User(sub)
+	if err != nil {
+		return nil, err
+	}
+	if !ValidName(tenant) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidID, tenant)
+	}
+	held, err := positionsHeld(ctx, c.Read, tenant, user)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(held))
+	for _, p := range held {
+		names = append(names, p.Name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tenant, sub string) (PersonAccess, error) {

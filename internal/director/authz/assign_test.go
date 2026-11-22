@@ -351,3 +351,23 @@ func TestAnAppsHoldersAreReadThroughPositions(t *testing.T) {
 		t.Errorf("err = %v, want ErrInvalidID", err)
 	}
 }
+
+// The people of a tenant are the holders of its position user, and a
+// position's holders include those of a position that includes it.
+func TestAPositionsHoldersIncludeThoseOfAPositionThatIncludesIt(t *testing.T) {
+	ctx := context.Background()
+	s := tenantStore(t, "demo")
+	for sub, position := range map[string]string{"anna": PositionUser, "ben": "chief", "cleo": "deputy"} {
+		if _, err := Give(ctx, s, "demo", sub, Assignment{Position: position}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	people, err := PositionHolders(ctx, s, "demo", PositionUser)
+	if err != nil || strings.Join(people, ",") != "anna" {
+		t.Errorf("people = %v, err = %v", people, err)
+	}
+	deputies, err := PositionHolders(ctx, s, "demo", "deputy")
+	if err != nil || strings.Join(deputies, ",") != "ben,cleo" {
+		t.Errorf("deputies = %v, err = %v, want the chief too: chief includes deputy", deputies, err)
+	}
+}

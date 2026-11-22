@@ -417,6 +417,20 @@ func AppHolders(ctx context.Context, s Store, tenant, profile string) (administr
 	return subjectsOf(admins), subjectsOf(all), nil
 }
 
+// PositionHolders reads the accounts that hold a position of tenant: the
+// ones given it, and the holders of every position that includes it. The
+// holders of user are the people of the tenant. Subjects, sorted.
+func PositionHolders(ctx context.Context, s Store, tenant, position string) ([]string, error) {
+	if !ValidName(tenant) || !ValidName(position) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidID, tenant+"/"+position)
+	}
+	users, err := holdersAmong(ctx, s, tenant, []Tuple{{User: Holders(Position(tenant, position))}}, nil)
+	if err != nil {
+		return nil, err
+	}
+	return subjectsOf(users), nil
+}
+
 func subjectsOf(users map[string]bool) []string {
 	out := make([]string, 0, len(users))
 	for user := range users {

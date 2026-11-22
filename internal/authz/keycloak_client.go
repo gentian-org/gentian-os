@@ -848,3 +848,34 @@ func (c *KeycloakAdminClient) EndUserSessions(ctx context.Context, realm, userID
 	_, err = c.doAdminExpect(ctx, token, http.MethodPost, path, nil, http.StatusNoContent, http.StatusOK, http.StatusNotFound)
 	return err
 }
+
+// SetUserAttribute sets one attribute of an account to a single value, or
+// removes it when value is empty. The account is read whole and written
+// back with that one attribute changed: the realm replaces an account's
+// attributes with the ones it is sent, so sending one alone would drop the
+// rest.
+func (c *KeycloakAdminClient) SetUserAttribute(ctx context.Context, realm, userID, name, value string) error {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/users/%s", url.PathEscape(realm), url.PathEscape(userID))
+	account := map[string]any{}
+	if err := c.getAdminJSON(ctx, token, path, &account); err != nil {
+		return fmt.Errorf("keycloak get user: %w", err)
+	}
+	attributes, _ := account["attributes"].(map[string]any)
+	if attributes == nil {
+		attributes = map[string]any{}
+	}
+	if value == "" {
+		delete(attributes, name)
+	} else {
+		attributes[name] = []string{value}
+	}
+	account["attributes"] = attributes
+	if _, err := c.doAdminExpect(ctx, token, http.MethodPut, path, account, http.StatusNoContent, http.StatusOK); err != nil {
+		return fmt.Errorf("keycloak update user: %w", err)
+	}
+	return nil
+}
