@@ -112,6 +112,10 @@ type PositionHold struct {
 	Role     string   `json:"role"`
 	Declared bool     `json:"declared,omitempty"`
 	Carries  []string `json:"carries"`
+	// Through is, on a role inherited from an included position, the chain
+	// of positions it comes through: the first is included by this one, the
+	// last holds the role itself. Empty on a role the position holds itself.
+	Through []string `json:"through,omitempty"`
 }
 
 // PositionAccess is what one position is in one tenant.
@@ -120,6 +124,10 @@ type PositionAccess struct {
 	Position string `json:"position"`
 	// Holds are the roles the position holds itself.
 	Holds []PositionHold `json:"holds"`
+	// Inherited are the roles its holders hold through the positions it
+	// includes, each with the chain it comes through, the shortest one; a
+	// role the position holds itself is not repeated here.
+	Inherited []PositionHold `json:"inherited"`
 	// Includes are the positions whose roles its holders hold too;
 	// IncludedIn the positions whose holders hold this one.
 	Includes   []string `json:"includes"`
@@ -662,14 +670,56 @@ func positionAccess(ctx context.Context, read readFunc, tenant, position string)
 	}
 	out := PositionAccess{
 		Tenant: tenant, Position: position,
-		Holds: []PositionHold{}, Includes: []string{}, IncludedIn: []string{}, Holders: []string{},
+		Holds: []PositionHold{}, Inherited: []PositionHold{}, Includes: []string{}, IncludedIn: []string{}, Holders: []string{},
 	}
+	holds, err := positionHolds(ctx, read, g, tenant, object)
+	if err != nil {
+		return PositionAccess{}, err
+	}
+	out.Holds = holds
+	inherited, err := inheritedHolds(ctx, read, g, tenant, object, holds)
+	if err != nil {
+		return PositionAccess{}, err
+	}
+	out.Inherited = inherited
+
+	includes, err := read(ctx, Tuple{User: object, Relation: "included_in", Object: "position:"})
+	if err != nil {
+		return PositionAccess{}, fmt.Errorf("read what %s includes: %w", object, err)
+	}
+	for _, t := range includes {
+		if ofTenant(t.Object, "position:", tenant) {
+			out.Includes = append(out.Includes, positionNameOf(t.Object, tenant))
+		}
+	}
+	sort.Strings(out.Includes)
+	on, err := read(ctx, Tuple{Object: object})
+	if err != nil {
+		return PositionAccess{}, fmt.Errorf("read %s: %w", object, err)
+	}
+	for _, t := range on {
+		switch {
+		case t.Relation == "included_in" && ofTenant(t.User, "position:", tenant):
+			out.IncludedIn = append(out.IncludedIn, positionNameOf(t.User, tenant))
+		case t.Relation == "holder" && strings.HasPrefix(t.User, "user:") && !strings.Contains(t.User, "#"):
+			out.Holders = append(out.Holders, strings.TrimPrefix(t.User, "user:"))
+		}
+	}
+	sort.Strings(out.IncludedIn)
+	sort.Strings(out.Holders)
+	return out, nil
+}
+
+// positionHolds reads the roles the position object holds itself, sorted by
+// object and role.
+func positionHolds(ctx context.Context, read readFunc, g *modelGraph, tenant, object string) ([]PositionHold, error) {
+	holds := []PositionHold{}
 	usersCarry := g.grantsOf("app", RoleUser)
 	for _, kind := range rolesHeldOn {
 		typ := strings.TrimSuffix(kind, ":")
 		tuples, err := read(ctx, Tuple{User: Holders(object), Object: kind})
 		if err != nil {
-			return PositionAccess{}, fmt.Errorf("read what %s holds: %w", object, err)
+			return nil, fmt.Errorf("read what %s holds: %w", object, err)
 		}
 		for _, t := range tuples {
 			// Another tenant's object is that tenant's to show.
@@ -698,39 +748,72 @@ func positionAccess(ctx context.Context, read readFunc, tenant, position string)
 			if hold.Carries == nil {
 				hold.Carries = []string{}
 			}
-			out.Holds = append(out.Holds, hold)
+			holds = append(holds, hold)
 		}
 	}
-	sort.SliceStable(out.Holds, func(a, b int) bool {
-		if out.Holds[a].Object != out.Holds[b].Object {
-			return out.Holds[a].Object < out.Holds[b].Object
+	sort.SliceStable(holds, func(a, b int) bool {
+		if holds[a].Object != holds[b].Object {
+			return holds[a].Object < holds[b].Object
 		}
-		return out.Holds[a].Role < out.Holds[b].Role
+		return holds[a].Role < holds[b].Role
 	})
+	return holds, nil
+}
 
-	includes, err := read(ctx, Tuple{User: object, Relation: "included_in", Object: "position:"})
-	if err != nil {
-		return PositionAccess{}, fmt.Errorf("read what %s includes: %w", object, err)
+// inheritedHolds reads the roles the position object's holders hold through
+// the positions it includes, walking the inclusions breadth first so that
+// each role names the shortest chain it comes through. own are the roles the
+// position holds itself, which are not repeated.
+func inheritedHolds(ctx context.Context, read readFunc, g *modelGraph, tenant, object string, own []PositionHold) ([]PositionHold, error) {
+	key := func(h PositionHold) string { return h.Object + "|" + h.App + "|" + h.Role }
+	seenRole := map[string]bool{}
+	for _, h := range own {
+		seenRole[key(h)] = true
 	}
-	for _, t := range includes {
-		if ofTenant(t.Object, "position:", tenant) {
-			out.Includes = append(out.Includes, positionNameOf(t.Object, tenant))
+	out := []PositionHold{}
+	type step struct {
+		object string
+		chain  []string
+	}
+	visited := map[string]bool{object: true}
+	queue := []step{{object: object}}
+	for len(queue) > 0 {
+		at := queue[0]
+		queue = queue[1:]
+		includes, err := read(ctx, Tuple{User: at.object, Relation: "included_in", Object: "position:"})
+		if err != nil {
+			return nil, fmt.Errorf("read what %s includes: %w", at.object, err)
+		}
+		var next []string
+		for _, t := range includes {
+			if ofTenant(t.Object, "position:", tenant) && !visited[t.Object] {
+				next = append(next, t.Object)
+			}
+		}
+		sort.Strings(next)
+		for _, included := range next {
+			visited[included] = true
+			chain := append(append([]string{}, at.chain...), positionNameOf(included, tenant))
+			holds, err := positionHolds(ctx, read, g, tenant, included)
+			if err != nil {
+				return nil, err
+			}
+			for _, h := range holds {
+				if seenRole[key(h)] {
+					continue
+				}
+				seenRole[key(h)] = true
+				h.Through = chain
+				out = append(out, h)
+			}
+			queue = append(queue, step{object: included, chain: chain})
 		}
 	}
-	sort.Strings(out.Includes)
-	on, err := read(ctx, Tuple{Object: object})
-	if err != nil {
-		return PositionAccess{}, fmt.Errorf("read %s: %w", object, err)
-	}
-	for _, t := range on {
-		switch {
-		case t.Relation == "included_in" && ofTenant(t.User, "position:", tenant):
-			out.IncludedIn = append(out.IncludedIn, positionNameOf(t.User, tenant))
-		case t.Relation == "holder" && strings.HasPrefix(t.User, "user:") && !strings.Contains(t.User, "#"):
-			out.Holders = append(out.Holders, strings.TrimPrefix(t.User, "user:"))
+	sort.SliceStable(out, func(a, b int) bool {
+		if out[a].Object != out[b].Object {
+			return out[a].Object < out[b].Object
 		}
-	}
-	sort.Strings(out.IncludedIn)
-	sort.Strings(out.Holders)
+		return out[a].Role < out[b].Role
+	})
 	return out, nil
 }

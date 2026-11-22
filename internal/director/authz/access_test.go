@@ -323,6 +323,9 @@ func TestAPositionIsWhatItHoldsAndWhoHoldsIt(t *testing.T) {
 	if h := got.Holds[1]; h.Object != "tenant:demo" || h.Role != "user" || !contains(h.Carries, "can_enter") {
 		t.Errorf("second hold = %+v, want user on the tenant", h)
 	}
+	if len(got.Inherited) != 0 {
+		t.Errorf("sales-manager inherits %+v, includes nothing", got.Inherited)
+	}
 	if strings.Join(got.IncludedIn, ",") != "executive" || len(got.Includes) != 0 {
 		t.Errorf("includes %v, included in %v", got.Includes, got.IncludedIn)
 	}
@@ -333,6 +336,19 @@ func TestAPositionIsWhatItHoldsAndWhoHoldsIt(t *testing.T) {
 	}
 	if strings.Join(got.Includes, ",") != "sales-manager" || strings.Join(got.Holders, ",") != "eve" {
 		t.Errorf("executive includes %v, held by %v", got.Includes, got.Holders)
+	}
+	// Executive holds nothing itself, and what Sales manager holds through
+	// the inclusion, each role naming the position it comes from.
+	if len(got.Holds) != 0 || len(got.Inherited) != 2 {
+		t.Fatalf("executive holds %+v, inherits %+v", got.Holds, got.Inherited)
+	}
+	for _, h := range got.Inherited {
+		if strings.Join(h.Through, ",") != "sales-manager" {
+			t.Errorf("inherited %+v, want it through sales-manager", h)
+		}
+	}
+	if h := got.Inherited[0]; h.App != "shop-sales" || h.Role != "manager" || !h.Declared {
+		t.Errorf("first inherited = %+v, want the declared role on the add-on", h)
 	}
 
 	// Another tenant's position of the same name is not read.
