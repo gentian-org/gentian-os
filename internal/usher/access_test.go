@@ -49,6 +49,14 @@ func (f *fakeAccess) PositionAccess(_ context.Context, tenant, position string) 
 	return authz.PositionAccess{Tenant: tenant, Position: position}, nil
 }
 
+func (f *fakeAccess) PositionsHeld(_ context.Context, tenant, sub string) ([]string, error) {
+	f.asked = append(f.asked, fmt.Sprintf("positions %s %s", tenant, sub))
+	if f.err != nil {
+		return nil, f.err
+	}
+	return []string{"user"}, nil
+}
+
 func (f *fakeAccess) AppAccess(_ context.Context, tenant, profile string) (authz.View, error) {
 	f.asked = append(f.asked, fmt.Sprintf("app %s %s", tenant, profile))
 	if f.err != nil {
