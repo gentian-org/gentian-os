@@ -72,6 +72,9 @@ exactly this identity.
 {{- define "gentian-os.usherServiceAccountName" -}}
 {{- printf "%s-usher" (include "gentian-os.fullname" .) -}}
 {{- end }}
+{{- define "gentian-os.registrarServiceAccountName" -}}
+{{- printf "%s-registrar" (include "gentian-os.fullname" .) -}}
+{{- end }}
 {{- define "gentian-os.dispatcherServiceAccountName" -}}
 {{- printf "%s-dispatcher" (include "gentian-os.fullname" .) -}}
 {{- end }}

@@ -21,40 +21,26 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/envvar"
 	"github.com/gentian-org/gentian-os/internal/membership"
 )
 
-// Who is in which group is cluster state, so the operator projects it.
-//
-// It was the director's, and it was the last thing the director wrote to the
-// authorization graph. That made the rule "the director reads the graph and
-// writes git" untrue in exactly one place, and an exception in one place is a
-// credential that has to stay powerful everywhere: as long as this endpoint
-// lived in the director, the director's OpenFGA token needed write access, and
-// nothing but care stopped the rest of it from using that.
-//
-// It is the same shape as the structure projection beside it. Keycloak is
-// where a membership is changed; what the graph holds is a projection of that,
-// fed by signed statements from a listener inside Keycloak and never edited in
-// place. Events carry state and not deltas -- "this user's groups are now
-// exactly these" -- so a statement delivered twice changes nothing and one
-// that was lost is repaired by the next statement about the same user.
+// What only a realm sees happen to a person reaches the operator here: that
+// somebody came in through an identity provider, and that somebody was
+// removed. Who holds what is the rights store's, written by the operator
+// alone; these two statements are what it cannot learn any other way, and
+// the listener inside Keycloak signs each.
 //
 // Not a reconciler, because there is nothing to poll: Keycloak tells us. It
-// rides the manager as a Runnable, the way the custodian does, rather
-// than being a second Deployment with a second identity to provision.
+// rides the manager as a Runnable rather than being a second Deployment with
+// a second identity to provision.
 
 // MembershipListener serves the endpoint Keycloak's event listener posts to.
 type MembershipListener struct {
 	// Addr is what the HTTP server listens on.
 	Addr string
-	// Handler verifies a statement and applies it to the graph.
+	// Handler verifies a statement and applies it.
 	Handler http.Handler
-	// Receiver is Handler, for the sweep that applies the statements that
-	// did not arrive (MembershipSweep).
-	Receiver *membership.Receiver
 	// Log is the operator's logger, for the lines this server writes itself.
 	Log *slog.Logger
 }
@@ -62,23 +48,14 @@ type MembershipListener struct {
 // NewMembershipListener builds the listener from the environment, or returns
 // nil when this cluster has not been given a key to believe.
 //
-// Nil rather than an error, and a warning rather than silence: a cluster with
-// no listener key accepts no membership at all, so every permission that
-// follows from being in a group is refused to everyone. That is a
-// configuration a person may have chosen, and it is also exactly what a
-// forgotten secret looks like, so it says so at start either way.
-func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, departures membership.Departures, logger *slog.Logger) (*MembershipListener, error) {
-	if graph == nil {
-		return nil, nil
-	}
+// Nil rather than an error, and a warning rather than silence: without a
+// listener key nobody who arrives from another realm is given anything, and
+// nothing of a removed person is taken. That is exactly what a forgotten
+// secret looks like, so it says so at start.
+func NewMembershipListener(arrivals membership.Arrivals, logger *slog.Logger, departures ...membership.Departures) (*MembershipListener, error) {
 	raw := os.Getenv("GENTIAN_LISTENER_KEYS")
 	if raw == "" {
-		// The director's spelling, for a cluster mid-upgrade whose Secret is
-		// still mounted under the old name. Both are the same value.
-		raw = os.Getenv("DIRECTOR_LISTENER_KEYS")
-	}
-	if raw == "" {
-		logger.Warn("no Keycloak listener key configured: membership statements are not accepted, so every permission that follows from a group is refused",
+		logger.Warn("no Keycloak listener key configured: nothing follows from a person arriving from another realm or being removed",
 			"setting", "GENTIAN_LISTENER_KEYS")
 		return nil, nil
 	}
@@ -86,33 +63,14 @@ func NewMembershipListener(graph *authz.OpenFGA, mirror membership.Mirror, depar
 	if err != nil {
 		return nil, fmt.Errorf("GENTIAN_LISTENER_KEYS: %w", err)
 	}
-	projector, err := membership.NewProjector(graph, membership.Scope{
-		PlatformRealm:  envvar.Or("GENTIAN_PLATFORM_REALM", "kernel"),
-		PlatformTenant: envvar.Or("GENTIAN_PLATFORM_TENANT", "platform"),
-	}, logger)
+	receiver, err := membership.NewReceiver(keys, arrivals, logger, departures...)
 	if err != nil {
 		return nil, err
-	}
-	receiver, err := membership.NewReceiver(keys, projector, logger)
-	if err != nil {
-		return nil, err
-	}
-	// The same statements, on to the app stores that mirror the realm's
-	// groups (app_store_mirror.go). After the kernel's projection, which is
-	// as it was.
-	if mirror != nil {
-		receiver.SetMirror(mirror)
-	}
-	// And a person who is gone, on to what is kept for that person alone
-	// (person_secrets.go).
-	if departures != nil {
-		receiver.SetDepartures(departures)
 	}
 	return &MembershipListener{
-		Addr:     envvar.Or("GENTIAN_MEMBERSHIP_ADDR", ":8090"),
-		Handler:  receiver,
-		Receiver: receiver,
-		Log:      logger,
+		Addr:    envvar.Or("GENTIAN_MEMBERSHIP_ADDR", ":8090"),
+		Handler: receiver,
+		Log:     logger,
 	}, nil
 }
 
@@ -143,8 +101,8 @@ func (l *MembershipListener) Start(ctx context.Context) error {
 	case err := <-errs:
 		return err
 	case <-ctx.Done():
-		// A statement in flight is a user's whole group set; finishing it is
-		// cheaper than making Keycloak resend it.
+		// Finishing a statement in flight is cheaper than making Keycloak
+		// resend it.
 		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdown)

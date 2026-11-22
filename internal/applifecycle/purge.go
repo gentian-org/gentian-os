@@ -29,6 +29,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	rights "github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -80,7 +81,7 @@ var kindLabels = map[string]string{
 	KindCache:         "cache",
 	KindFiles:         "files",
 	KindCredentials:   "stored credentials",
-	KindAccessGroup:   "access group",
+	KindAccessGroup:   "access",
 	KindRecords:       "provisioning records",
 	KindModelAccess:   "model key",
 	KindSignInScope:   "sign-in scope",
@@ -291,12 +292,17 @@ func (s *Service) purgePreflight(ctx context.Context, tenant *gentianov1alpha1.T
 		}
 	}
 	realm := keycloak.RealmName(tenant)
-	groups, err := s.accessGroups(ctx)
+	idp, err := s.accessGroups(ctx)
 	if err != nil {
 		return refuse("the identity provider cannot be asked: %v", err)
 	}
-	if _, err := groups.GroupNames(ctx, realm, keycloak.TenantAppGroup(tenant.Name, "")); err != nil {
+	if _, err := idp.CountRealmUsers(ctx, realm); err != nil {
 		return refuse("the identity provider does not answer for the tenant's realm %s: %v", realm, err)
+	}
+	if s.Rights != nil {
+		if _, err := s.Rights.Read(ctx, rights.Tuple{Object: rights.Tenant(tenant.Name)}); err != nil {
+			return refuse("the rights store does not answer for the tenant %s: %v", tenant.Name, err)
+		}
 	}
 	return nil
 }
@@ -605,13 +611,14 @@ func (s *Service) purgeCredentials(ctx context.Context, tenant *gentianov1alpha1
 	return nil
 }
 
-// --- access group -----------------------------------------------------------
+// --- access -----------------------------------------------------------------
 
-// AccessGroups is the identity provider as a purge and the retained-data read
-// use it. *authz.KeycloakAdminClient is one.
+// AccessGroups is the identity provider as a purge uses it. The name is from
+// when it also removed an app's group. *authz.KeycloakAdminClient is one.
 type AccessGroups interface {
-	DeleteGroup(ctx context.Context, realm, groupName string) (existed bool, err error)
-	GroupNames(ctx context.Context, realm, prefix string) ([]string, error)
+	// CountRealmUsers is asked before a purge starts, for whether the realm
+	// answers at all.
+	CountRealmUsers(ctx context.Context, realm string) (int, error)
 	DeleteClientScope(ctx context.Context, realm, name string) (existed bool, err error)
 	DeleteClient(ctx context.Context, realm, clientID string) (existed bool, err error)
 }
@@ -805,27 +812,26 @@ func (s *Service) purgeModelKey(ctx context.Context, tenantName, app, alias stri
 	return s.forgetProvisioned(ctx, tenantName, app, backup.KindModelAccess)
 }
 
-// purgeAccessGroup removes the app's group, and with it everybody's
-// membership of it; and the same for each of its extensions, which has a
-// group of its own when it signs people in.
+// purgeAccessGroup removes what the rights store holds on the app: who was
+// given a role on it.
 //
-// The group is what says who may use the app. Uninstalling keeps it, so that
-// an app installed again is open to the people it was open to; a purge is the
-// end of the app in this tenant, and a group left behind would hand a later
-// app of the same name to whoever had the old one.
-//
-// The realm is the tenant's own (keycloak.RealmName), which need not be
-// called what the tenant is; the group's name always carries the tenant's.
+// Uninstalling keeps it, so that an app installed again is open to the
+// people it was open to; a purge is the end of the app in this tenant, and
+// entries left behind would hand a later app of the same name to whoever
+// had the old one. The roles the app's profile declared went with the
+// uninstall, their holders with them.
 func (s *Service) purgeAccessGroup(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string, extensions []string) error {
-	groups, err := s.accessGroups(ctx)
-	if err != nil {
-		return err
+	if s.Rights == nil {
+		return nil
 	}
-	realm := keycloak.RealmName(tenant)
+	// The app's own name, and each extension's: an extension holds nothing
+	// in the store today, and a name is asked rather than assumed empty.
 	for _, key := range ownedKeys(tenant, app, extensions) {
-		name := keycloak.TenantAppGroup(tenant.Name, key)
-		if _, err := groups.DeleteGroup(ctx, realm, name); err != nil {
-			return fmt.Errorf("delete the group %s in realm %s: %w", name, realm, err)
+		if !rights.ValidName(key) {
+			continue
+		}
+		if _, err := rights.RemoveAppEntries(ctx, s.Rights, tenant.Name, key); err != nil {
+			return err
 		}
 	}
 	return nil

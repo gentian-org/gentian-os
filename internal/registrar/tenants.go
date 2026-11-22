@@ -56,15 +56,8 @@ func (e *TenantSyncFailed) Error() string {
 func (e *TenantSyncFailed) Unwrap() error { return ErrTenantNotFound }
 
 // platformTenant is the tenant whose realm is the kernel realm: its people
-// are the platform's own, and its groups are gentian:platform:*.
+// are the platform's own.
 const platformTenant = "platform"
-
-// roleDefaults are the groups the Cluster claim's schema names for a platform
-// role when the claim says nothing else, by the field of spec.platformRoles
-// each belongs to: the administrators'.
-var roleDefaults = map[string]string{
-	"admin": "gentian:platform:admin",
-}
 
 // Tenant is what the routes need to know about one tenant.
 type Tenant struct {
@@ -267,113 +260,38 @@ func adminLogin(t *gentianov1alpha1.Tenant, realm, domain string) string {
 // that kind with the scheme, and the registrar needs one string from it.
 var clusterClaimList = schema.GroupVersionKind{Group: "gentianos.io", Version: "v1alpha1", Kind: "ClusterList"}
 
-// ClaimPlatformRoleGroups answers which groups' members hold a platform role:
-// every field of spec.platformRoles of the Cluster claim.
-//
-// The same map, from the same object, in the same namespace as the operator's
-// projection reads (AuthzProjectionReconciler.platformRoles): the groups the
-// registrar refuses to touch have to be the groups the operator projects as
-// the cluster's roles, and two readings of two sources would eventually
-// differ. The map is read whole rather than field by field, so a role the
-// schema gains is protected without this function learning its name.
-//
-// The default is the schema's own (roleDefaults): a claim that names no
-// administrators' group leaves gentian:platform:admin, which is also where
-// the install puts the first administrator. No other role has a default,
-// and a role the claim leaves unset has no group to protect.
-//
-// An error is an error: the caller refuses the write rather than assume a
-// name. That includes a platformRoles that is not a map of strings, which the
-// schema does not admit and which could only be read in part.
-func ClaimPlatformRoleGroups(reader client.Reader) func(ctx context.Context) ([]string, error) {
-	roles := ClaimPlatformRoles(reader)
-	return func(ctx context.Context) ([]string, error) {
-		held, err := roles(ctx)
-		if err != nil {
-			return nil, err
-		}
-		seen := map[string]bool{}
-		var out []string
-		for _, h := range held {
-			if !seen[h.Group] {
-				seen[h.Group] = true
-				out = append(out, h.Group)
-			}
-		}
-		sort.Strings(out)
-		return out, nil
-	}
+// RoleHolder is one entry of the Cluster claim's
+// spec.platformAccess.roleHolders: a person who holds a cluster role by
+// name, with their account in their tenant's realm.
+type RoleHolder struct {
+	// Role is the role as the claim spells it: admin, securityOfficer,
+	// auditor, breakGlass and the others.
+	Role string `json:"role"`
+	// Tenant is the tenant whose person holds it; platform for a person of
+	// the kernel realm.
+	Tenant string `json:"tenant"`
+	// Subject is the account's id in that tenant's realm.
+	Subject string `json:"subject"`
+	// Username and Email say who it is to a person reading the claim.
+	Username string `json:"username,omitempty"`
+	Email    string `json:"email,omitempty"`
 }
 
-// RoleGroup is one platform role, by its field of spec.platformRoles, and the
-// group whose members hold it.
-type RoleGroup struct {
-	Role  string `json:"role"`
-	Group string `json:"group"`
-}
-
-// ClaimPlatformRoles answers which group holds each platform role, read as
-// ClaimPlatformRoleGroups reads it (the same claim, the same defaults), with
-// the role beside each group. Sorted by role, then group; a role two claims
-// give to two groups is listed with both.
-func ClaimPlatformRoles(reader client.Reader) func(ctx context.Context) ([]RoleGroup, error) {
-	return func(ctx context.Context) ([]RoleGroup, error) {
+// ClaimRoleHolders answers who holds a cluster role by name: every entry of
+// spec.platformAccess.roleHolders of the Cluster claim, read from the same
+// object in the same namespace as the operator's projection reads, on every
+// call. Sorted by role, tenant and username.
+//
+// An error is an error: a caller that judges a write by the answer refuses
+// the write rather than assume nobody holds a role.
+func ClaimRoleHolders(reader client.Reader) func(ctx context.Context) ([]RoleHolder, error) {
+	return func(ctx context.Context) ([]RoleHolder, error) {
 		list := &unstructured.UnstructuredList{}
 		list.SetGroupVersionKind(clusterClaimList)
 		if err := reader.List(ctx, list, client.InNamespace(layout.Namespace(layout.Provisioning))); err != nil {
 			return nil, fmt.Errorf("reading the Cluster claim: %w", err)
 		}
-		seen := map[RoleGroup]bool{}
-		var out []RoleGroup
-		add := func(role, group string) {
-			h := RoleGroup{Role: role, Group: strings.TrimPrefix(strings.TrimSpace(group), "/")}
-			if h.Group != "" && !seen[h] {
-				seen[h] = true
-				out = append(out, h)
-			}
-		}
-		for i := range list.Items {
-			roles, _, err := unstructured.NestedStringMap(list.Items[i].Object, "spec", "platformRoles")
-			if err != nil {
-				return nil, fmt.Errorf("reading spec.platformRoles of the Cluster claim %s: %w", list.Items[i].GetName(), err)
-			}
-			for role, group := range roles {
-				add(role, group)
-			}
-			for role, group := range roleDefaults {
-				if strings.TrimSpace(roles[role]) == "" {
-					add(role, group)
-				}
-			}
-		}
-		if len(out) == 0 {
-			for role, group := range roleDefaults {
-				add(role, group)
-			}
-		}
-		sort.Slice(out, func(i, j int) bool {
-			if out[i].Role != out[j].Role {
-				return out[i].Role < out[j].Role
-			}
-			return out[i].Group < out[j].Group
-		})
-		return out, nil
-	}
-}
-
-// ClaimPlatformRoleHolders answers the subjects of the platform tenant's
-// people the Cluster claim names role holders
-// (spec.platformAccess.roleHolders, tenant platform): the kernel-realm
-// accounts the registrar does not write to (identity/guard.go). Read from the
-// same claim as ClaimPlatformRoles, on every write.
-func ClaimPlatformRoleHolders(reader client.Reader) func(ctx context.Context) ([]string, error) {
-	return func(ctx context.Context) ([]string, error) {
-		list := &unstructured.UnstructuredList{}
-		list.SetGroupVersionKind(clusterClaimList)
-		if err := reader.List(ctx, list, client.InNamespace(layout.Namespace(layout.Provisioning))); err != nil {
-			return nil, fmt.Errorf("reading the Cluster claim: %w", err)
-		}
-		var out []string
+		out := []RoleHolder{}
 		for i := range list.Items {
 			entries, _, err := unstructured.NestedSlice(list.Items[i].Object, "spec", "platformAccess", "roleHolders")
 			if err != nil {
@@ -381,12 +299,48 @@ func ClaimPlatformRoleHolders(reader client.Reader) func(ctx context.Context) ([
 			}
 			for _, e := range entries {
 				m, _ := e.(map[string]interface{})
-				if tenant, _ := m["tenant"].(string); tenant != platformTenant {
-					continue
+				h := RoleHolder{}
+				h.Role, _ = m["role"].(string)
+				h.Tenant, _ = m["tenant"].(string)
+				h.Subject, _ = m["subject"].(string)
+				h.Username, _ = m["username"].(string)
+				h.Email, _ = m["email"].(string)
+				if h.Role != "" && h.Subject != "" {
+					out = append(out, h)
 				}
-				if sub, _ := m["subject"].(string); sub != "" {
-					out = append(out, sub)
-				}
+			}
+		}
+		sort.SliceStable(out, func(i, j int) bool {
+			a, b := out[i], out[j]
+			if a.Role != b.Role {
+				return a.Role < b.Role
+			}
+			if a.Tenant != b.Tenant {
+				return a.Tenant < b.Tenant
+			}
+			return a.Username < b.Username
+		})
+		return out, nil
+	}
+}
+
+// ClaimPlatformRoleHolders answers the subjects of the platform tenant's
+// people the Cluster claim names role holders, the cluster's administrators
+// among them: the kernel-realm accounts the registrar does not write to
+// (identity/guard.go). Read from the claim on every write.
+func ClaimPlatformRoleHolders(reader client.Reader) func(ctx context.Context) ([]string, error) {
+	holders := ClaimRoleHolders(reader)
+	return func(ctx context.Context) ([]string, error) {
+		held, err := holders(ctx)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		var out []string
+		for _, h := range held {
+			if h.Tenant == platformTenant && !seen[h.Subject] {
+				seen[h.Subject] = true
+				out = append(out, h.Subject)
 			}
 		}
 		return out, nil

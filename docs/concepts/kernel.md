@@ -92,7 +92,7 @@ catalog apps (Nextcloud, Collabora, mail, …) are installed per tenant from a
 
 | Kernel function | Default-install component | Desktop OS analogue | Standard contract exposed to apps |
 |---|---|---|---|
-| Identity & SSO | **Keycloak + OpenFGA** | `/etc/passwd` + PAM | OIDC issuer, groups that give access to apps, ReBAC graph |
+| Identity & SSO | **Keycloak + OpenFGA** | `/etc/passwd` + PAM | OIDC issuer; roles and positions that give access to apps, in the ReBAC graph |
 | Object storage | **SeaweedFS** (S3) | Page cache, `/tmp`, `/var` | S3 endpoint + per-app bucket via kernel requirement |
 | Relational data | **CloudNativePG / MariaDB** | Per-app SQLite / registry hive | `database` requirement (host + per-app DB + user) |
 | Key-value cache | **Valkey / Memcached** | Page cache, `tmpfs` | `cache` requirement |

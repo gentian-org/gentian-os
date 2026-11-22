@@ -266,7 +266,7 @@ spec:
     - profile: nextcloud-base-ce
       catalogue: gentian
       digest: sha256:…          # the bundle this install pinned
-      defaultGrant: true        # for every member of the tenant
+      defaultGrant: true        # given to the position User: every person of the tenant
     - profile: openproject-ce
       config:
         replicas: 2
@@ -899,11 +899,11 @@ extensions' (`clientSessionMaxLifespan`,
 `internal/apprender/identity.go`). Past that age from sign-in the realm
 refuses the client's refresh, so the component cannot renew its tokens for
 that person without a new sign-in, and a new sign-in reads the person's
-groups again. It does **not** end a session the component keeps in its own
+roles again. It does **not** end a session the component keeps in its own
 cookie: a component that does not go back to the realm once a person is
 signed in keeps that session for as long as the component itself allows, and
 only its own configuration shortens it. Unset, the clients keep the realm's
-limits. The edge bounds reachability and does not refresh the groups a
+limits. The edge bounds reachability and does not refresh the roles a
 component captured at its own sign-in (AD-13,
 [decisions/index.md](../decisions/index.md)).
 

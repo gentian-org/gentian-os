@@ -163,31 +163,77 @@ type TenantComponentRef struct {
 	Profile string `json:"profile"`
 }
 
-// TenantGroup is a group of the tenant's realm declared in git. The platform
-// makes it; people are put in it in the Admin Console, and an app's profile
-// or a TenantSignInFrom names it. It is not renamed or deleted from the
-// console: git holds it.
-type TenantGroup struct {
-	// Name is the group's name in the realm. Not one the platform's own
-	// groups take (gentian...).
+// TenantPosition is a position of the tenant: a named set of roles a kind of
+// person holds, "Sales intern" or "Engineering manager". What it is, is
+// declared here; who holds it is not, and lives in the rights store.
+//
+// Every tenant has three positions it does not declare: user, a person of
+// the tenant, with the apps installed for everyone; app-administrator, who
+// administers every installed app; and tenant-administrator, who administers
+// the tenant and holds no role on any app.
+type TenantPosition struct {
+	// Name is the position's name in the tenant. Not one of the three every
+	// tenant has.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	// +kubebuilder:validation:XValidation:rule="!self.startsWith('gentian')",message="names beginning with gentian are the platform's own groups"
+	// +kubebuilder:validation:XValidation:rule="!(self in ['user', 'app-administrator', 'tenant-administrator'])",message="user, app-administrator and tenant-administrator are positions every tenant has"
 	Name string `json:"name"`
+
+	// Title is the position as people read it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=80
+	Title string `json:"title,omitempty"`
+
+	// Description says who the position is for.
+	// +optional
+	// +kubebuilder:validation:MaxLength=400
+	Description string `json:"description,omitempty"`
+
+	// Includes are other positions of the tenant whose roles the holders of
+	// this one hold too: executive includes sales-manager. A circle of
+	// positions including each other is refused.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	Includes []string `json:"includes,omitempty"`
+
+	// Roles are the roles the position holds itself.
+	// +optional
+	// +kubebuilder:validation:MaxItems=200
+	Roles []TenantPositionRole `json:"roles,omitempty"`
+}
+
+// TenantPositionRole is one role a position holds: on an app of the tenant,
+// or on the tenant itself.
+type TenantPositionRole struct {
+	// App is the profile name of the app, or of the add-on, the role is
+	// held on. Empty for a role on the tenant itself.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	App string `json:"app,omitempty"`
+
+	// Role is user, admin, or a role the app's profile declares. On the
+	// tenant itself: user or admin.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Role string `json:"role"`
 }
 
 // TenantSignInFrom is another tenant of this cluster whose people sign in to
-// this one with their account there, and the groups of this tenant they are
-// in for it. It takes both tenants: this one names the other here, and the
+// this one with their account there, and the positions of this tenant they
+// are given for it. It takes both tenants: this one names the other here, and the
 // other names this one in its spec.signInTo. Either alone opens nothing.
 //
 // The platform makes, in the other tenant's realm, the client this realm
 // signs in with (authenticated by a JWT this realm signs: no secret), and in
 // this realm an identity provider, tenant-<other>, that trusts the other
-// realm's verified addresses and puts each person who arrives in the groups
-// named, at every sign-in. An account that is already here under the same
+// realm's verified addresses; the operator gives each person who arrives
+// the positions named. An account that is already here under the same
 // address is linked only once its owner proves it.
 type TenantSignInFrom struct {
 	// Tenant is the other tenant.
@@ -197,14 +243,15 @@ type TenantSignInFrom struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Tenant string `json:"tenant"`
 
-	// Groups are the groups of this tenant its people are in: a name of
-	// spec.groups, or members (the tenant's members, who may enter it). The
-	// tenant's administrators and its perimeter approvers are never given
-	// this way.
+	// Positions are the positions of this tenant its people are given when
+	// they arrive: user (a person of the tenant, who may enter it) or a
+	// name of spec.positions. The positions of the tenant's and of its
+	// apps' administrators are never given this way.
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	Groups []string `json:"groups,omitempty"`
+	// +kubebuilder:validation:XValidation:rule="self.all(p, !(p in ['app-administrator', 'tenant-administrator']))",message="an administrator's position is not given by a sign-in"
+	Positions []string `json:"positions,omitempty"`
 }
 
 // SignUpEnabled reports whether people make their own accounts in this
@@ -288,13 +335,13 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxItems=8
 	PartnerCommissioners []TenantComponentRef `json:"partnerCommissioners,omitempty"`
 
-	// Groups are groups of the tenant's realm declared in git; see
-	// TenantGroup.
+	// Positions are the tenant's own positions, beside the three every
+	// tenant has; see TenantPosition.
 	// +optional
-	// +kubebuilder:validation:MaxItems=50
+	// +kubebuilder:validation:MaxItems=100
 	// +listType=map
 	// +listMapKey=name
-	Groups []TenantGroup `json:"groups,omitempty"`
+	Positions []TenantPosition `json:"positions,omitempty"`
 
 	// SignInTo are other tenants of this cluster this tenant's people may
 	// sign in to with their account here: this tenant's half of the other's
@@ -1226,6 +1273,18 @@ type TenantApp struct {
 	// +optional
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
 
+	// Positions names the positions of the tenant whose holders use this
+	// app: each holds the app's role user. A name is one of the positions
+	// every tenant has or one the tenant declares (spec.positions); a name
+	// that is neither gives nothing. defaultGrant is the position user, and
+	// the two are read together.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Positions []string `json:"positions,omitempty"`
+
 	// Placed says the platform put this app here, because its profile is
 	// placeable (ComponentProfile spec.placement). The director's placement
 	// worker writes and removes such an entry and nobody else changes it:
@@ -1496,17 +1555,6 @@ type TenantStatus struct {
 	// ProvisionedApps lists apps that have been successfully provisioned.
 	// +optional
 	ProvisionedApps []string `json:"provisionedApps,omitempty"`
-
-	// DefaultGrantedApps lists the apps whose default grant
-	// (spec.apps[].defaultGrant) has been applied: the tenant's members at
-	// that moment were added to the app's group. An app listed here is not
-	// granted again, which is what keeps a person removed from the group
-	// since then removed. An entry leaves the list when the app is
-	// uninstalled or no longer declares the grant, so declaring it again
-	// applies it again.
-	// +optional
-	// +listType=set
-	DefaultGrantedApps []string `json:"defaultGrantedApps,omitempty"`
 
 	// AppCount is the total number of apps requested in spec.
 	// +optional

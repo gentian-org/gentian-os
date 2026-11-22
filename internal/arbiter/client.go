@@ -84,19 +84,6 @@ func (c *PlatformClient) call(ctx context.Context, method, path string, body, ou
 	return resp.StatusCode, nil
 }
 
-// SetMemberships states one person's groups in a realm, for the mirroring
-// stores of that realm's tenant.
-func (c *PlatformClient) SetMemberships(ctx context.Context, req MembershipsRequest) error {
-	_, err := c.call(ctx, http.MethodPut, "/v1/platform/memberships", req, nil)
-	return err
-}
-
-// GroupDeleted says a group of a realm is gone.
-func (c *PlatformClient) GroupDeleted(ctx context.Context, req GroupDeletedRequest) error {
-	_, err := c.call(ctx, http.MethodPost, "/v1/platform/group-deleted", req, nil)
-	return err
-}
-
 // Export is a store's model and tuples; ErrNoStore when none was made.
 func (c *PlatformClient) Export(ctx context.Context, tenant, component string) (*StoreExport, error) {
 	out := &StoreExport{}

@@ -11,19 +11,14 @@ spec:
   # their account here: one client, broker-to-aluvian, authenticating the
   # outside realm by the JWT it signs, against the keys it publishes. A
   # second entry whose name is not a DNS label renders nothing.
-  # A tenant of the same cluster whose people sign in here, and the groups
-  # they are given: a declared group and the members. A group the tenant does
-  # not declare, or a platform group by name, was dropped by the operator and
-  # arrives here only as a path the composition takes as it is; an entry
-  # whose name is not a label composes nothing.
-  groups: [website-editors, store-editors, gentianfake]
+  # A tenant of the same cluster whose people sign in here; an entry whose
+  # name is not a label composes nothing.
   signInFrom:
     - tenant: team
       alias: tenant-team
       displayName: Aluvian
       realm: team
       clientID: broker-to-render-fixture
-      groups: [/website-editors, /gentian:tenant:render-fixture:members, not-a-path]
     - tenant: Not_A_Label
       alias: tenant-x
       displayName: X

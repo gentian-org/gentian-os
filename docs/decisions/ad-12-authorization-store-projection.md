@@ -3,14 +3,15 @@ audience: architect, auditor
 type: decision
 ---
 
-# AD-12 The authorization store is a projection; Keycloak's events are the only source of membership
+# AD-12 The authorization store has one writer; rights are held there and nowhere else
 
-Group membership is stored in OpenFGA as `group#member` tuples written by the
-operator from the signed statements Keycloak's event listener sends it, never
-edited in place; nothing re-reads them, and a membership the store lacks
-returns as each person's groups next change. No group travels in a token for
-a platform decision. Structure (role-to-group assignments, tenants, installs,
-grants) is projected by the operator from what git declares, once Argo CD has
-applied it. The operator projects; the director asks. Git holds the defaults,
-and everything beyond them is an action through the director
+Who holds which position and role is stored in OpenFGA and in no other
+place: the identity provider holds accounts and no right, and no right
+travels in a token for a platform decision. The operator is the store's one
+writer. Structure (positions, cluster role holders, tenants, installs,
+grants) it projects from what git declares, once Argo CD has applied it;
+who holds a position or a role it writes when a tenant's administrator gives
+or takes it through the registrar. The operator writes; the director asks.
+Git holds the defaults, and everything beyond them is an action through the
+director or the registrar
 ([authorization.md](../concepts/authorization.md)).

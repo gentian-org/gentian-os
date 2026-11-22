@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -29,31 +28,19 @@ import (
 // A tenant's own groups, and the sign-ins between tenants of this cluster, as
 // commits.
 //
-// Both are declared state (Tenant spec.groups, spec.signInFrom,
-// spec.signInTo), written by the director as patches beside the tenant
-// (groups.yaml, sign-in.yaml) the way its languages are. The composition makes
-// the groups, the client and the identity provider from them; nothing here
+// Declared state (Tenant spec.signInFrom, spec.signInTo), written by the
+// director as a patch beside the tenant (sign-in.yaml) the way its languages
+// are. The composition makes the client and the identity provider from it; nothing here
 // holds a Keycloak credential, and a realm made again from git has them again.
 
-// GroupsFile and SignInFile are the patches.
-const (
-	GroupsFile = "groups.yaml"
-	SignInFile = "sign-in.yaml"
-)
+// SignInFile is the patch.
+const SignInFile = "sign-in.yaml"
 
 // ErrInvalidSignIn is a sign-in or a group that cannot be one.
 var ErrInvalidSignIn = errors.New("invalid sign-in")
 
-var groupName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
-
-// signInMembers is the one platform group a sign-in gives.
-const signInMembers = "members"
-
-type groupsPatch struct {
-	Spec struct {
-		Groups []gentianov1alpha1.TenantGroup `json:"groups"`
-	} `json:"spec"`
-}
+// signInUser is the one position every tenant has that a sign-in gives.
+const signInUser = "user"
 
 type signInPatch struct {
 	Spec struct {
@@ -82,71 +69,6 @@ func (g *GitOps) readTenantPatch(ctx context.Context, tenant, name string, doc a
 	return nil
 }
 
-// TenantGroups reads a tenant's declared groups back.
-func (g *GitOps) TenantGroups(ctx context.Context, tenant string) ([]string, error) {
-	if !gentianov1alpha1.ValidTenantName(tenant) {
-		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	var doc groupsPatch
-	if err := g.readTenantPatch(ctx, tenant, GroupsFile, &doc); err != nil {
-		return nil, err
-	}
-	out := make([]string, 0, len(doc.Spec.Groups))
-	for _, gr := range doc.Spec.Groups {
-		out = append(out, gr.Name)
-	}
-	return out, nil
-}
-
-// SetTenantGroups commits a tenant's declared groups; none removes the patch.
-// A name the platform's own groups take (gentian...) or that is not a label
-// is refused.
-func (g *GitOps) SetTenantGroups(ctx context.Context, tenant string, groups []string, meta Meta) (Result, error) {
-	if !gentianov1alpha1.ValidTenantName(tenant) {
-		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
-	}
-	clean, err := cleanGroupNames(groups)
-	if err != nil {
-		return Result{}, err
-	}
-	body := ""
-	if len(clean) > 0 {
-		var b strings.Builder
-		b.WriteString("# Managed by the director: groups of this tenant's realm, declared here\n")
-		b.WriteString("# rather than made in a console. The platform makes them; people are put in\n")
-		b.WriteString("# them in the Admin Console, which neither renames nor deletes them.\n")
-		writeTenantHead(&b, tenant)
-		b.WriteString("  groups:\n")
-		for _, n := range clean {
-			b.WriteString("    - name: " + n + "\n")
-		}
-		body = b.String()
-	}
-	return g.writeTenantFile(ctx, tenant, GroupsFile, body, listPatch,
-		fmt.Sprintf("Tenant %s: groups %s", tenant, strings.Join(clean, ", ")), meta)
-}
-
-func cleanGroupNames(groups []string) ([]string, error) {
-	seen := map[string]bool{}
-	var out []string
-	for _, n := range groups {
-		n = strings.TrimSpace(n)
-		if n == "" || seen[n] {
-			continue
-		}
-		if !groupName.MatchString(n) || strings.HasPrefix(n, "gentian") || n == signInMembers {
-			return nil, fmt.Errorf("%w: %q is not a name for a tenant's own group (lower-case letters, digits and "+
-				"hyphens; not gentian..., not members)", ErrInvalidSignIn, n)
-		}
-		seen[n] = true
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out, nil
-}
-
 // TenantSignIn reads what a tenant declares of sign-ins.
 func (g *GitOps) TenantSignIn(ctx context.Context, tenant string) (from []gentianov1alpha1.TenantSignInFrom, to []string, err error) {
 	if !gentianov1alpha1.ValidTenantName(tenant) {
@@ -162,14 +84,13 @@ func (g *GitOps) TenantSignIn(ctx context.Context, tenant string) (from []gentia
 }
 
 // SetTenantSignIn lets the people of source sign in to target, with the
-// groups of target given, or ends it when groups is nil and remove is set.
+// positions of target given, or ends it when remove is set.
 // Two commits' worth in one: the target's signInFrom entry and the source's
 // signInTo, each in its own tenant's patch, committed together so neither
 // half lands without the other.
 //
-// A group is one target declares (spec.groups, in its groups.yaml) or
-// members. Refused: a source that is the target, a tenant that is not there.
-func (g *GitOps) SetTenantSignIn(ctx context.Context, target, source string, groups []string, remove bool, meta Meta) (Result, error) {
+// A position is one target declares (spec.positions) or user. Refused: a source that is the target, a tenant that is not there.
+func (g *GitOps) SetTenantSignIn(ctx context.Context, target, source string, positions []string, remove bool, meta Meta) (Result, error) {
 	if !gentianov1alpha1.ValidTenantName(target) || !gentianov1alpha1.ValidTenantName(source) {
 		return Result{}, fmt.Errorf("%w: tenants %q and %q", ErrInvalidName, target, source)
 	}
@@ -184,23 +105,23 @@ func (g *GitOps) SetTenantSignIn(ctx context.Context, target, source string, gro
 			return Result{}, err
 		}
 	}
-	var declared groupsPatch
-	if err := g.readTenantPatch(ctx, target, GroupsFile, &declared); err != nil {
+	declared, err := g.tenantPositionsLocked(ctx, target)
+	if err != nil {
 		return Result{}, err
 	}
-	known := map[string]bool{signInMembers: true}
-	for _, gr := range declared.Spec.Groups {
-		known[gr.Name] = true
+	known := map[string]bool{signInUser: true}
+	for _, p := range declared {
+		known[p.Name] = true
 	}
 	var given []string
-	for _, n := range groups {
+	for _, n := range positions {
 		n = strings.TrimSpace(n)
 		if n == "" || slices.Contains(given, n) {
 			continue
 		}
 		if !known[n] {
-			return Result{}, fmt.Errorf("%w: %s declares no group %q; a sign-in gives members or a group of "+
-				"spec.groups (kubectl gentian tenants groups %s ...)", ErrInvalidSignIn, target, n, target)
+			return Result{}, fmt.Errorf("%w: %s has no position %q a sign-in gives; it gives user or a position "+
+				"the tenant declares", ErrInvalidSignIn, target, n)
 		}
 		given = append(given, n)
 	}
@@ -215,7 +136,7 @@ func (g *GitOps) SetTenantSignIn(ctx context.Context, target, source string, gro
 	from := slices.DeleteFunc(tdoc.Spec.SignInFrom, func(f gentianov1alpha1.TenantSignInFrom) bool { return f.Tenant == source })
 	to := slices.DeleteFunc(sdoc.Spec.SignInTo, func(n string) bool { return n == target })
 	if !remove {
-		from = append(from, gentianov1alpha1.TenantSignInFrom{Tenant: source, Groups: given})
+		from = append(from, gentianov1alpha1.TenantSignInFrom{Tenant: source, Positions: given})
 		to = append(to, target)
 	}
 	sort.Slice(from, func(i, j int) bool { return from[i].Tenant < from[j].Tenant })
@@ -254,8 +175,8 @@ func renderSignIn(tenant string, doc signInPatch) string {
 		b.WriteString("  signInFrom:\n")
 		for _, f := range doc.Spec.SignInFrom {
 			b.WriteString("    - tenant: " + f.Tenant + "\n")
-			if len(f.Groups) > 0 {
-				b.WriteString("      groups: [" + strings.Join(f.Groups, ", ") + "]\n")
+			if len(f.Positions) > 0 {
+				b.WriteString("      positions: [" + strings.Join(f.Positions, ", ") + "]\n")
 			}
 		}
 	}

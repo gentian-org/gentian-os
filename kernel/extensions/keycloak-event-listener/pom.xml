@@ -46,6 +46,20 @@
       <version>${keycloak.version}</version>
       <scope>provided</scope>
     </dependency>
+    <!-- The SAML answer's own types, for the roles mapper of an app the
+         platform signs people in to through its sidecar. -->
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-saml-core-public</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.keycloak</groupId>
+      <artifactId>keycloak-saml-core</artifactId>
+      <version>${keycloak.version}</version>
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>jakarta.ws.rs</groupId>
       <artifactId>jakarta.ws.rs-api</artifactId>

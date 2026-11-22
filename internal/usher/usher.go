@@ -136,7 +136,7 @@ func New(cfg Config) *Server {
 	// which group.
 	if cfg.Viewer != nil && cfg.Access != nil {
 		s.guarded("GET /v1/tenants/{t}/access/people/{id}", "can_manage_users", tenantObject, s.personAccess)
-		s.guarded("GET /v1/tenants/{t}/access/groups", "can_manage_users", tenantObject, s.groupAccess)
+		s.guarded("GET /v1/tenants/{t}/access/positions/{name}", "can_manage_users", tenantObject, s.positionAccess)
 		s.guarded("GET /v1/tenants/{t}/access/apps/{p}", "can_manage_users", tenantObject, s.appAccess)
 	}
 	if cfg.Lifecycle != nil {
@@ -383,7 +383,7 @@ func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
 		fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"tenant":    c.tenant,
 		"subject":   strings.TrimPrefix(c.user, "user:"),
 		"relations": relations,
@@ -391,7 +391,18 @@ func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
 		// tenant's administrator restoring a bundle of an older one needs to
 		// know.
 		"platformVersionLine": platformversion.Line,
-	})
+	}
+	// The positions the caller holds in the tenant, by name: what a notice
+	// addressed to a position is shown by.
+	if s.cfg.Access != nil {
+		positions, err := s.cfg.Access.PositionsHeld(ctx, c.tenant, strings.TrimPrefix(c.user, "user:"))
+		if err != nil {
+			fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+			return
+		}
+		out["positions"] = positions
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // clusterMe answers which cluster verbs the caller holds, all asked together.

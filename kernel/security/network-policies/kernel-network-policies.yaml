@@ -405,6 +405,16 @@ spec:
     ports:
     - port: 8080
       protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-authentication
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: keycloakx
+    ports:
+    - port: 8083
+      protocol: TCP
   podSelector:
     matchLabels:
       app.kubernetes.io/component: usher

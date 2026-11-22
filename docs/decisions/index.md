@@ -23,9 +23,9 @@ its entry, not by contradicting it elsewhere.
 | AD-9 | [System services have no public route](ad-09-no-public-route-for-system-services.md) |
 | AD-10 | [The desktop is the desktop, for everyone; the consoles are apps](ad-10-desktop-and-consoles.md) |
 | AD-11 | [The layout applies to fresh installs](ad-11-layout-fresh-installs.md) |
-| AD-12 | [The authorization store is a projection; Keycloak's events are the only source of membership](ad-12-authorization-store-projection.md) |
+| AD-12 | [The authorization store has one writer; rights are held there and nowhere else](ad-12-authorization-store-projection.md) |
 | AD-13 | [The edge is the only session authority](ad-13-edge-session-authority.md) |
 | AD-14 | [Without a store, apps are installed by command only](ad-14-install-by-command-without-store.md) |
 | AD-15 | [The OS is multi-lingual](ad-15-multi-lingual.md) |
-| AD-16 | [Every cluster role but `admin` and `breakGlass` is held by a person named in git](ad-16-cluster-roles-named-in-git.md) |
+| AD-16 | [Every cluster role is held by a person named in git](ad-16-cluster-roles-named-in-git.md) |
 | AD-17 | [Identity crosses clusters only as a partner link, by standards](ad-17-identity-crosses-as-partner-link.md) |

@@ -86,7 +86,7 @@ Implementation, split by concern rather than by kind:
 | `kernel/secrets/` | OpenBao KV client, HKDF-SHA256 derivation, write-once seeding. |
 | `kernel/netpolicy/`, `kernel/kernelnet/` | NetworkPolicy construction for tenant and kernel namespaces. |
 | `kernel/trustanchor/`, `kernel/tenantshell/`, `kernel/images.go` | Trust-anchor bundle, tenant namespace scaffolding, pinned kernel image refs. |
-| `keycloak/`, `oidc/` | Keycloak group and shell helpers; OIDC pack resolution from `OIDCPackCatalog`. |
+| `keycloak/`, `oidc/` | Keycloak realm names and shell helpers; OIDC pack resolution from `OIDCPackCatalog`. |
 | `provisioning/privilege/` | Privilege-escalation Jobs and their fingerprinting. |
 | `security/` | MAC waivers, privileges and `PlatformSecurityPolicy` evaluation. |
 | `layout/`, `meta/` | The namespace layout as Go reads it (the same facts as `kernel/namespaces.yaml`); shared label keys. |

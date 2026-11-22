@@ -266,32 +266,6 @@ func TestAPurgeIsRefusedWhileTheComponentIsPlaced(t *testing.T) {
 	}
 }
 
-// Provisioning hands an app to people, so there has to be an app.
-func TestProvisioningNeedsTheAppToBeInstalled(t *testing.T) {
-	s := appsService(t, demoTenant())
-	_, err := s.ProvisionApp(context.Background(), "demo", "wiki")
-	if err == nil || !strings.Contains(err.Error(), "not installed") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-// An add-on has a group of its own, so it is provisioned by its own name.
-func TestAnAddonSwitchedOnCountsAsInstalledForProvisioning(t *testing.T) {
-	tenant := demoTenant()
-	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "cloud", Addons: []string{"cloud-calendar"}}}
-	s := appsService(t, tenant)
-
-	// Past the "is it installed" question, which is the one asked here; what
-	// follows needs a Keycloak this test does not have.
-	_, err := s.ProvisionApp(context.Background(), "demo", "cloud-calendar")
-	if err == nil || strings.Contains(err.Error(), "not installed") {
-		t.Fatalf("err = %v", err)
-	}
-	if _, err := s.ProvisionApp(context.Background(), "demo", "cloud-notes"); err == nil || !strings.Contains(err.Error(), "not installed") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
 // An app that waits for a credential only a person can provide says which:
 // no bundle carries one, so an import would otherwise wait two hours for a
 // reason nobody is told.

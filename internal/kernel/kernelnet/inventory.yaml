@@ -68,6 +68,12 @@ peers:
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: bouncer}
     evidence:
       - charts/gentian-os/templates/bouncer.yaml:12
+  keycloak:
+    what: Keycloak
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    evidence:
+      - kernel/services/keycloak-idp/manifests/values.yaml:1
   control-programs:
     what: the programs of the operator's chart in the control namespace (operator, director, usher, custodian, confidant, registrar)
     namespace: kernel-control
@@ -635,6 +641,13 @@ namespaces:
                 evidence:
                   - internal/controller/component_reconciler.go:1537
                   - charts/gentian-os/templates/componentprofile-desktop.yaml:47
+          - port: 8083
+            what: answers which roles a person holds on the app they sign in to
+            from:
+              - peer: keycloak
+                why: the token hook asks when it issues an app's token
+                evidence:
+                  - kernel/appsets/raw/09-identity.yaml:86
       - name: custodian
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os

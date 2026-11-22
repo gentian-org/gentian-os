@@ -2,30 +2,35 @@
 name: Gentian authorization model v1
 model_file: model.fga
 
-# One fixture for every test. Ids follow the model's rule: a Keycloak group
-# gentian:tenant:demo:admins is group:gentian/tenant/demo/admins.
+# One fixture for every test. Ids follow the model's rule: a thing of a tenant
+# is <tenant>/<name>, a declared role <tenant>/<profile>/<name>.
 tuples:
-  # --- people, as the director projects them from Keycloak events
-  - {user: user:alice,  relation: member, object: group:gentian/platform/admin}
-  - {user: user:bea,    relation: member, object: group:gentian/platform/break-glass}
-  - {user: user:tom,    relation: member, object: group:gentian/tenant/demo/admins}
-  - {user: user:tom,    relation: member, object: group:gentian/tenant/demo/app/nextcloud}   # an admin account wrongly entitled
-  - {user: user:mia,    relation: member, object: group:gentian/tenant/demo/members}
-  - {user: user:mia,    relation: member, object: group:gentian/tenant/demo/app/nextcloud}
-  - {user: user:max,    relation: member, object: group:gentian/tenant/demo/members}
-  - {user: user:pat,    relation: member, object: group:gentian/tenant/demo/admins}
-  - {user: user:nina,   relation: member, object: group:gentian/tenant/demo/app/nextcloud/admins}
-  - {user: user:tina,   relation: member, object: group:gentian/tenant/solo/admins}
-  - {user: user:olaf,   relation: member, object: group:gentian/tenant/other/members}
-  - {user: user:uma,    relation: member, object: group:gentian/tenant/user/admins}
-  - {user: user:ulf,    relation: member, object: group:gentian/tenant/user/members}
-  - {user: user:pia,    relation: member, object: group:gentian/tenant/plain/admins}
-  - {user: user:piet,   relation: member, object: group:gentian/tenant/plain/members}
-  - {user: user:paul,   relation: member, object: group:gentian/tenant/solo/admins}
 
-  # --- cluster roles, from the Cluster claim: admin and break_glass by group (spec.platformRoles)
-  - {user: group:gentian/platform/admin#member,             relation: admin,             object: cluster:main}
-  - {user: group:gentian/platform/break-glass#member,       relation: break_glass,       object: cluster:main}
+  # --- who holds which position
+  - {user: user:tom,    relation: holder, object: position:demo/tenant-administrator}
+  - {user: user:pat,    relation: holder, object: position:demo/tenant-administrator}
+  - {user: user:mia,    relation: holder, object: position:demo/user}
+  - {user: user:max,    relation: holder, object: position:demo/user}
+  - {user: user:nina,   relation: holder, object: position:demo/app-administrator}
+  - {user: user:eve,    relation: holder, object: position:demo/executive}
+  - {user: user:sven,   relation: holder, object: position:demo/sales-manager}
+  - {user: user:marc,   relation: holder, object: position:demo/engineer}
+  - {user: user:tina,   relation: holder, object: position:solo/tenant-administrator}
+  - {user: user:paul,   relation: holder, object: position:solo/tenant-administrator}
+  - {user: user:olaf,   relation: holder, object: position:other/user}
+  - {user: user:uma,    relation: holder, object: position:user/tenant-administrator}
+  - {user: user:ulf,    relation: holder, object: position:user/user}
+  - {user: user:pia,    relation: holder, object: position:plain/tenant-administrator}
+  - {user: user:piet,   relation: holder, object: position:plain/user}
+  # and the roles given to a person directly, beside their position
+  - {user: user:mia,    relation: user,   object: app:demo/nextcloud}
+  - {user: user:tom,    relation: user,   object: app:demo/nextcloud}                 # an administrator who was given an app
+  - {user: user:marc,   relation: holder, object: role:demo/odoo-sales/configurator}  # an engineer with one role in sales
+  - {user: user:odin,   relation: admin,  object: app:demo/odoo}
+
+  # --- cluster roles, from the Cluster claim's role holders
+  - {user: user:alice,                                      relation: admin,             object: cluster:main}
+  - {user: user:bea,                                        relation: break_glass,       object: cluster:main}
   # and a person, for a stated time (spec.platformAccess.roleHolders)
   - {user: user:gentian/bea-held,                           relation: break_glass,       object: cluster:main}
   # and the role holders it names (spec.platformAccess.roleHolders), each the account of its realm:
@@ -42,36 +47,63 @@ tuples:
   # holder of scope tenant:demo)
   - {user: cluster:main, relation: cluster,     object: tenant:demo}
   - {user: cluster:main, relation: operated_by, object: tenant:demo}
-  - {user: group:gentian/tenant/demo/admins#member,    relation: admin,              object: tenant:demo}
-  - {user: group:gentian/tenant/demo/members#member,   relation: member,             object: tenant:demo}
+  - {user: position:demo/tenant-administrator#holder, relation: admin, object: tenant:demo}
+  - {user: position:demo/user#holder,                 relation: user,  object: tenant:demo}
   - {user: user:demo/pat, relation: perimeter_approver, object: tenant:demo}
   # and dana, a person of the platform tenant, its auditor: she reads demo's evidence and no other tenant's
   - {user: user:kernel/dana, relation: auditor, object: tenant:demo}
 
   # --- tenant solo administers itself: cluster stays, operated_by was removed
   - {user: cluster:main, relation: cluster, object: tenant:solo}
-  - {user: group:gentian/tenant/solo/admins#member, relation: admin, object: tenant:solo}
+  - {user: position:solo/tenant-administrator#holder, relation: admin, object: tenant:solo}
   - {user: user:solo/paul, relation: perimeter_approver, object: tenant:solo}
 
   # --- tenant plain: operated by the platform, and as every tenant starts: nobody of its own approves
   - {user: cluster:main, relation: cluster,     object: tenant:plain}
   - {user: cluster:main, relation: operated_by, object: tenant:plain}
-  - {user: group:gentian/tenant/plain/admins#member,    relation: admin,              object: tenant:plain}
-  - {user: group:gentian/tenant/plain/members#member,   relation: member,             object: tenant:plain}
+  - {user: position:plain/tenant-administrator#holder, relation: admin, object: tenant:plain}
+  - {user: position:plain/user#holder,                 relation: user,  object: tenant:plain}
 
   # --- tenant user: the name of the one user tenant of a single-tenancy cluster, operated by the platform,
   # its administrator uma its perimeter approver
   - {user: cluster:main, relation: cluster,     object: tenant:user}
   - {user: cluster:main, relation: operated_by, object: tenant:user}
-  - {user: group:gentian/tenant/user/admins#member,  relation: admin,  object: tenant:user}
-  - {user: group:gentian/tenant/user/members#member, relation: member, object: tenant:user}
+  - {user: position:user/tenant-administrator#holder, relation: admin, object: tenant:user}
+  - {user: position:user/user#holder,                 relation: user,  object: tenant:user}
   - {user: user:user/uma, relation: perimeter_approver, object: tenant:user}
 
-  # --- one installed app
+  # --- tenant other: only what olaf needs to be a person of another tenant
+  - {user: position:other/user#holder, relation: user, object: tenant:other}
+
+  # --- one installed app, administered through the position App administrator
   - {user: tenant:demo, relation: tenant, object: app:demo/nextcloud}
-  - {user: group:gentian/tenant/demo/app/nextcloud#member,        relation: entitled, object: app:demo/nextcloud}
-  - {user: group:gentian/tenant/demo/app/nextcloud/admins#member, relation: admin,    object: app:demo/nextcloud}
+  - {user: position:demo/app-administrator#holder, relation: admin, object: app:demo/nextcloud}
   - {user: tenant:solo, relation: tenant, object: app:solo/wiki}
+
+  # --- a base app and its add-on, an app of its own with roles of its own:
+  # manager includes salesman, configurator stands alone
+  - {user: tenant:demo,         relation: tenant, object: app:demo/odoo}
+  - {user: tenant:demo,         relation: tenant, object: app:demo/odoo-sales}
+  - {user: app:demo/odoo,       relation: base,   object: app:demo/odoo-sales}
+  - {user: app:demo/odoo-sales, relation: addon,  object: app:demo/odoo}
+  - {user: app:demo/odoo-sales, relation: app,      object: role:demo/odoo-sales/manager}
+  - {user: app:demo/odoo-sales, relation: app,      object: role:demo/odoo-sales/salesman}
+  - {user: app:demo/odoo-sales, relation: app,      object: role:demo/odoo-sales/configurator}
+  - {user: role:demo/odoo-sales/manager,      relation: declared, object: app:demo/odoo-sales}
+  - {user: role:demo/odoo-sales/salesman,     relation: declared, object: app:demo/odoo-sales}
+  - {user: role:demo/odoo-sales/configurator, relation: declared, object: app:demo/odoo-sales}
+  - {user: role:demo/odoo-sales/manager, relation: included_in, object: role:demo/odoo-sales/salesman}
+
+  # --- positions of tenant demo beyond the three every tenant has: Sales
+  # manager holds the add-on's role, Executive includes Sales manager,
+  # Engineer is a person of the tenant and nothing in sales
+  - {user: tenant:demo, relation: tenant, object: position:demo/sales-manager}
+  - {user: tenant:demo, relation: tenant, object: position:demo/executive}
+  - {user: tenant:demo, relation: tenant, object: position:demo/engineer}
+  - {user: position:demo/sales-manager#holder, relation: holder, object: role:demo/odoo-sales/manager}
+  - {user: position:demo/sales-manager#holder, relation: user,   object: tenant:demo}
+  - {user: position:demo/executive,            relation: included_in, object: position:demo/sales-manager}
+  - {user: position:demo/engineer#holder,      relation: user,   object: tenant:demo}
 
   # --- contracts, shared instances
   - {user: tenant:demo,        relation: tenant,   object: contract:demo/file-store}
@@ -114,7 +146,7 @@ tests:
       - {user: user:alice,      object: cluster:main, assertions: {can_approve: false}}
       - {user: user:kernel/sam, object: cluster:main, assertions: {can_deploy_tenant: false}}
 
-  - name: tenant admin holds the tenant verbs, members hold none
+  - name: tenant admin holds the tenant verbs, a user of the tenant holds none
     check:
       - {user: user:tom, object: tenant:demo, assertions: {can_install_app: true, can_set_policy: true, can_grant: true, can_manage_users: true, can_view: true, can_enter: true, can_administer: true}}
       - {user: user:mia, object: tenant:demo, assertions: {can_install_app: false, can_manage_users: false, can_grant: false, can_administer: false, can_view: true, can_enter: true}}
@@ -168,22 +200,63 @@ tests:
       - {user: user:tina,      object: tenant:solo, assertions: {can_expose: false}}
       - {user: user:solo/paul, object: tenant:solo, assertions: {can_expose: true}}
 
-  - name: entitlement is the app's own group, not tenant membership
+  - name: an app is used by whoever was given a role on it, not by every person of the tenant
     check:
       - {user: user:mia, object: app:demo/nextcloud, assertions: {can_use: true, can_launch: true}}
       - {user: user:max, object: app:demo/nextcloud, assertions: {can_use: false, can_launch: false}}
       - {user: user:olaf, object: app:demo/nextcloud, assertions: {can_use: false}}
 
-  - name: an admin account launches nothing, even when wrongly entitled
+  - name: grants only add — an administrator uses an app they were given, and no app they were not
     check:
-      - {user: user:tom,   object: app:demo/nextcloud, assertions: {can_use: false, can_launch: false}}
-      - {user: user:alice, object: app:demo/nextcloud, assertions: {can_use: false}}
+      - {user: user:tom,   object: app:demo/nextcloud, assertions: {can_use: true, can_launch: true, can_administer: false}}
+      - {user: user:pat,   object: app:demo/nextcloud, assertions: {can_use: false, can_administer: false}}
+      - {user: user:alice, object: app:demo/nextcloud, assertions: {can_use: false, can_administer: false}}
 
-  - name: app administration is per app and confers nothing else
+  - name: app administration is per app, includes its use and confers nothing else
     check:
-      - {user: user:nina, object: app:demo/nextcloud, assertions: {can_administer: true, can_use: false, can_write_credential: false}}
-      - {user: user:nina, object: tenant:demo,        assertions: {can_install_app: false, can_view: false}}
+      - {user: user:nina, object: app:demo/nextcloud, assertions: {can_administer: true, can_use: true, can_write_credential: false}}
+      - {user: user:nina, object: app:demo/odoo,      assertions: {can_administer: false, can_use: false}}
+      - {user: user:nina, object: tenant:demo,        assertions: {can_install_app: false, can_view: false, can_enter: false}}
       - {user: user:mia,  object: app:demo/nextcloud, assertions: {can_administer: false}}
+
+  - name: a declared role sits between user and admin — holding it is using the app, and the app's admin holds it
+    check:
+      - {user: user:sven, object: role:demo/odoo-sales/manager,      assertions: {holder: true}}
+      - {user: user:sven, object: role:demo/odoo-sales/salesman,     assertions: {holder: true}}    # manager includes salesman
+      - {user: user:sven, object: role:demo/odoo-sales/configurator, assertions: {holder: false}}
+      - {user: user:sven, object: app:demo/odoo-sales,               assertions: {can_use: true, can_administer: false}}
+      - {user: user:odin, object: role:demo/odoo-sales/manager,      assertions: {holder: true}}    # the base's admin administers the add-on
+      - {user: user:odin, object: role:demo/odoo-sales/configurator, assertions: {holder: true}}
+      - {user: user:mia,  object: role:demo/odoo-sales/salesman,     assertions: {holder: false}}
+
+  - name: an add-on is an app of its own — its role lets a person into the base, the base's admin administers it
+    check:
+      - {user: user:sven, object: app:demo/odoo,       assertions: {can_use: true, can_administer: false}}
+      - {user: user:odin, object: app:demo/odoo-sales, assertions: {can_administer: true, can_use: true}}
+      - {user: user:odin, object: app:demo/nextcloud,  assertions: {can_administer: false, can_use: false}}
+      - {user: user:max,  object: app:demo/odoo,       assertions: {can_use: false}}
+      - {user: user:max,  object: app:demo/odoo-sales, assertions: {can_use: false}}
+
+  - name: a position includes a position — who holds Executive holds what Sales manager holds
+    check:
+      - {user: user:eve,  object: position:demo/sales-manager,  assertions: {holder: true}}
+      - {user: user:sven, object: position:demo/executive,      assertions: {holder: false}}
+      - {user: user:eve,  object: role:demo/odoo-sales/manager, assertions: {holder: true}}
+      - {user: user:eve,  object: app:demo/odoo,                assertions: {can_use: true}}
+      - {user: user:eve,  object: tenant:demo,                  assertions: {can_enter: true, can_install_app: false}}
+
+  - name: a role given directly beside a position adds that role and no other
+    check:
+      - {user: user:marc, object: role:demo/odoo-sales/configurator, assertions: {holder: true}}
+      - {user: user:marc, object: role:demo/odoo-sales/manager,      assertions: {holder: false}}
+      - {user: user:marc, object: app:demo/odoo-sales,               assertions: {can_use: true, can_administer: false}}
+      - {user: user:marc, object: position:demo/sales-manager,       assertions: {holder: false}}
+
+  - name: a tenant's admin gives roles but holds none on its apps
+    check:
+      - {user: user:tom, object: tenant:demo,          assertions: {can_manage_users: true}}
+      - {user: user:pat, object: app:demo/odoo,        assertions: {can_use: false, can_administer: false}}
+      - {user: user:pat, object: role:demo/odoo-sales/manager, assertions: {holder: false}}
 
   - name: secret writes for a component follow tenant administration
     check:

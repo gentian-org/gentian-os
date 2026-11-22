@@ -1684,13 +1684,11 @@ spec:
                               properties:
                                 groups:
                                   description: |-
-                                    Groups "mirror" has the platform keep the tenant realm's group
-                                    memberships in the store, as tuples
-                                    group:<realm>/<group name>#member of user:<realm>/<subject>: every
-                                    top-level group of the realm, kept equal to the realm as people join
-                                    and leave. The model must define a type group with a relation member
-                                    users are written with. A component's own key cannot write a tuple
-                                    whose user or object is a group, mirrored or not.
+                                    Groups "mirror" is accepted and has no effect. It had the platform
+                                    keep the tenant realm's group memberships in the store; no group of
+                                    the realm carries a right any more, so nothing is written for it. A
+                                    component's own key still cannot write a tuple whose user or object
+                                    is a group.
                                   enum:
                                   - mirror
                                   type: string
@@ -2812,8 +2810,10 @@ spec:
                         properties:
                           privilegedRole:
                             description: |-
-                              PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
-                              administrator role (for example the Nextcloud "admin" group).
+                              PrivilegedRole is the in-app administrator role the app's
+                              administrators -- whoever holds admin on it in the rights store -- are
+                              put in, for an app that cannot read its people's roles from a token
+                              (for example the Nextcloud "admin" group).
                             properties:
                               kind:
                                 allOf:
@@ -2839,12 +2839,13 @@ spec:
                             type: object
                           syncJob:
                             description: |-
-                              SyncJob is how this app applies PrivilegedRole. The operator resolves
-                              app-admins membership, publishes it, and runs this Job; the script inside
-                              speaks whatever protocol the application happens to expose.
+                              SyncJob is how this app applies PrivilegedRole. The operator reads who
+                              administers and who uses the app from the rights store, publishes both
+                              lists, and runs this Job; the script inside speaks whatever protocol the
+                              application happens to expose.
 
-                              The division is deliberate and load-bearing: resolving a Keycloak group,
-                              detecting membership changes and running a Job to completion are platform
+                              The division is deliberate and load-bearing: reading the rights store,
+                              detecting changes and running a Job to completion are platform
                               concerns, so they live here. Knowing that one app wants a JSON-RPC call
                               and another an OCS POST is not, so it lives in the catalog entry that
                               owns that app. No application's protocol, endpoint or account model may
@@ -4379,13 +4380,11 @@ spec:
                             properties:
                               groups:
                                 description: |-
-                                  Groups "mirror" has the platform keep the tenant realm's group
-                                  memberships in the store, as tuples
-                                  group:<realm>/<group name>#member of user:<realm>/<subject>: every
-                                  top-level group of the realm, kept equal to the realm as people join
-                                  and leave. The model must define a type group with a relation member
-                                  users are written with. A component's own key cannot write a tuple
-                                  whose user or object is a group, mirrored or not.
+                                  Groups "mirror" is accepted and has no effect. It had the platform
+                                  keep the tenant realm's group memberships in the store; no group of
+                                  the realm carries a right any more, so nothing is written for it. A
+                                  component's own key still cannot write a tuple whose user or object
+                                  is a group.
                                 enum:
                                 - mirror
                                 type: string
@@ -5223,6 +5222,106 @@ spec:
                                 is linked to a component that signs statements'
                               rule: has(self.keys) || !has(self.consent) || self.consent
                                 == ''
+                        type: object
+                    type: object
+                  roles:
+                    description: |-
+                      Roles are the roles people hold on this app: user and admin, which
+                      every app has, and the further ones it declares, each with what it is
+                      called inside the app. What a person holds is in the rights store; the
+                      app reads it from the sign-in token (roles.claim), in its own names.
+                      An add-on declares its own, and they reach the token of the app it is
+                      activated in.
+                    properties:
+                      admin:
+                        description: Admin is what the role admin is called inside
+                          the app.
+                        properties:
+                          inApp:
+                            description: |-
+                              InApp are the app's own names for the role: a group, a role, whatever
+                              the app reads from the claim.
+                            items:
+                              maxLength: 128
+                              minLength: 1
+                              type: string
+                            maxItems: 20
+                            type: array
+                            x-kubernetes-list-type: set
+                        type: object
+                      claim:
+                        default: gentian_app_roles
+                        description: |-
+                          Claim is the token claim the roles are written to. An add-on's is not
+                          read: its roles are written to the claim of the app it is activated in.
+                        maxLength: 64
+                        pattern: ^[A-Za-z][A-Za-z0-9_-]*$
+                        type: string
+                      declared:
+                        description: Declared are the roles of the app between user
+                          and admin.
+                        items:
+                          description: ProfileRole is a role an app declares beside
+                            user and admin.
+                          properties:
+                            description:
+                              description: Description says what the role is for.
+                              maxLength: 400
+                              type: string
+                            inApp:
+                              description: InApp are the app's own names for the role.
+                              items:
+                                maxLength: 128
+                                minLength: 1
+                                type: string
+                              maxItems: 20
+                              type: array
+                              x-kubernetes-list-type: set
+                            includes:
+                              description: |-
+                                Includes are other declared roles of the app whose holders the holders
+                                of this one are too: manager includes salesman.
+                              items:
+                                type: string
+                              maxItems: 20
+                              type: array
+                              x-kubernetes-list-type: set
+                            name:
+                              description: Name is the role's name on the platform.
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
+                              x-kubernetes-validations:
+                              - message: user and admin are roles every app has
+                                rule: '!(self in [''user'', ''admin''])'
+                            title:
+                              description: Title is the role as people read it.
+                              maxLength: 80
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        maxItems: 40
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      user:
+                        description: User is what the role user is called inside the
+                          app.
+                        properties:
+                          inApp:
+                            description: |-
+                              InApp are the app's own names for the role: a group, a role, whatever
+                              the app reads from the claim.
+                            items:
+                              maxLength: 128
+                              minLength: 1
+                              type: string
+                            maxItems: 20
+                            type: array
+                            x-kubernetes-list-type: set
                         type: object
                     type: object
                   secrets:

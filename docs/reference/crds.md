@@ -461,7 +461,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].extraValues` | object (free-form) |  | `ExtraValues` are merged into the sidecar Helm release values. |
 | `spec.extensions[].kernelRequirements` | object |  | ServiceRequirements declares kernel services the sidecar needs. |
 | `spec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `spec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `spec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `spec.extensions[].kernelRequirements.authorization.tuples[].object` | string | yes |  |
@@ -590,7 +590,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.hooks.postInstall.script` | string | yes | `Script` is the shell script body, run via `/bin/sh -c`. |
 | `spec.hooks.postInstall.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount in the tenant namespace (e.g. |
 | `spec.hooks.provisioning` | object |  | `Provisioning` configures the component through its own API after install and on resync. |
-| `spec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` maps gentian:tenant:\<t>:app-admins members to an in-app administrator role (for example the Nextcloud "admin" group). |
+| `spec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` is the in-app administrator role the app's administrators -- whoever holds admin on it in the rights store -- are put in, for an app that… |
 | `spec.hooks.provisioning.privilegedRole.kind` | string | yes | `Kind` is the application's native role type. |
 | `spec.hooks.provisioning.privilegedRole.name` | string | yes | `Name` is the in-app role identifier (for example Nextcloud group "admin"). |
 | `spec.hooks.provisioning.syncJob` | object |  | `SyncJob` is how this app applies PrivilegedRole. |
@@ -775,7 +775,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.privileges.podSecurity[].scope` | string | yes | `Scope` is the container or composition part it is waived for. |
 | `spec.requires.services` | object |  | `Services` are what the platform must fulfill before this component runs: identity, database, object storage, cache, mail, MCP. |
 | `spec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `spec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `spec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `spec.requires.services.authorization.tuples[].object` | string | yes |  |
@@ -867,6 +867,18 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `spec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `spec.roles` | object |  | `Roles` are the roles people hold on this app: user and admin, which every app has, and the further ones it declares, each with what it is called inside the app. |
+| `spec.roles.admin` | object |  | `Admin` is what the role admin is called inside the app. |
+| `spec.roles.admin.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
+| `spec.roles.claim` | string |  | `Claim` is the token claim the roles are written to. |
+| `spec.roles.declared` | []object |  | `Declared` are the roles of the app between user and admin. |
+| `spec.roles.declared[].description` | string |  | `Description` says what the role is for. |
+| `spec.roles.declared[].inApp` | []string |  | `InApp` are the app's own names for the role. |
+| `spec.roles.declared[].includes` | []string |  | `Includes` are other declared roles of the app whose holders the holders of this one are too: manager includes salesman. |
+| `spec.roles.declared[].name` | string | yes | `Name` is the role's name on the platform. |
+| `spec.roles.declared[].title` | string |  | `Title` is the role as people read it. |
+| `spec.roles.user` | object |  | `User` is what the role user is called inside the app. |
+| `spec.roles.user.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
 | `spec.secrets` | object |  | `Secrets` are values the platform generates and holds that have no external counterparty. |
 | `spec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `spec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
@@ -1362,7 +1374,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].extraValues` | object (free-form) |  | `ExtraValues` are merged into the sidecar Helm release values. |
 | `status.profileSpec.extensions[].kernelRequirements` | object |  | ServiceRequirements declares kernel services the sidecar needs. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples[].object` | string | yes |  |
@@ -1491,7 +1503,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.hooks.postInstall.script` | string | yes | `Script` is the shell script body, run via `/bin/sh -c`. |
 | `status.profileSpec.hooks.postInstall.serviceAccountName` | string |  | `ServiceAccountName` runs the Job under an existing ServiceAccount in the tenant namespace (e.g. |
 | `status.profileSpec.hooks.provisioning` | object |  | `Provisioning` configures the component through its own API after install and on resync. |
-| `status.profileSpec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` maps gentian:tenant:\<t>:app-admins members to an in-app administrator role (for example the Nextcloud "admin" group). |
+| `status.profileSpec.hooks.provisioning.privilegedRole` | object |  | `PrivilegedRole` is the in-app administrator role the app's administrators -- whoever holds admin on it in the rights store -- are put in, for an app that… |
 | `status.profileSpec.hooks.provisioning.privilegedRole.kind` | string | yes | `Kind` is the application's native role type. |
 | `status.profileSpec.hooks.provisioning.privilegedRole.name` | string | yes | `Name` is the in-app role identifier (for example Nextcloud group "admin"). |
 | `status.profileSpec.hooks.provisioning.syncJob` | object |  | `SyncJob` is how this app applies PrivilegedRole. |
@@ -1676,7 +1688,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.privileges.podSecurity[].scope` | string | yes | `Scope` is the container or composition part it is waived for. |
 | `status.profileSpec.requires.services` | object |  | `Services` are what the platform must fulfill before this component runs: identity, database, object storage, cache, mail, MCP. |
 | `status.profileSpec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" has the platform keep the tenant realm's group memberships in the store, as tuples group:\<realm>/\<group name>#member of… |
+| `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `status.profileSpec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `status.profileSpec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `status.profileSpec.requires.services.authorization.tuples[].object` | string | yes |  |
@@ -1768,6 +1780,18 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `status.profileSpec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `status.profileSpec.roles` | object |  | `Roles` are the roles people hold on this app: user and admin, which every app has, and the further ones it declares, each with what it is called inside the app. |
+| `status.profileSpec.roles.admin` | object |  | `Admin` is what the role admin is called inside the app. |
+| `status.profileSpec.roles.admin.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
+| `status.profileSpec.roles.claim` | string |  | `Claim` is the token claim the roles are written to. |
+| `status.profileSpec.roles.declared` | []object |  | `Declared` are the roles of the app between user and admin. |
+| `status.profileSpec.roles.declared[].description` | string |  | `Description` says what the role is for. |
+| `status.profileSpec.roles.declared[].inApp` | []string |  | `InApp` are the app's own names for the role. |
+| `status.profileSpec.roles.declared[].includes` | []string |  | `Includes` are other declared roles of the app whose holders the holders of this one are too: manager includes salesman. |
+| `status.profileSpec.roles.declared[].name` | string | yes | `Name` is the role's name on the platform. |
+| `status.profileSpec.roles.declared[].title` | string |  | `Title` is the role as people read it. |
+| `status.profileSpec.roles.user` | object |  | `User` is what the role user is called inside the app. |
+| `status.profileSpec.roles.user.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
 | `status.profileSpec.secrets` | object |  | `Secrets` are values the platform generates and holds that have no external counterparty. |
 | `status.profileSpec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `status.profileSpec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
@@ -1862,6 +1886,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.apps[].movedAt` | string |  | `MovedAt` is when the pin was last moved to another build, RFC 3339, and MovedBy who or what moved it: a person's id, or the policy that did ("policy:latest"). |
 | `spec.apps[].movedBy` | string |  |  |
 | `spec.apps[].placed` | boolean |  | `Placed` says the platform put this app here, because its profile is placeable (ComponentProfile spec.placement). |
+| `spec.apps[].positions` | []string |  | `Positions` names the positions of the tenant whose holders use this app: each holds the app's role user. |
 | `spec.apps[].profile` | string |  | `Profile` is the name of the ComponentProfile to install. |
 | `spec.apps[].profileRef` | object |  | `ProfileRef` selects a ComponentProfile by catalog identity (family, version, edition, offering tier). |
 | `spec.apps[].profileRef.identity` | object |  | `Identity` selects a profile by catalog tuple when Name is empty. |
@@ -1914,8 +1939,6 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.grants[].grantedAt` | string (date-time) |  | `GrantedAt` is when. |
 | `spec.grants[].grantedBy` | string |  | `GrantedBy` is the Keycloak subject who granted it, set by the director from the caller's token, never supplied by a caller. |
 | `spec.grants[].reason` | string |  | `Reason` in the granter's words, where they gave one. |
-| `spec.groups` | []object |  | `Groups` are groups of the tenant's realm declared in git; see TenantGroup. |
-| `spec.groups[].name` | string | yes | `Name` is the group's name in the realm. |
 | `spec.homes` | map[string]string |  | `Homes` names, per contract, the installed app that is the tenant's home for that kind of data (file-store, calendar-store, contacts-store): the provider every… |
 | `spec.isolation` | object |  | `Isolation` describes the workload isolation boundaries for this tenant. |
 | `spec.isolation.databasePrefix` | string |  | `DatabasePrefix` is the prefix for all database names belonging to this tenant. |
@@ -1964,6 +1987,14 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.partners[].name` | string | yes | `Name` is the partner's name here: the realm's scope and identity provider for it are partner-\<name>. |
 | `spec.platformAccess` | object |  | `PlatformAccess` is what the tenant opens to the platform's own people beyond the director: whether the platform's administrators may sign in to the tenant. |
 | `spec.platformAccess.adminsEnter` | boolean |  | `AdminsEnter` says the members of the platform's administrators' group may sign in to this tenant, through the kernel realm, and hold its admins group for as… |
+| `spec.positions` | []object |  | `Positions` are the tenant's own positions, beside the three every tenant has; see TenantPosition. |
+| `spec.positions[].description` | string |  | `Description` says who the position is for. |
+| `spec.positions[].includes` | []string |  | `Includes` are other positions of the tenant whose roles the holders of this one hold too: executive includes sales-manager. |
+| `spec.positions[].name` | string | yes | `Name` is the position's name in the tenant. |
+| `spec.positions[].roles` | []object |  | `Roles` are the roles the position holds itself. |
+| `spec.positions[].roles[].app` | string |  | `App` is the profile name of the app, or of the add-on, the role is held on. |
+| `spec.positions[].roles[].role` | string | yes | `Role` is user, admin, or a role the app's profile declares. |
+| `spec.positions[].title` | string |  | `Title` is the position as people read it. |
 | `spec.privileges` | []object |  | `Privileges` are the privilege requests a person granted for this tenant's components (AD-5). |
 | `spec.privileges[].approvedAt` | string (date-time) | yes |  |
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
@@ -2000,7 +2031,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.security.session.maxHours` | integer (int32) |  | `MaxHours` ends it regardless of activity. |
 | `spec.security.session.rememberMe` | boolean |  | `RememberMe` offers the longer session the realm is configured for. |
 | `spec.signInFrom` | []object |  | `SignInFrom` are other tenants of this cluster whose people sign in here; see TenantSignInFrom. |
-| `spec.signInFrom[].groups` | []string |  | `Groups` are the groups of this tenant its people are in: a name of spec.groups, or members (the tenant's members, who may enter it). |
+| `spec.signInFrom[].positions` | []string |  | `Positions` are the positions of this tenant its people are given when they arrive: user (a person of the tenant, who may enter it) or a name of spec.positions. |
 | `spec.signInFrom[].tenant` | string | yes | `Tenant` is the other tenant. |
 | `spec.signInTo` | []string |  | `SignInTo` are other tenants of this cluster this tenant's people may sign in to with their account here: this tenant's half of the other's spec.signInFrom. |
 | `spec.signUp` | object |  | `SignUp` is whether people make their own accounts in the realm. |
@@ -2025,7 +2056,6 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `status.conditions[].reason` | string | yes | `reason` contains a programmatic identifier indicating the reason for the condition's last transition. |
 | `status.conditions[].status` | string | yes | `status` of the condition, one of True, False, Unknown. |
 | `status.conditions[].type` | string | yes | `type` of condition in CamelCase or in foo.example.com/CamelCase. |
-| `status.defaultGrantedApps` | []string |  | `DefaultGrantedApps` lists the apps whose default grant (spec.apps[].defaultGrant) has been applied: the tenant's members at that moment were added to the app's… |
 | `status.domain` | string |  | `Domain` is the custom domain a TenantDomain binds this tenant to, copied here by the operator so every consumer of EffectiveDomain reads it from the tenant… |
 | `status.mail` | object |  | `Mail` holds the observed DNS record data produced by the mail reconciler. |
 | `status.mail.dkimPublicKey` | string |  | `DKIMPublicKey` is the RSA public key for DKIM signing, base64-encoded (PKIX DER). |

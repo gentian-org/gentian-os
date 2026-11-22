@@ -56,69 +56,17 @@ func (h *harness) tuplesOf(name string) []string {
 // for the same audience, not the operator's token for another audience.
 func TestOnlyThePlatformUsesThePlatformPath(t *testing.T) {
 	h := newHarness(t, mirroring(t, "acme", "ledger", "key-a", "acme"))
-	body := MembershipsRequest{Tenant: "acme", Realm: "acme", Subject: "u1", Groups: []string{"staff"}}
 	for token, want := range map[string]int{
 		"":               http.StatusUnauthorized,
 		"key-a":          http.StatusUnauthorized,
 		"app-token":      http.StatusForbidden,
 		"other-audience": http.StatusUnauthorized,
-		"operator-token": http.StatusNoContent,
+		// Admitted: the answer is the store's, which nothing has made yet.
+		"operator-token": http.StatusNotFound,
 	} {
-		if code, _ := h.call(t, http.MethodPut, "/v1/platform/memberships", token, body); code != want {
+		if code, _ := h.call(t, http.MethodGet, "/v1/platform/stores/acme/ledger", token, nil); code != want {
 			t.Errorf("token %q: %d, want %d", token, code, want)
 		}
-	}
-}
-
-// A realm's memberships reach the stores of that tenant's components that
-// mirror groups, as state: the person's groups become exactly the ones the
-// event names, nested groups are not mirrored, and a deleted group loses
-// its members. Another tenant's store and one that does not mirror are
-// untouched.
-func TestARealmsMembershipsReachItsTenantsMirroringStoresOnly(t *testing.T) {
-	plain := entry(t, "acme", "notes", "key-n", teamModel)
-	plain.Realm = "acme"
-	h := newHarness(t,
-		mirroring(t, "acme", "ledger", "key-a", "acme"),
-		mirroring(t, "globex", "ledger", "key-g", "globex"),
-		plain)
-	put := func(subject string, groups ...string) {
-		t.Helper()
-		if code, body := h.call(t, http.MethodPut, "/v1/platform/memberships", "operator-token",
-			MembershipsRequest{Tenant: "acme", Realm: "acme", Subject: subject, Groups: groups}); code != http.StatusNoContent {
-			t.Fatalf("memberships: %d %v", code, body)
-		}
-	}
-	put("u1", "/gentian:tenant:acme:members", "staff", "/staff/berlin")
-	put("u2", "staff")
-	want := []string{
-		"user:acme/u1 member group:acme/gentian/tenant/acme/members",
-		"user:acme/u1 member group:acme/staff",
-		"user:acme/u2 member group:acme/staff",
-	}
-	if got := h.tuplesOf("acme/ledger"); strings.Join(got, "\n") != strings.Join(want, "\n") {
-		t.Fatalf("acme/ledger:\n%s", strings.Join(got, "\n"))
-	}
-	if got := h.tuplesOf("globex/ledger"); len(got) != 0 {
-		t.Fatalf("another tenant's store got %v", got)
-	}
-	if got := h.tuplesOf("acme/notes"); len(got) != 0 {
-		t.Fatalf("a store that does not mirror got %v", got)
-	}
-	// State: u1 is now in staff alone.
-	put("u1", "staff")
-	if code, _ := h.call(t, http.MethodPost, "/v1/platform/group-deleted", "operator-token",
-		GroupDeletedRequest{Tenant: "acme", Realm: "acme", Group: "staff"}); code != http.StatusNoContent {
-		t.Fatalf("group-deleted: %d", code)
-	}
-	if got := h.tuplesOf("acme/ledger"); len(got) != 0 {
-		t.Fatalf("after the group went: %v", got)
-	}
-	// A realm that is not the store's tenant's reaches nothing.
-	h.call(t, http.MethodPut, "/v1/platform/memberships", "operator-token",
-		MembershipsRequest{Tenant: "acme", Realm: "globex", Subject: "u9", Groups: []string{"staff"}})
-	if got := h.tuplesOf("acme/ledger"); len(got) != 0 {
-		t.Fatalf("another realm's event reached acme: %v", got)
 	}
 }
 
@@ -146,10 +94,6 @@ func TestAComponentWritesNoTupleAboutAGroup(t *testing.T) {
 		if code, body := h.call(t, http.MethodPost, "/v1/write", "key-a", req); code != http.StatusOK {
 			t.Fatalf("its own object for a group's members, %+v: %d %v", req, code, body)
 		}
-	}
-	h.call(t, http.MethodPut, "/v1/platform/memberships", "operator-token", MembershipsRequest{Tenant: "acme", Realm: "acme", Subject: "u1", Groups: []string{"staff"}})
-	if _, body := h.call(t, http.MethodPost, "/v1/check", "key-a", CheckRequest{User: "user:acme/u1", Relation: "member", Object: "group:acme/staff"}); body["allowed"] != true {
-		t.Fatalf("a check of a mirrored membership: %v", body)
 	}
 }
 
@@ -184,7 +128,7 @@ func TestStartingTuplesFollowTheProfileAndLeaveTheComponentsOwn(t *testing.T) {
 func TestAStoreIsExportedRestoredAndPurged(t *testing.T) {
 	h := newHarness(t, mirroring(t, "acme", "ledger", "key-a", "acme"))
 	h.call(t, http.MethodPost, "/v1/write", "key-a", WriteRequest{Writes: []Tuple{{User: "user:acme/u1", Relation: "owner", Object: "project:1"}}})
-	h.call(t, http.MethodPut, "/v1/platform/memberships", "operator-token", MembershipsRequest{Tenant: "acme", Realm: "acme", Subject: "u1", Groups: []string{"staff"}})
+	h.call(t, http.MethodPost, "/v1/write", "key-a", WriteRequest{Writes: []Tuple{{User: "user:acme/u2", Relation: "owner", Object: "project:2"}}})
 	code, body := h.call(t, http.MethodGet, "/v1/platform/stores/acme/ledger", "operator-token", nil)
 	if code != http.StatusOK || len(body["tuples"].([]any)) != 2 || body["model"] == nil {
 		t.Fatalf("export: %d %v", code, body)

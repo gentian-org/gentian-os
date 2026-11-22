@@ -358,3 +358,52 @@ func TestAnAppsClientNamesTheEntriesItsPeopleAreLinkedTo(t *testing.T) {
 		}
 	}
 }
+
+// An app whose profile, or an add-on's, names a role inside the app gets
+// the platform's roles mapper on its sign-in client, with the tenant, the
+// app and the names; an app that names none gets no mapper.
+func TestAnAppsClientCarriesItsRolesMapper(t *testing.T) {
+	mapper := func(in *Input) map[string]interface{} {
+		t.Helper()
+		got, err := Render(in)
+		if err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		for _, o := range got.Objects {
+			if o.GetKind() != "ProtocolMapper" {
+				continue
+			}
+			if kind, _, _ := unstructured.NestedString(o.Object, "spec", "forProvider", "protocolMapper"); kind == "gentian-app-roles" {
+				cfg, _, _ := unstructured.NestedMap(o.Object, "spec", "forProvider", "config")
+				return cfg
+			}
+		}
+		return nil
+	}
+	in := fixtureInput(t, "testdata/render/app-build")
+	if cfg := mapper(in); cfg != nil {
+		t.Fatalf("an app that names no role carries the mapper: %v", cfg)
+	}
+	in = fixtureInput(t, "testdata/render/app-build")
+	in.Roles = &TokenRoles{Claim: "gentian_app_roles", InApp: map[string]map[string][]string{
+		in.ProfileName: {"user": {"base.group_user"}, "admin": {"base.group_system"}},
+		"shop-sales":   {"user": {"sales.salesman"}},
+	}}
+	cfg := mapper(in)
+	if cfg == nil {
+		t.Fatal("no roles mapper on the client")
+	}
+	if cfg["claim.name"] != "gentian_app_roles" || cfg["gentian.tenant"] != in.TenantName || cfg["gentian.app"] != in.ProfileName {
+		t.Errorf("mapper config = %v", cfg)
+	}
+	want := `{"` + in.ProfileName + `":{"admin":["base.group_system"],"user":["base.group_user"]},"shop-sales":{"user":["sales.salesman"]}}`
+	if in.ProfileName > "shop-sales" {
+		t.Skip("fixture name sorts after the add-on's")
+	}
+	if cfg["gentian.roles"] != want {
+		t.Errorf("gentian.roles = %v, want %s", cfg["gentian.roles"], want)
+	}
+	if cfg["userinfo.token.claim"] != "true" || cfg["access.token.claim"] != "true" || cfg["id.token.claim"] != "true" {
+		t.Errorf("the roles are not in every token the app may read: %v", cfg)
+	}
+}

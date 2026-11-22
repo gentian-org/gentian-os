@@ -110,11 +110,6 @@ type AppState struct {
 	// cluster no longer has.
 	TrustTier string `json:"trustTier,omitempty"`
 	Holds     []Hold `json:"holds,omitempty"`
-	// Administrators is how the tenant's app administrators come to
-	// administer inside this app (administrators.go). Absent for an app whose
-	// profile maps them to nothing: who administers inside it is then set in
-	// the app itself.
-	Administrators *Administrators `json:"administrators,omitempty"`
 }
 
 // AddonState is one add-on of an app, as its own Component has it.
@@ -126,11 +121,9 @@ type AddonState struct {
 	Message                   string             `json:"message,omitempty"`
 	PendingPrivileges         []string           `json:"pendingPrivileges,omitempty"`
 	PendingPrivilegeApprovals []PendingPrivilege `json:"pendingPrivilegeApprovals,omitempty"`
-	// TrustTier, Holds and Administrators are the add-on's own, as on
-	// AppState.
-	TrustTier      string          `json:"trustTier,omitempty"`
-	Holds          []Hold          `json:"holds,omitempty"`
-	Administrators *Administrators `json:"administrators,omitempty"`
+	// TrustTier and Holds are the add-on's own, as on AppState.
+	TrustTier string `json:"trustTier,omitempty"`
+	Holds     []Hold `json:"holds,omitempty"`
 }
 
 // PendingPrivilege is one request nobody has granted yet, and who may.
@@ -339,7 +332,6 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		if found {
 			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, allowed, time.Now())
 			state.TrustTier, state.Holds = string(cp.Spec.TrustTier), holdsOf(cp)
-			state.Administrators = administratorsOf(tenantName, cp)
 		}
 		pods, err := s.componentPods(ctx, comp)
 		if err != nil {
@@ -382,7 +374,6 @@ func addonState(tenant string, comp *gentianov1alpha1.Component, cp *gentianov1a
 		PendingPrivilegeApprovals: pendingApprovals(comp, cp, allowed, time.Now()),
 		TrustTier:                 string(cp.Spec.TrustTier),
 		Holds:                     holdsOf(cp),
-		Administrators:            administratorsOf(tenant, cp),
 	}
 }
 
@@ -795,48 +786,6 @@ func (s *Service) finishUninstall(ctx context.Context, tenant *gentianov1alpha1.
 	return nil
 }
 
-// ProvisionApp grants an installed app to everybody who is already a member
-// of the tenant, and marks it as granted by default to whoever joins later.
-//
-// Installing makes an app exist; who may use it is decided separately. This
-// is the shortcut for the common answer, "everyone".
-func (s *Service) ProvisionApp(ctx context.Context, tenantName, profile string) (*Result, error) {
-	defer s.lockApp(tenantName, profile)()
-
-	tenant, err := s.getTenant(ctx, tenantName)
-	if err != nil {
-		return nil, err
-	}
-	// An app of the tenant's, or an add-on switched on inside one: an add-on
-	// has a group of its own, and who may use it is decided separately from
-	// who may use its base. A component the platform places has no group to
-	// grant, and is not one.
-	apps, err := placement.Installed(ctx, s.client, tenant.Spec.Apps)
-	if err != nil {
-		return nil, err
-	}
-	installed := false
-	for _, a := range apps {
-		if a.Profile == profile {
-			installed = true
-			break
-		}
-		for _, addon := range a.Addons {
-			if addon == profile {
-				installed = true
-				break
-			}
-		}
-	}
-	if !installed {
-		return nil, fmt.Errorf("%s is not installed in %s", profile, tenantName)
-	}
-	if err := s.provisionAppGroupUsers(ctx, tenant, profile); err != nil {
-		return nil, err
-	}
-	return &Result{Status: "provisioned", Tenant: tenantName, Profile: profile}, nil
-}
-
 func (h *HTTPServer) registerAppRoutes(mux router) {
 	mux.Read("GET /v1/tenants/{tenant}/apps/status", h.handleAppStates)
 	// What uninstalled apps still hold. A read: it destroys nothing and runs
@@ -845,7 +794,6 @@ func (h *HTTPServer) registerAppRoutes(mux router) {
 	// Actions, not writes. Desired state is the director's, in git; these are
 	// things done once.
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/purge-app", h.handlePurgeApp)
-	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/provision-app", h.handleProvisionApp)
 }
 
 func (h *HTTPServer) handleAppStates(w http.ResponseWriter, r *http.Request) {
@@ -904,19 +852,6 @@ func (h *HTTPServer) handlePurgeApp(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) handleRetainedApps(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Service.RetainedApps(r.Context(), r.PathValue("tenant"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, res)
-}
-
-func (h *HTTPServer) handleProvisionApp(w http.ResponseWriter, r *http.Request) {
-	profile, ok := profileOf(w, r)
-	if !ok {
-		return
-	}
-	res, err := h.Service.ProvisionApp(r.Context(), r.PathValue("tenant"), profile)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return

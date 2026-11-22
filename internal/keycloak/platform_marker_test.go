@@ -93,7 +93,7 @@ func TestThePlatformsClientNamesMatchItsPatterns(t *testing.T) {
 	}
 	group := regexp.MustCompile(PlatformGroupPattern)
 	for name, want := range map[string]bool{
-		TenantMembersGroup("acme"): true, TenantAppGroup("acme", "wiki"): true,
+		TenantMembersGroup("acme"): true, "gentian:tenant:acme:app:wiki": true,
 		"gentian:platform:admin": true, "staff": false, "gentian": false,
 	} {
 		if group.MatchString(name) != want {

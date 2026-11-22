@@ -17,21 +17,18 @@ import (
 	"strings"
 )
 
-// What one person, or one group, holds in a tenant, and through what.
+// What one person, or one position, holds in a tenant, and through what.
 //
 // A view (view.go) starts at an object and says who holds each role on it.
-// This starts at the other end: a person, and every role they hold on the
-// tenant and on each of its apps, with the group it is held through. Then the
-// store is asked which permissions are in effect for them, because the two do
-// not always agree, and an administrator has to be shown where they do not:
-//
-//   - a permission carried by a role the person holds that is not in effect
-//     (an app's use is withheld from the tenant's administrators);
-//   - a permission in effect that no role held here carries (it follows from
-//     the cluster, which this does not read).
+// This starts at the other end: a person, the positions they hold, and every
+// role they hold on the tenant and on each of its apps, with the position it
+// is held through. Then the store is asked what is in effect for them,
+// because more is in effect than is held: the admin of an app holds every
+// role the app declares, a role on an add-on lets a person into its base,
+// and some permissions follow from the tenant or the cluster.
 //
 // Read-only, and from the store alone: what is shown is what a check would
-// answer, not what Keycloak's groups suggest it should.
+// answer.
 
 // Where a permission comes from.
 const (
@@ -40,20 +37,25 @@ const (
 	// FromTenant: on an app, it follows from what the person holds on the
 	// tenant.
 	FromTenant = "tenant"
+	// FromApp: on an app, it follows from what the person holds on its base
+	// or on one of its add-ons.
+	FromApp = "app"
 	// FromElsewhere: in effect, and nothing read here accounts for it.
 	FromElsewhere = "elsewhere"
 )
 
 // Held is one role held on one object.
 type Held struct {
-	// Role is the role as the model names it: admin, member, entitled.
+	// Role is the role: user, admin, or the name of one the app declares.
 	Role string `json:"role"`
-	// Group is the Keycloak group the role is held through, in Keycloak's
-	// spelling. Empty for a role held by name.
-	Group string `json:"group,omitempty"`
-	// ByName is true for a role the person holds as themselves, through no
-	// group.
-	ByName bool `json:"byName,omitempty"`
+	// Declared is true for a role the app's profile declares.
+	Declared bool `json:"declared,omitempty"`
+	// Position is the position the role is held through. Empty for a role
+	// the person was given directly.
+	Position string `json:"position,omitempty"`
+	// Direct is true for a role the person holds as themselves, beside
+	// their positions.
+	Direct bool `json:"direct,omitempty"`
 	// Carries are the permissions the role carries on this kind of object.
 	Carries []string `json:"carries"`
 }
@@ -63,9 +65,8 @@ type Permission struct {
 	Name string `json:"name"`
 	// InEffect is the store's own answer for this person.
 	InEffect bool `json:"inEffect"`
-	// From says where it comes from, one of the From constants. With
-	// InEffect false, FromRole marks a permission that a held role carries
-	// and the model withholds; empty is one the person simply does not have.
+	// From says where it comes from, one of the From constants; empty for
+	// one the person does not have.
 	From string `json:"from,omitempty"`
 }
 
@@ -74,49 +75,77 @@ type ObjectAccess struct {
 	// Object is the OpenFGA object: tenant:<t>, or app:<t>/<profile>.
 	Object string `json:"object"`
 	// App is the profile, for an app.
-	App         string       `json:"app,omitempty"`
-	Held        []Held       `json:"held"`
+	App string `json:"app,omitempty"`
+	// Held are the roles the person was given here, each with how.
+	Held []Held `json:"held"`
+	// Roles are the roles in effect here: the held ones, and those that
+	// follow from them. It is what the app is told the person is.
+	Roles       []string     `json:"roles"`
 	Permissions []Permission `json:"permissions"`
+}
+
+// PositionHeld is one position a person holds.
+type PositionHeld struct {
+	Name string `json:"name"`
+	// Through is the position the person was given that includes this one.
+	// Empty for a position the person was given itself.
+	Through string `json:"through,omitempty"`
 }
 
 // PersonAccess is what one person holds in one tenant.
 type PersonAccess struct {
 	Tenant  string `json:"tenant"`
 	Subject string `json:"subject"`
-	// Groups are the groups the store has the person in, in Keycloak's
-	// spelling: what their rights are computed from, which follows Keycloak
-	// by its events and can differ from it for a moment.
-	Groups []string `json:"groups"`
+	// Positions are the tenant's positions the person holds: the ones they
+	// were given, and the ones those include.
+	Positions []PositionHeld `json:"positions"`
 	// OnTenant is the tenant itself; Apps are its apps, every one, also
 	// those the person holds nothing on.
 	OnTenant ObjectAccess   `json:"onTenant"`
 	Apps     []ObjectAccess `json:"apps"`
 }
 
-// GroupHold is one role a group holds on one object.
-type GroupHold struct {
-	Object  string   `json:"object"`
-	App     string   `json:"app,omitempty"`
-	Role    string   `json:"role"`
-	Carries []string `json:"carries"`
+// PositionHold is one role a position holds on one object.
+type PositionHold struct {
+	Object   string   `json:"object"`
+	App      string   `json:"app,omitempty"`
+	Role     string   `json:"role"`
+	Declared bool     `json:"declared,omitempty"`
+	Carries  []string `json:"carries"`
 }
 
-// GroupAccess is what one group gives its members in one tenant.
-type GroupAccess struct {
-	Tenant string `json:"tenant"`
-	// Group is the group in Keycloak's spelling.
-	Group string      `json:"group"`
-	Holds []GroupHold `json:"holds"`
+// PositionAccess is what one position is in one tenant.
+type PositionAccess struct {
+	Tenant   string `json:"tenant"`
+	Position string `json:"position"`
+	// Holds are the roles the position holds itself.
+	Holds []PositionHold `json:"holds"`
+	// Includes are the positions whose roles its holders hold too;
+	// IncludedIn the positions whose holders hold this one.
+	Includes   []string `json:"includes"`
+	IncludedIn []string `json:"includedIn"`
+	// Holders are the accounts that were given the position itself, by
+	// subject.
+	Holders []string `json:"holders"`
 }
 
-// AccessReader answers what a person or a group holds in a tenant.
+// AccessReader answers what a person or a position holds in a tenant.
 type AccessReader interface {
 	// PersonAccess reads what the account sub holds in tenant. cluster is
 	// the cluster's id, read only to find roles the person holds by name;
 	// empty leaves those unread.
 	PersonAccess(ctx context.Context, requestID, cluster, tenant, sub string) (PersonAccess, error)
-	// GroupAccess reads what the Keycloak group gives in tenant.
-	GroupAccess(ctx context.Context, tenant, group string) (GroupAccess, error)
+	// PositionAccess reads what the position of that name is in tenant.
+	PositionAccess(ctx context.Context, tenant, position string) (PositionAccess, error)
+	// AppAccess reads who holds which role on one app of tenant, the roles
+	// its profile declares among them.
+	AppAccess(ctx context.Context, tenant, profile string) (View, error)
+	// AppRoles answers which roles the account sub holds on one app of
+	// tenant, the ones that follow from what it was given included.
+	AppRoles(ctx context.Context, requestID, tenant, profile, sub string) ([]string, error)
+	// PositionsHeld answers the names of the tenant's positions the account
+	// sub holds.
+	PositionsHeld(ctx context.Context, tenant, sub string) ([]string, error)
 }
 
 // PersonAccess implements AccessReader.
@@ -127,9 +156,78 @@ func (c *OpenFGA) PersonAccess(ctx context.Context, requestID, cluster, tenant, 
 	return personAccess(ctx, c.Read, ask, cluster, tenant, sub)
 }
 
-// GroupAccess implements AccessReader.
-func (c *OpenFGA) GroupAccess(ctx context.Context, tenant, group string) (GroupAccess, error) {
-	return groupAccess(ctx, c.Read, tenant, group)
+// PositionAccess implements AccessReader.
+func (c *OpenFGA) PositionAccess(ctx context.Context, tenant, position string) (PositionAccess, error) {
+	return positionAccess(ctx, c.Read, tenant, position)
+}
+
+// AppAccess implements AccessReader.
+func (c *OpenFGA) AppAccess(ctx context.Context, tenant, profile string) (View, error) {
+	if !ValidName(tenant) || !ValidName(profile) {
+		return View{}, fmt.Errorf("%w: %q", ErrInvalidID, tenant+"/"+profile)
+	}
+	return appView(ctx, c.Read, tenant, profile)
+}
+
+// AppRoles implements AccessReader.
+func (c *OpenFGA) AppRoles(ctx context.Context, requestID, tenant, profile, sub string) ([]string, error) {
+	ask := func(ctx context.Context, questions []Question) ([]bool, error) {
+		return c.BatchCheck(ctx, requestID, questions)
+	}
+	return appRoles(ctx, c.Read, ask, tenant, profile, sub)
+}
+
+// AppRoleSet is the roles a person holds on one app, or on one add-on.
+type AppRoleSet struct {
+	// App is the profile name.
+	App string `json:"app"`
+	// Roles are the roles held, sorted: user, admin and declared ones.
+	Roles []string `json:"roles"`
+}
+
+// SignInRoles answers what a sign-in to an app carries: the roles the
+// account sub holds on the app, and on each add-on activated in it, since
+// an add-on's roles are used inside its base. The app first, its add-ons
+// after it by name; an app or add-on the person holds nothing on is left
+// out, and an app the tenant has not answers nothing.
+func (c *OpenFGA) SignInRoles(ctx context.Context, requestID, tenant, profile, sub string) ([]AppRoleSet, error) {
+	ask := func(ctx context.Context, questions []Question) ([]bool, error) {
+		return c.BatchCheck(ctx, requestID, questions)
+	}
+	return signInRoles(ctx, c.Read, ask, tenant, profile, sub)
+}
+
+func signInRoles(ctx context.Context, read readFunc, ask askFunc, tenant, profile, sub string) ([]AppRoleSet, error) {
+	out := []AppRoleSet{}
+	own, err := appRoles(ctx, read, ask, tenant, profile, sub)
+	if err != nil {
+		return nil, err
+	}
+	if len(own) > 0 {
+		out = append(out, AppRoleSet{App: profile, Roles: own})
+	}
+	base := App(tenant, profile)
+	tuples, err := read(ctx, Tuple{User: base, Relation: "base", Object: "app:"})
+	if err != nil {
+		return nil, fmt.Errorf("read the add-ons of %s: %w", base, err)
+	}
+	addons := make([]string, 0, len(tuples))
+	for _, t := range tuples {
+		if ofTenant(t.Object, "app:", tenant) {
+			addons = append(addons, profileOf(t.Object, tenant))
+		}
+	}
+	sort.Strings(addons)
+	for _, addon := range addons {
+		roles, err := appRoles(ctx, read, ask, tenant, addon, sub)
+		if err != nil {
+			return nil, err
+		}
+		if len(roles) > 0 {
+			out = append(out, AppRoleSet{App: addon, Roles: roles})
+		}
+	}
+	return out, nil
 }
 
 type (
@@ -147,7 +245,7 @@ func appsOf(ctx context.Context, read readFunc, tenant string) ([]string, error)
 	for _, t := range tuples {
 		// The store is the platform's alone, but an app object named for
 		// another tenant would be shown as this one's. Keep to the name.
-		if strings.HasPrefix(t.Object, "app:"+tenant+"/") {
+		if ofTenant(t.Object, "app:", tenant) {
 			apps = append(apps, t.Object)
 		}
 	}
@@ -155,9 +253,99 @@ func appsOf(ctx context.Context, read readFunc, tenant string) ([]string, error)
 	return apps, nil
 }
 
+// declaredRolesOf lists the role objects an app's profile declares, sorted.
+func declaredRolesOf(ctx context.Context, read readFunc, tenant, app string) ([]string, error) {
+	tuples, err := read(ctx, Tuple{User: app, Relation: "app", Object: "role:"})
+	if err != nil {
+		return nil, fmt.Errorf("read the roles of %s: %w", app, err)
+	}
+	roles := make([]string, 0, len(tuples))
+	for _, t := range tuples {
+		if strings.HasPrefix(t.Object, "role:"+strings.TrimPrefix(app, "app:")+"/") {
+			roles = append(roles, t.Object)
+		}
+	}
+	sort.Strings(roles)
+	return roles, nil
+}
+
 // profileOf is the profile an app object is named for.
 func profileOf(object, tenant string) string {
 	return strings.TrimPrefix(object, "app:"+tenant+"/")
+}
+
+// roleNameOf is the name of a declared role's object.
+func roleNameOf(object string) string {
+	return object[strings.LastIndex(object, "/")+1:]
+}
+
+// positionNameOf is the name of a tenant's position object.
+func positionNameOf(object, tenant string) string {
+	return strings.TrimPrefix(object, "position:"+tenant+"/")
+}
+
+// positionsHeld reads the tenant's positions a person holds: the ones given
+// to them, and every one those include, each with the given position it
+// comes through. Keyed by the position's object.
+func positionsHeld(ctx context.Context, read readFunc, tenant, user string) (map[string]PositionHeld, error) {
+	given, err := read(ctx, Tuple{User: user, Relation: "holder", Object: "position:"})
+	if err != nil {
+		return nil, fmt.Errorf("read the positions of %s: %w", user, err)
+	}
+	held := map[string]PositionHeld{}
+	var queue []string
+	for _, t := range given {
+		if !ofTenant(t.Object, "position:", tenant) {
+			continue
+		}
+		held[t.Object] = PositionHeld{Name: positionNameOf(t.Object, tenant)}
+		queue = append(queue, t.Object)
+	}
+	sort.Strings(queue)
+	// A position's holders hold every position it is included in the
+	// holders of: executive included_in sales-manager.
+	for len(queue) > 0 {
+		object := queue[0]
+		queue = queue[1:]
+		includes, err := read(ctx, Tuple{User: object, Relation: "included_in", Object: "position:"})
+		if err != nil {
+			return nil, fmt.Errorf("read what %s includes: %w", object, err)
+		}
+		through := held[object].Through
+		if through == "" {
+			through = held[object].Name
+		}
+		for _, t := range includes {
+			if _, seen := held[t.Object]; seen || !ofTenant(t.Object, "position:", tenant) {
+				continue
+			}
+			held[t.Object] = PositionHeld{Name: positionNameOf(t.Object, tenant), Through: through}
+			queue = append(queue, t.Object)
+		}
+	}
+	return held, nil
+}
+
+// PositionsHeld answers the names of the tenant's positions the account sub
+// holds, the ones that follow from an inclusion among them. Sorted.
+func (c *OpenFGA) PositionsHeld(ctx context.Context, tenant, sub string) ([]string, error) {
+	user, err := User(sub)
+	if err != nil {
+		return nil, err
+	}
+	if !ValidName(tenant) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidID, tenant)
+	}
+	held, err := positionsHeld(ctx, c.Read, tenant, user)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(held))
+	for _, p := range held {
+		names = append(names, p.Name)
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tenant, sub string) (PersonAccess, error) {
@@ -169,20 +357,18 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 	if err != nil {
 		return PersonAccess{}, err
 	}
-	out := PersonAccess{Tenant: tenant, Subject: sub, Groups: []string{}, Apps: []ObjectAccess{}}
+	out := PersonAccess{Tenant: tenant, Subject: sub, Positions: []PositionHeld{}, Apps: []ObjectAccess{}}
 
-	// The groups the store has the person in.
-	memberships, err := read(ctx, Tuple{User: user, Relation: "member", Object: "group:"})
+	positions, err := positionsHeld(ctx, read, tenant, user)
 	if err != nil {
-		return PersonAccess{}, fmt.Errorf("read the groups of %s: %w", user, err)
+		return PersonAccess{}, err
 	}
-	through := map[string]string{} // group:<g>#member -> the Keycloak name
-	for _, t := range memberships {
-		name := displayGroup(t.Object)
-		through[t.Object+"#member"] = name
-		out.Groups = append(out.Groups, name)
+	through := map[string]string{} // position:<t>/<n>#holder -> the position's name
+	for object, p := range positions {
+		through[Holders(object)] = p.Name
+		out.Positions = append(out.Positions, p)
 	}
-	sort.Strings(out.Groups)
+	sort.Slice(out.Positions, func(a, b int) bool { return out.Positions[a].Name < out.Positions[b].Name })
 
 	apps, err := appsOf(ctx, read, tenant)
 	if err != nil {
@@ -199,6 +385,25 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 	}
 	identities := map[string]bool{user: true}
 	held := map[string][]Held{}
+	// how says how the person holds an entry, or that they do not.
+	how := func(holder string) (h Held, ok bool) {
+		switch name, is := through[holder]; {
+		case is:
+			h.Position = name
+		case holder == user:
+			h.Direct = true
+		case byName(holder):
+			h.Direct = true
+			identities[holder] = true
+		default:
+			return h, false
+		}
+		return h, true
+	}
+	// beside[app] are the apps an app's permissions can follow from: its
+	// base, and its add-ons.
+	beside := map[string][]string{}
+	declared := map[string][]string{}
 	scan := func(object string, keep bool) error {
 		typ, _, _ := strings.Cut(object, ":")
 		tuples, err := read(ctx, Tuple{Object: object})
@@ -206,23 +411,23 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 			return fmt.Errorf("read %s: %w", object, err)
 		}
 		for _, t := range tuples {
+			if typ == "app" && (t.Relation == "base" || t.Relation == "addon") && ofTenant(t.User, "app:", tenant) {
+				beside[object] = append(beside[object], t.User)
+			}
+			if typ == "app" && t.Relation == "declared" && ofTenant(t.User, "role:", tenant) {
+				declared[object] = append(declared[object], t.User)
+			}
 			if !g.role[typ][t.Relation] {
 				continue
 			}
-			h := Held{Role: t.Relation, Carries: g.grantsOf(typ, t.Relation)}
+			h, ok := how(t.User)
+			if !ok {
+				continue
+			}
+			h.Role = t.Relation
+			h.Carries = g.grantsOf(typ, t.Relation)
 			if h.Carries == nil {
 				h.Carries = []string{}
-			}
-			switch name, ok := through[t.User]; {
-			case ok:
-				h.Group = name
-			case t.User == user:
-				h.ByName = true
-			case byName(t.User):
-				h.ByName = true
-				identities[t.User] = true
-			default:
-				continue
 			}
 			if keep {
 				held[object] = append(held[object], h)
@@ -233,6 +438,29 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 	for _, object := range objects {
 		if err := scan(object, true); err != nil {
 			return PersonAccess{}, err
+		}
+	}
+	// The roles an app declares, held on objects of their own. Holding one
+	// is holding user on the app, so it carries what user carries.
+	usersCarry := g.grantsOf("app", RoleUser)
+	if usersCarry == nil {
+		usersCarry = []string{}
+	}
+	for _, app := range apps {
+		sort.Strings(declared[app])
+		for _, role := range declared[app] {
+			tuples, err := read(ctx, Tuple{Relation: "holder", Object: role})
+			if err != nil {
+				return PersonAccess{}, fmt.Errorf("read %s: %w", role, err)
+			}
+			for _, t := range tuples {
+				h, ok := how(t.User)
+				if !ok {
+					continue
+				}
+				h.Role, h.Declared, h.Carries = roleNameOf(role), true, usersCarry
+				held[app] = append(held[app], h)
+			}
 		}
 	}
 	if cluster != "" {
@@ -248,22 +476,23 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 	}
 	sort.Strings(users)
 
-	// What is in effect: every permission of each object, and on the tenant
-	// its roles too, since an app's permissions follow from them.
-	asked := func(object string) []string {
+	// What is in effect: every permission and role of each object, and who
+	// holds each role an app declares.
+	type asked struct{ object, on, relation string }
+	var asks []asked
+	for _, object := range objects {
 		typ, _, _ := strings.Cut(object, ":")
-		relations := g.permissions(typ)
-		if typ == "tenant" {
-			relations = append(relations, g.roles(typ)...)
+		for _, relation := range append(g.permissions(typ), g.roles(typ)...) {
+			asks = append(asks, asked{object: object, on: object, relation: relation})
 		}
-		return relations
+		for _, role := range declared[object] {
+			asks = append(asks, asked{object: object, on: role, relation: "holder"})
+		}
 	}
 	var questions []Question
-	for _, object := range objects {
-		for _, relation := range asked(object) {
-			for _, u := range users {
-				questions = append(questions, Question{User: u, Relation: relation, Object: object})
-			}
+	for _, a := range asks {
+		for _, u := range users {
+			questions = append(questions, Question{User: u, Relation: a.relation, Object: a.on})
 		}
 	}
 	answers, err := ask(ctx, questions)
@@ -274,19 +503,38 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 		return PersonAccess{}, fmt.Errorf("asked %d questions, answered %d", len(questions), len(answers))
 	}
 	inEffect := map[string]map[string]bool{}
-	for i, q := range questions {
-		if inEffect[q.Object] == nil {
-			inEffect[q.Object] = map[string]bool{}
+	rolesInEffect := map[string]map[string]bool{}
+	for i, a := range asks {
+		yes := false
+		for _, answer := range answers[i*len(users) : (i+1)*len(users)] {
+			yes = yes || answer
 		}
-		if answers[i] {
-			inEffect[q.Object][q.Relation] = true
+		if !yes {
+			continue
+		}
+		name := a.relation
+		if a.on != a.object {
+			name = roleNameOf(a.on)
+		}
+		typ, _, _ := strings.Cut(a.object, ":")
+		if a.on != a.object || g.role[typ][a.relation] {
+			if rolesInEffect[a.object] == nil {
+				rolesInEffect[a.object] = map[string]bool{}
+			}
+			rolesInEffect[a.object][name] = true
+		}
+		if a.on == a.object {
+			if inEffect[a.object] == nil {
+				inEffect[a.object] = map[string]bool{}
+			}
+			inEffect[a.object][a.relation] = true
 		}
 	}
 
 	onTenant := inEffect[Tenant(tenant)]
 	for _, object := range objects {
 		typ, _, _ := strings.Cut(object, ":")
-		access := ObjectAccess{Object: object, Held: held[object], Permissions: []Permission{}}
+		access := ObjectAccess{Object: object, Held: held[object], Roles: []string{}, Permissions: []Permission{}}
 		if access.Held == nil {
 			access.Held = []Held{}
 		}
@@ -294,8 +542,12 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 			if access.Held[a].Role != access.Held[b].Role {
 				return access.Held[a].Role < access.Held[b].Role
 			}
-			return access.Held[a].Group < access.Held[b].Group
+			return access.Held[a].Position < access.Held[b].Position
 		})
+		for role := range rolesInEffect[object] {
+			access.Roles = append(access.Roles, role)
+		}
+		sort.Strings(access.Roles)
 		carried := map[string]bool{}
 		for _, h := range access.Held {
 			for _, p := range h.Carries {
@@ -305,11 +557,13 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 		for _, name := range g.permissions(typ) {
 			p := Permission{Name: name, InEffect: inEffect[object][name]}
 			switch {
+			case !p.InEffect:
 			case carried[name]:
 				p.From = FromRole
-			case !p.InEffect:
 			case typ == "app" && g.followsFrom(typ, name, "tenant", onTenant):
 				p.From = FromTenant
+			case typ == "app" && followsFromBeside(g, name, beside[object], inEffect):
+				p.From = FromApp
 			default:
 				p.From = FromElsewhere
 			}
@@ -323,6 +577,19 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 		}
 	}
 	return out, nil
+}
+
+// followsFromBeside reports whether a permission on an app follows from
+// what is in effect on its base or on one of its add-ons.
+func followsFromBeside(g *modelGraph, permission string, beside []string, inEffect map[string]map[string]bool) bool {
+	for _, other := range beside {
+		for _, edge := range []string{"base", "addon"} {
+			if g.followsFrom("app", permission, edge, inEffect[other]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // followsFrom reports whether a permission of a type follows from something
@@ -342,36 +609,94 @@ func (g *modelGraph) followsFrom(typ, permission, edge string, there map[string]
 	return false
 }
 
-func groupAccess(ctx context.Context, read readFunc, tenant, group string) (GroupAccess, error) {
-	object, err := Group(group)
+// appRoles answers which roles a person holds on one app: user, admin and
+// the ones its profile declares, as the store answers for each. Sorted;
+// empty for a person who holds none, and for an app the tenant has not.
+func appRoles(ctx context.Context, read readFunc, ask askFunc, tenant, profile, sub string) ([]string, error) {
+	user, err := User(sub)
 	if err != nil {
-		return GroupAccess{}, err
+		return nil, err
 	}
+	if !ValidName(tenant) || !ValidName(profile) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidID, tenant+"/"+profile)
+	}
+	app := App(tenant, profile)
+	declared, err := declaredRolesOf(ctx, read, tenant, app)
+	if err != nil {
+		return nil, err
+	}
+	names := []string{RoleAdmin, RoleUser}
+	questions := []Question{
+		{User: user, Relation: RoleAdmin, Object: app},
+		{User: user, Relation: RoleUser, Object: app},
+	}
+	for _, role := range declared {
+		names = append(names, roleNameOf(role))
+		questions = append(questions, Question{User: user, Relation: "holder", Object: role})
+	}
+	answers, err := ask(ctx, questions)
+	if err != nil {
+		return nil, err
+	}
+	if len(answers) != len(questions) {
+		return nil, fmt.Errorf("asked %d questions, answered %d", len(questions), len(answers))
+	}
+	roles := []string{}
+	for i, yes := range answers {
+		if yes {
+			roles = append(roles, names[i])
+		}
+	}
+	sort.Strings(roles)
+	return roles, nil
+}
+
+func positionAccess(ctx context.Context, read readFunc, tenant, position string) (PositionAccess, error) {
+	if !ValidName(tenant) || !ValidName(position) {
+		return PositionAccess{}, fmt.Errorf("%w: %q", ErrInvalidID, position)
+	}
+	object := Position(tenant, position)
 	g, err := parseModel(modelV1)
 	if err != nil {
-		return GroupAccess{}, err
+		return PositionAccess{}, err
 	}
-	out := GroupAccess{Tenant: tenant, Group: group, Holds: []GroupHold{}}
-	for _, typ := range []string{"tenant", "app"} {
-		tuples, err := read(ctx, Tuple{User: object + "#member", Object: typ + ":"})
+	out := PositionAccess{
+		Tenant: tenant, Position: position,
+		Holds: []PositionHold{}, Includes: []string{}, IncludedIn: []string{}, Holders: []string{},
+	}
+	usersCarry := g.grantsOf("app", RoleUser)
+	for _, kind := range rolesHeldOn {
+		typ := strings.TrimSuffix(kind, ":")
+		tuples, err := read(ctx, Tuple{User: Holders(object), Object: kind})
 		if err != nil {
-			return GroupAccess{}, fmt.Errorf("read what %s holds: %w", object, err)
+			return PositionAccess{}, fmt.Errorf("read what %s holds: %w", object, err)
 		}
 		for _, t := range tuples {
-			if !g.role[typ][t.Relation] {
+			// Another tenant's object is that tenant's to show.
+			if !ofTenant(t.Object, kind, tenant) {
 				continue
 			}
-			hold := GroupHold{Object: t.Object, Role: t.Relation, Carries: g.grantsOf(typ, t.Relation)}
+			hold := PositionHold{Object: t.Object, Role: t.Relation}
+			switch typ {
+			case "tenant":
+				hold.Carries = g.grantsOf(typ, t.Relation)
+			case "app":
+				hold.App = profileOf(t.Object, tenant)
+				hold.Carries = g.grantsOf(typ, t.Relation)
+			case "role":
+				if t.Relation != "holder" {
+					continue
+				}
+				rest := strings.TrimPrefix(t.Object, "role:"+tenant+"/")
+				app, name, _ := strings.Cut(rest, "/")
+				hold.Object, hold.App, hold.Role, hold.Declared = App(tenant, app), app, name, true
+				hold.Carries = usersCarry
+			}
+			if typ != "role" && !g.role[typ][t.Relation] {
+				continue
+			}
 			if hold.Carries == nil {
 				hold.Carries = []string{}
-			}
-			switch {
-			case t.Object == Tenant(tenant):
-			case strings.HasPrefix(t.Object, "app:"+tenant+"/"):
-				hold.App = profileOf(t.Object, tenant)
-			default:
-				// Another tenant's object is that tenant's to show.
-				continue
 			}
 			out.Holds = append(out.Holds, hold)
 		}
@@ -382,5 +707,30 @@ func groupAccess(ctx context.Context, read readFunc, tenant, group string) (Grou
 		}
 		return out.Holds[a].Role < out.Holds[b].Role
 	})
+
+	includes, err := read(ctx, Tuple{User: object, Relation: "included_in", Object: "position:"})
+	if err != nil {
+		return PositionAccess{}, fmt.Errorf("read what %s includes: %w", object, err)
+	}
+	for _, t := range includes {
+		if ofTenant(t.Object, "position:", tenant) {
+			out.Includes = append(out.Includes, positionNameOf(t.Object, tenant))
+		}
+	}
+	sort.Strings(out.Includes)
+	on, err := read(ctx, Tuple{Object: object})
+	if err != nil {
+		return PositionAccess{}, fmt.Errorf("read %s: %w", object, err)
+	}
+	for _, t := range on {
+		switch {
+		case t.Relation == "included_in" && ofTenant(t.User, "position:", tenant):
+			out.IncludedIn = append(out.IncludedIn, positionNameOf(t.User, tenant))
+		case t.Relation == "holder" && strings.HasPrefix(t.User, "user:") && !strings.Contains(t.User, "#"):
+			out.Holders = append(out.Holders, strings.TrimPrefix(t.User, "user:"))
+		}
+	}
+	sort.Strings(out.IncludedIn)
+	sort.Strings(out.Holders)
 	return out, nil
 }

@@ -30,19 +30,141 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
+// DefaultRolesClaim is the token claim a person's roles on an app are
+// written to where its profile names none.
+const DefaultRolesClaim = "gentian_app_roles"
+
+// ProfileRoles are the roles of an app, as its profile declares them.
+//
+// Every app has user, the lowest, and admin, the highest: admin holds every
+// other role of the app. A profile may leave either without a name inside
+// the app, and then the token says nothing for it.
+//
+// The token of a person who signs in to the app carries two claims: the
+// claim named here, with the in-app names of the roles the person holds on
+// the app and on the add-ons activated in it, and that claim's name followed
+// by "_mapped", with every in-app name the platform decides. An app sets the
+// first and takes away the rest of the second; what is in neither is its own
+// to keep.
+type ProfileRoles struct {
+	// Claim is the token claim the roles are written to. An add-on's is not
+	// read: its roles are written to the claim of the app it is activated in.
+	// +optional
+	// +kubebuilder:default=gentian_app_roles
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9_-]*$`
+	Claim string `json:"claim,omitempty"`
+
+	// User is what the role user is called inside the app.
+	// +optional
+	User *ProfileRoleNames `json:"user,omitempty"`
+
+	// Admin is what the role admin is called inside the app.
+	// +optional
+	Admin *ProfileRoleNames `json:"admin,omitempty"`
+
+	// Declared are the roles of the app between user and admin.
+	// +optional
+	// +kubebuilder:validation:MaxItems=40
+	// +listType=map
+	// +listMapKey=name
+	Declared []ProfileRole `json:"declared,omitempty"`
+}
+
+// ProfileRoleNames is what a role is called inside the app.
+type ProfileRoleNames struct {
+	// InApp are the app's own names for the role: a group, a role, whatever
+	// the app reads from the claim.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	InApp []string `json:"inApp,omitempty"`
+}
+
+// ProfileRole is a role an app declares beside user and admin.
+type ProfileRole struct {
+	// Name is the role's name on the platform.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="!(self in ['user', 'admin'])",message="user and admin are roles every app has"
+	Name string `json:"name"`
+
+	// Title is the role as people read it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=80
+	Title string `json:"title,omitempty"`
+
+	// Description says what the role is for.
+	// +optional
+	// +kubebuilder:validation:MaxLength=400
+	Description string `json:"description,omitempty"`
+
+	// Includes are other declared roles of the app whose holders the holders
+	// of this one are too: manager includes salesman.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	Includes []string `json:"includes,omitempty"`
+
+	// InApp are the app's own names for the role.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	InApp []string `json:"inApp,omitempty"`
+}
+
+// RolesClaim is the claim the profile's roles are written to.
+func (r *ProfileRoles) RolesClaim() string {
+	if r == nil || r.Claim == "" {
+		return DefaultRolesClaim
+	}
+	return r.Claim
+}
+
+// InAppNames is what each role of the profile is called inside the app, by
+// the role's name on the platform. A role with no name inside the app is
+// left out; nil for a profile that declares no roles.
+func (r *ProfileRoles) InAppNames() map[string][]string {
+	if r == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	if r.User != nil && len(r.User.InApp) > 0 {
+		out["user"] = r.User.InApp
+	}
+	if r.Admin != nil && len(r.Admin.InApp) > 0 {
+		out["admin"] = r.Admin.InApp
+	}
+	for _, role := range r.Declared {
+		if len(role.InApp) > 0 {
+			out[role.Name] = role.InApp
+		}
+	}
+	return out
+}
+
 // ProvisioningSpec declares app-specific user lifecycle mappings.
 type ProvisioningSpec struct {
-	// PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
-	// administrator role (for example the Nextcloud "admin" group).
+	// PrivilegedRole is the in-app administrator role the app's
+	// administrators -- whoever holds admin on it in the rights store -- are
+	// put in, for an app that cannot read its people's roles from a token
+	// (for example the Nextcloud "admin" group).
 	// +optional
 	PrivilegedRole *PrivilegedRoleSpec `json:"privilegedRole,omitempty"`
 
-	// SyncJob is how this app applies PrivilegedRole. The operator resolves
-	// app-admins membership, publishes it, and runs this Job; the script inside
-	// speaks whatever protocol the application happens to expose.
+	// SyncJob is how this app applies PrivilegedRole. The operator reads who
+	// administers and who uses the app from the rights store, publishes both
+	// lists, and runs this Job; the script inside speaks whatever protocol the
+	// application happens to expose.
 	//
-	// The division is deliberate and load-bearing: resolving a Keycloak group,
-	// detecting membership changes and running a Job to completion are platform
+	// The division is deliberate and load-bearing: reading the rights store,
+	// detecting changes and running a Job to completion are platform
 	// concerns, so they live here. Knowing that one app wants a JSON-RPC call
 	// and another an OCS POST is not, so it lives in the catalog entry that
 	// owns that app. No application's protocol, endpoint or account model may
@@ -130,11 +252,11 @@ type ProvisioningSecretKeyRef struct {
 type PrivilegedRoleKind string
 
 const (
-	// PrivilegedRoleKindGroup maps app-admins to an application-native group.
+	// PrivilegedRoleKindGroup puts the app's administrators in an application-native group.
 	PrivilegedRoleKindGroup PrivilegedRoleKind = "group"
 )
 
-// PrivilegedRoleSpec identifies the in-app privileged role for app-admins members.
+// PrivilegedRoleSpec identifies the in-app privileged role of the app's administrators.
 type PrivilegedRoleSpec struct {
 	// Kind is the application's native role type. Only "group" is supported today.
 	// +kubebuilder:validation:Required
@@ -398,13 +520,11 @@ type AuthorizationRequirement struct {
 	// +kubebuilder:validation:MaxLength=65536
 	Model string `json:"model"`
 
-	// Groups "mirror" has the platform keep the tenant realm's group
-	// memberships in the store, as tuples
-	// group:<realm>/<group name>#member of user:<realm>/<subject>: every
-	// top-level group of the realm, kept equal to the realm as people join
-	// and leave. The model must define a type group with a relation member
-	// users are written with. A component's own key cannot write a tuple
-	// whose user or object is a group, mirrored or not.
+	// Groups "mirror" is accepted and has no effect. It had the platform
+	// keep the tenant realm's group memberships in the store; no group of
+	// the realm carries a right any more, so nothing is written for it. A
+	// component's own key still cannot write a tuple whose user or object
+	// is a group.
 	// +optional
 	// +kubebuilder:validation:Enum=mirror
 	Groups string `json:"groups,omitempty"`
@@ -419,7 +539,8 @@ type AuthorizationRequirement struct {
 	Tuples []AuthorizationTuple `json:"tuples,omitempty"`
 }
 
-// MirrorsGroups reports whether the store holds the realm's memberships.
+// MirrorsGroups reports whether the profile declares groups "mirror",
+// which reserves the type group in its store and mirrors nothing.
 func (a *AuthorizationRequirement) MirrorsGroups() bool {
 	return a != nil && a.Groups == AuthorizationGroupsMirror
 }

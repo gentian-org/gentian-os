@@ -469,10 +469,10 @@ func startAgainstARealmThatCannotMail(t *testing.T) (*harness, *realm) {
 	}))
 	t.Cleanup(kc.Close)
 	client, err := identity.New(identity.Config{
-		BaseURL:            kc.URL,
-		Source:             identity.StaticSource{"demo": {Realm: "demo", ClientID: identity.ClientID, ClientSecret: "s"}},
-		PlatformRoleGroups: func(context.Context) ([]string, error) { return []string{platformAdmins}, nil },
-		Logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		BaseURL:             kc.URL,
+		Source:              identity.StaticSource{"demo": {Realm: "demo", ClientID: identity.ClientID, ClientSecret: "s"}},
+		PlatformRoleHolders: func(context.Context) ([]string, error) { return nil, nil },
+		Logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)

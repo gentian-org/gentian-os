@@ -21,12 +21,10 @@ kernelRealm: kernel
 # by that chart, in its own scope -- so a value the ApplicationSet supplies
 # reaches an init container's image only this way.
 global:
-  # The event listener that keeps OpenFGA's memberships equal to Keycloak's.
-  #
-  # Keycloak is the only place a membership changes; the director holds a
-  # projection of it and never edits that in place. Without this provider the
-  # projection is empty, so nobody holds a group, and every permission that
-  # follows from group membership is refused to everyone.
+  # The platform's extension inside Keycloak: it tells the operator that a
+  # person came into a realm through an identity provider or was removed, and
+  # its token mappers ask the rights store which roles a person holds. Rights
+  # themselves are not kept in Keycloak.
   eventListener:
     # Overridden by the ApplicationSet with the ref the manifests come from.
     # The default only matters for a `helm template` run by hand.
@@ -37,6 +35,10 @@ global:
     directorURL: ""
     # The id the director lists this key under.
     keyID: gentian-listener
+    # Where the token hook asks which roles a person holds on the app they
+    # sign in to. Supplied by the ApplicationSet. Empty leaves the hook
+    # unconfigured: a client that carries it then issues no token.
+    signInRolesURL: ""
 
 # The keycloakx chart's values (charts/keycloakx-7.3.2.tgz). What used to be
 # the keycloak-idp-base-values ConfigMap a Crossplane Release merged.
@@ -263,6 +265,15 @@ keycloakx:
     - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_KEY_ID
       value: {{ .Values.global.eventListener.keyID | quote }}
     - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_PRIVATE_KEY_FILE
+      value: /etc/gentian/listener/listener.pem
+    # The token hook (gentian-app-roles): where it asks for a person's roles
+    # on the app they sign in to, signed with the same key. The answer is
+    # given only to a request carrying one of the listed signatures.
+    - name: KC_SPI_PROTOCOL_MAPPER_GENTIAN_APP_ROLES_URL
+      value: {{ .Values.global.eventListener.signInRolesURL | quote }}
+    - name: KC_SPI_PROTOCOL_MAPPER_GENTIAN_APP_ROLES_KEY_ID
+      value: {{ .Values.global.eventListener.keyID | quote }}
+    - name: KC_SPI_PROTOCOL_MAPPER_GENTIAN_APP_ROLES_PRIVATE_KEY_FILE
       value: /etc/gentian/listener/listener.pem
   resources:
     requests:

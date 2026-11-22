@@ -569,10 +569,10 @@ spec:
                     enabled: true
                     login_attribute_path: preferred_username
                     name: kernel
-                    role_attribute_path: contains(groups[*], '/gentian:platform:admin')
+                    role_attribute_path: contains(gentian_cluster_roles[*], 'admin')
                       && 'Admin' || 'Viewer'
                     role_attribute_strict: false
-                    scopes: openid profile email groups
+                    scopes: openid profile email
                     token_url: https://id.platform.example.test/auth/realms/kernel/protocol/openid-connect/token
                     use_pkce: true
                   server:

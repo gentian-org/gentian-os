@@ -14,18 +14,6 @@ import (
 	kc "github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
-func gentianTenantAppGroup(tenant, profile string) string {
-	return kc.TenantAppGroup(tenant, profile)
-}
-
-func gentianTenantAppAdminsGroup(tenant string) string {
-	return kc.TenantAppAdminsGroup(tenant)
-}
-
-func gentianTenantAdminsGroup(tenant string) string {
-	return kc.TenantAdminsGroup(tenant)
-}
-
 func gentianGroupsJobName(tenantName string) string {
 	return kc.GroupsJobName(tenantName)
 }

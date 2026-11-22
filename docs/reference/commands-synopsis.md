@@ -41,8 +41,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
   kubectl gentian tenants mail-mode <name> [<mode>]          what the operator provisions for its mail:
                                                             selfhosted, external, transport-only, disabled
-  kubectl gentian tenants groups <name> [<group>... | --clear]   its own groups, declared in git
-  kubectl gentian tenants sign-in <name> [--from <tenant> --groups <g>,... | --remove <tenant>]
+  kubectl gentian tenants sign-in <name> [--from <tenant> --positions <p>,... | --remove <tenant>]
                                                             people of another tenant of this cluster signing in here
   kubectl gentian tenants partners <name>                    realms of other clusters its realm links accounts with
   kubectl gentian tenants partners <name> add <partner> --issuer <https://<host>/<path to the realm>>
@@ -93,8 +92,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian release set <vX.Y.Z> [--auto-upgrade none|patch|minor]   run this release; one signed commit by the director
   kubectl gentian release track <branch>       follow a gentian-os branch build by build (a development cluster)
   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
-                                               mainAddress.tenant=<tenant>, mail.serviceMode=system,
-                                               platformRoles.auditor=gentian:platform:auditor ...
+                                               mainAddress.tenant=<tenant>, mail.serviceMode=system ...
   kubectl gentian domains [--problems]         every domain the cluster serves, the DNS records it needs, and whether
                                                the internet has them: present, pending, missing, or held by another record
 

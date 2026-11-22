@@ -303,8 +303,8 @@ type CustomizationRecord struct {
 	// version costs; what makes an app default to a manual move.
 	UpgradeRisk string `json:"upgradeRisk,omitempty"`
 	Owner       string `json:"owner"`
-	ReviewBy      string `json:"reviewBy"`
-	Phase         string `json:"phase"`
+	ReviewBy    string `json:"reviewBy"`
+	Phase       string `json:"phase"`
 	// The four the reconciler decides. Read, not recomputed: it holds the
 	// upstream state and the review dates, and a second opinion here would
 	// be a different answer on the same question.

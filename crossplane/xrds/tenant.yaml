@@ -56,8 +56,8 @@ spec:
                     Whether people make their own accounts in the realm
                     (spec.signUp on the Tenant). Enabled opens the realm's
                     registration page with an e-mail confirmation and a
-                    proof-of-work check; such an account is in none of the
-                    tenant's groups.
+                    proof-of-work check; such an account holds no position
+                    of the tenant.
                   properties:
                     enabled:
                       type: boolean
@@ -81,14 +81,6 @@ spec:
                         type: string
                       jwksURL:
                         type: string
-                groups:
-                  type: array
-                  maxItems: 50
-                  description: >
-                    Groups of the tenant's realm declared in git
-                    (spec.groups on the Tenant), made as plain groups.
-                  items:
-                    type: string
                 signInFrom:
                   type: array
                   maxItems: 16
@@ -97,8 +89,8 @@ spec:
                     with both tenants' consent (spec.signInFrom here and
                     spec.signInTo there). Each is an identity provider, alias,
                     for the other realm, authenticating with a JWT this realm
-                    signs, trusting its verified addresses, and putting each
-                    person in groups (realm paths) at every sign-in.
+                    signs, trusting its verified addresses. What a person
+                    who arrives holds is the operator's to give.
                   items:
                     type: object
                     required: [tenant, alias, displayName, realm, clientID]
@@ -113,18 +105,14 @@ spec:
                         type: string
                       clientID:
                         type: string
-                      groups:
-                        type: array
-                        items:
-                          type: string
                 kernelBroker:
                   type: boolean
                   description: >
                     The tenant lets the platform's administrators sign in to
                     it (Tenant spec.platformAccess.adminsEnter). The realm
-                    then carries the identity provider "kernel", for members
-                    of gentian:platform:admin only, who land in the tenant's
-                    admins group at every sign-in through it.
+                    then carries the identity provider "kernel", for the
+                    cluster's administrators only; the operator gives whoever
+                    arrives through it the position Tenant administrator.
                 kernelEnter:
                   type: array
                   maxItems: 1000

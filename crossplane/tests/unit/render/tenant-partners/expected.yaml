@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: edge-devices-password, eso-secret-store, keycloak-browser-config-admin-is,
-      and 100 more'
+      and 95 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -366,7 +366,7 @@ spec:
     config:
       attribute_expected_value: "true"
       attribute_name: gentianRequiresMFA
-      include_group_attributes: "true"
+      include_group_attributes: "false"
       not: "false"
     executionIdRef:
       name: render-fixture-browser-exec-admin-is
@@ -396,7 +396,7 @@ spec:
     config:
       attribute_expected_value: "true"
       attribute_name: gentianRequiresMFA
-      include_group_attributes: "true"
+      include_group_attributes: "false"
       not: "true"
     executionIdRef:
       name: render-fixture-browser-exec-other-is-not
@@ -1359,40 +1359,6 @@ apiVersion: client.keycloak.crossplane.io/v1alpha1
 kind: ProtocolMapper
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-notes-groups
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-edge-exchange-scope-notes-groups
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    clientScopeId: 00000000-0000-4000-8000-0000000e0001
-    config:
-      access.token.claim: "true"
-      claim.name: groups
-      full.path: "false"
-      id.token.claim: "false"
-      introspection.token.claim: "true"
-      multivalued: "true"
-      userinfo.token.claim: "false"
-    name: groups
-    protocol: openid-connect
-    protocolMapper: oidc-group-membership-mapper
-    realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: client.keycloak.crossplane.io/v1alpha1
-kind: ProtocolMapper
-metadata:
-  annotations:
     crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-notes-partner-audience
   labels:
     crossplane.io/composite: render-fixture
@@ -1417,6 +1383,40 @@ spec:
     name: partner-audience
     protocol: openid-connect
     protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-notes-roles
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-edge-exchange-scope-notes-roles
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientScopeId: 00000000-0000-4000-8000-0000000e0001
+    config:
+      access.token.claim: "true"
+      claim.name: gentian_app_roles
+      gentian.app: notes
+      gentian.tenant: render-fixture
+      id.token.claim: "false"
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: roles
+    protocol: openid-connect
+    protocolMapper: gentian-app-roles
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
@@ -1547,10 +1547,10 @@ apiVersion: client.keycloak.crossplane.io/v1alpha1
 kind: ProtocolMapper
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-wiki-groups
+    crossplane.io/composition-resource-name: keycloak-edge-exchange-scope-wiki-roles
   labels:
     crossplane.io/composite: render-fixture
-  name: render-fixture-edge-exchange-scope-wiki-groups
+  name: render-fixture-edge-exchange-scope-wiki-roles
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -1564,15 +1564,15 @@ spec:
     clientScopeId: 00000000-0000-4000-8000-0000000e0002
     config:
       access.token.claim: "true"
-      claim.name: groups
-      full.path: "false"
+      claim.name: gentian_app_roles
+      gentian.app: wiki
+      gentian.tenant: render-fixture
       id.token.claim: "false"
       introspection.token.claim: "true"
-      multivalued: "true"
       userinfo.token.claim: "false"
-    name: groups
+    name: roles
     protocol: openid-connect
-    protocolMapper: oidc-group-membership-mapper
+    protocolMapper: gentian-app-roles
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
@@ -1765,142 +1765,6 @@ spec:
     protocol: openid-connect
     protocolMapper: oidc-audience-mapper
     realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-render-fixture-admins
-  labels:
-    crossplane.io/composite: render-fixture
-  name: gentian-tenant-render-fixture-admins
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    attributes:
-      gentianPartnerRole: tenant-admin
-      gentianRequiresMFA: "true"
-      gentianos.io/managed-by: platform
-    name: gentian:tenant:render-fixture:admins
-    realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-render-fixture-app-admins
-  labels:
-    crossplane.io/composite: render-fixture
-  name: gentian-tenant-render-fixture-app-admins
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    name: gentian:tenant:render-fixture:app-admins
-    realmId: render-fixture
-  initProvider:
-    attributes:
-      gentianos.io/managed-by: platform
-  managementPolicies:
-  - Observe
-  - Create
-  - Update
-  - Delete
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-render-fixture-members
-  labels:
-    crossplane.io/composite: render-fixture
-  name: gentian-tenant-render-fixture-members
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    attributes:
-      gentianos.io/managed-by: platform
-    name: gentian:tenant:render-fixture:members
-    realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-render-fixture-platform-admins
-  labels:
-    crossplane.io/composite: render-fixture
-  name: gentian-tenant-render-fixture-platform-admins
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    attributes:
-      gentianPartnerRole: cluster-admin
-      gentianRequiresMFA: "true"
-      gentianos.io/managed-by: platform
-    name: gentian:tenant:render-fixture:platform-admins
-    realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
-kind: ClientScope
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-groups-scope
-    crossplane.io/external-name: groups
-  labels:
-    crossplane.io/composite: render-fixture
-  name: render-fixture-groups-scope
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    name: groups
-    realmId: render-fixture
-  managementPolicies:
-  - Observe
   providerConfigRef:
     name: keycloak
 ---
@@ -2506,17 +2370,15 @@ spec:
     clientScopeId: 00000000-0000-4000-8000-0000000f0002
     config:
       access.token.claim: "true"
-      aggregate.attrs: "true"
       claim.name: gentian_roles
+      gentian.kernel-realm: kernel
+      gentian.tenant: render-fixture
       id.token.claim: "false"
       introspection.token.claim: "true"
-      jsonType.label: String
-      multivalued: "true"
-      user.attribute: gentianPartnerRole
       userinfo.token.claim: "false"
     name: gentian-roles
     protocol: openid-connect
-    protocolMapper: oidc-usermodel-attribute-mapper
+    protocolMapper: gentian-partner-roles
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
@@ -2704,17 +2566,15 @@ spec:
     clientScopeId: 00000000-0000-4000-8000-0000000f0001
     config:
       access.token.claim: "true"
-      aggregate.attrs: "true"
       claim.name: gentian_roles
+      gentian.kernel-realm: kernel
+      gentian.tenant: render-fixture
       id.token.claim: "false"
       introspection.token.claim: "true"
-      jsonType.label: String
-      multivalued: "true"
-      user.attribute: gentianPartnerRole
       userinfo.token.claim: "false"
     name: gentian-roles
     protocol: openid-connect
-    protocolMapper: oidc-usermodel-attribute-mapper
+    protocolMapper: gentian-partner-roles
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
@@ -3376,6 +3236,19 @@ spec:
       - config:
           max: "255"
         name: length
+    - displayName: Second factor required
+      multiValued: false
+      name: gentianRequiresMFA
+      permissions:
+      - edit:
+        - admin
+        view:
+        - admin
+      validator:
+      - config:
+          options:
+          - "true"
+        name: options
     group:
     - displayDescription: Attributes, which refer to user metadata
       displayHeader: User metadata
