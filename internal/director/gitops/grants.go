@@ -257,8 +257,6 @@ type platformSecurityDoc struct {
 		AllowedClusterRoles []ClusterRoleAllowance `json:"allowedClusterRoles"`
 		// Written by the cluster's operator by hand, never by the director,
 		// and carried across every write of the other two.
-		PreApprovedEgressCatalogs []string `json:"preApprovedEgressCatalogs"`
-		// The same: the cluster's operator writes it, every write carries it.
 		TrustedDomains []string `json:"trustedDomains"`
 	} `json:"spec"`
 }
@@ -279,7 +277,7 @@ func (g *GitOps) updatePlatformSecurity(ctx context.Context, message string, met
 			return "", err
 		}
 		change(&doc)
-		return renderPlatformSecurity(doc.Spec.AllowedMacWaivers, doc.Spec.AllowedClusterRoles, doc.Spec.PreApprovedEgressCatalogs, doc.Spec.TrustedDomains), nil
+		return renderPlatformSecurity(doc.Spec.AllowedMacWaivers, doc.Spec.AllowedClusterRoles, doc.Spec.TrustedDomains), nil
 	})
 }
 
@@ -361,7 +359,7 @@ func (g *GitOps) SeedPlatformSecurity(ctx context.Context, waivers []MacWaiver, 
 			return Result{}, fmt.Errorf("%w: a permitted cluster role needs a profile and a role, each a lower-case name", ErrInvalidName)
 		}
 	}
-	return g.writeClaimsFileIfAbsent(ctx, PlatformSecurityFile, renderPlatformSecurity(waivers, roles, nil, nil),
+	return g.writeClaimsFileIfAbsent(ctx, PlatformSecurityFile, renderPlatformSecurity(waivers, roles, nil),
 		"Start this cluster's allowlist from the deployment's values",
 		Meta{Principal: "gentian-director", Decision: "platformSecurityPolicy of the deployment's values"})
 }
@@ -374,11 +372,10 @@ func (g *GitOps) PlatformSecurity(ctx context.Context) ([]MacWaiver, error) {
 }
 
 // EgressPolicy reads back what the cluster answers egress requests with:
-// the catalogs whose apps' requests it pre-approves and the domains it
-// trusts. Both are written by hand in the cluster's repository.
-func (g *GitOps) EgressPolicy(ctx context.Context) (catalogs, trustedDomains []string, err error) {
+// the domains it trusts, written by hand in the cluster's repository.
+func (g *GitOps) EgressPolicy(ctx context.Context) (trustedDomains []string, err error) {
 	doc, err := g.platformSecurityDoc(ctx)
-	return doc.Spec.PreApprovedEgressCatalogs, doc.Spec.TrustedDomains, err
+	return doc.Spec.TrustedDomains, err
 }
 
 // PlatformClusterRoles reads back which cluster roles the cluster permits.
@@ -387,7 +384,7 @@ func (g *GitOps) PlatformClusterRoles(ctx context.Context) ([]ClusterRoleAllowan
 	return doc.Spec.AllowedClusterRoles, err
 }
 
-func renderPlatformSecurity(waivers []MacWaiver, roles []ClusterRoleAllowance, egressCatalogs, trustedDomains []string) string {
+func renderPlatformSecurity(waivers []MacWaiver, roles []ClusterRoleAllowance, trustedDomains []string) string {
 	var b strings.Builder
 	b.WriteString("# Managed by the director: which MAC waivers and which of the platform's\n")
 	b.WriteString("# cluster roles this cluster permits, set by whoever the commit names.\n")
@@ -417,12 +414,6 @@ func renderPlatformSecurity(waivers []MacWaiver, roles []ClusterRoleAllowance, e
 		for _, r := range roles {
 			b.WriteString("  - profile: " + quoteScalar(r.Profile) + "\n")
 			b.WriteString("    role: " + quoteScalar(r.Role) + "\n")
-		}
-	}
-	if len(egressCatalogs) > 0 {
-		b.WriteString("  preApprovedEgressCatalogs:\n")
-		for _, c := range egressCatalogs {
-			b.WriteString("  - " + quoteScalar(c) + "\n")
 		}
 	}
 	if len(trustedDomains) > 0 {

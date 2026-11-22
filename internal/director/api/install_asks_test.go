@@ -168,8 +168,7 @@ func TestAnInstallThatMayNotApproveInstallsNothing(t *testing.T) {
 }
 
 // A request the cluster's policy answers waits for nobody, and is not
-// offered for approval: a catalog whose apps' egress the cluster
-// pre-approves, or hosts in a domain it trusts.
+// offered for approval: hosts in a domain it trusts.
 func TestWhatPolicyAnswersIsNotOfferedForApproval(t *testing.T) {
 	policy := func(spec string) func(string) {
 		return func(remote string) {
@@ -179,11 +178,7 @@ func TestWhatPolicyAnswersIsNotOfferedForApproval(t *testing.T) {
 			})
 		}
 	}
-	h, digest := startAsking(t, policy("  preApprovedEgressCatalogs: [cluster/gentian]\n"))
-	if code, out := h.do(t, "GET", asksPath(digest), h.token(t, "tenant-demo", "tom"), ""); code != http.StatusOK || len(waitingAsks(t, out)) != 0 {
-		t.Errorf("a pre-approved catalog: %d %v", code, out)
-	}
-	h, digest = startAsking(t, policy("  trustedDomains: [recorder.example]\n"))
+	h, digest := startAsking(t, policy("  trustedDomains: [recorder.example]\n"))
 	_, out := h.do(t, "GET", asksPath(digest), h.token(t, "tenant-demo", "tom"), "")
 	if got := strings.Join(waitingAsks(t, out), "|"); got != "relay egress/upstream [relay.example]" {
 		t.Errorf("with one trusted domain: %s", got)

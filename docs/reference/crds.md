@@ -1184,7 +1184,6 @@ PlatformSecurityPolicy is the cluster singleton where platform administrators ap
 | `spec.allowedMacWaivers[].policy` | string | yes | `Policy` is the Kyverno ClusterPolicy name. |
 | `spec.allowedMacWaivers[].profile` | string | yes | `Profile` is the ComponentProfile metadata.name that may use this waiver. |
 | `spec.allowedMacWaivers[].scope` | string | yes | `Scope` matches MacWaiverRequest.scope on the profile. |
-| `spec.preApprovedEgressCatalogs` | []string |  | `PreApprovedEgressCatalogs` lists catalogs, by the origin a materialized profile records ("cluster/\<source>" or "tenant/\<tenant>/\<source>"), whose apps' egress… |
 | `spec.trustedDomains` | []string |  | `TrustedDomains` are the domains outside the cluster this cluster trusts, whatever travels. |
 | `status` | object |  | PlatformSecurityPolicyStatus reports observed policy state. |
 | `status.allowedMacWaiverCount` | integer |  | `AllowedMacWaiverCount` is len(spec.allowedMacWaivers) last written to the gentian-platform-security ConfigMap. |

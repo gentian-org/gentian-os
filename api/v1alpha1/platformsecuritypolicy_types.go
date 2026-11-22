@@ -51,17 +51,6 @@ type PlatformSecurityPolicySpec struct {
 	// +optional
 	AllowedClusterRoles []AllowedClusterRole `json:"allowedClusterRoles,omitempty"`
 
-	// PreApprovedEgressCatalogs lists catalogs, by the origin a materialized
-	// profile records ("cluster/<source>" or "tenant/<tenant>/<source>"),
-	// whose apps' egress requests this cluster
-	// answers itself: such a request is granted without an approver, for as
-	// long as its catalog is listed here. Egress only; every other privilege
-	// still needs its approver. Removing a catalog makes its apps' egress
-	// requests pending again.
-	// +optional
-	// +listType=set
-	PreApprovedEgressCatalogs []string `json:"preApprovedEgressCatalogs,omitempty"`
-
 	// TrustedDomains are the domains outside the cluster this cluster
 	// trusts, whatever travels. An egress request that names hosts is
 	// granted without an approver when every one of its hosts is in a domain

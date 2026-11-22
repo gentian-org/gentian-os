@@ -26,10 +26,9 @@ import (
 )
 
 // preApprovedEgress are the egress requests of profile that policy answers
-// for an install of tenant: all of them where its catalog is listed in the
-// PlatformSecurityPolicy's preApprovedEgressCatalogs, and each request by
-// host whose hosts are all in a trusted domain, the cluster's
-// (spec.trustedDomains) or the tenant's own while it was delegated one. Read
+// for an install of tenant: each request by host whose hosts are all in a
+// trusted domain, the cluster's (spec.trustedDomains) or the tenant's own
+// while it was delegated one. Read
 // on every reconcile, so the hold and the network policy agree with the
 // policy as it is now.
 //
@@ -57,18 +56,11 @@ func answeredEgress(ctx context.Context, c client.Client, profile *gentianov1alp
 		}
 		return out, nil
 	}
-	catalogs, err := security.LoadPreApprovedEgressCatalogs(ctx, c)
-	if err != nil {
-		return nil, err
-	}
 	trusted, err := security.LoadTrustedDomains(ctx, c)
 	if err != nil {
 		return nil, err
 	}
-	return mergeAnswered(
-		security.PreApprovedEgress(profile, catalogs),
-		security.TrustedEgress(profile, append(append([]string(nil), trusted...), security.TenantTrustedDomains(tenant)...)),
-	), nil
+	return security.TrustedEgress(profile, append(append([]string(nil), trusted...), security.TenantTrustedDomains(tenant)...)), nil
 }
 
 // mergeAnswered is the union of two sets of answered requests, nil when
@@ -88,9 +80,9 @@ func mergeAnswered(a, b map[string]struct{}) map[string]struct{} {
 }
 
 // componentsAskingForEgressPrivileges wakes every Component whose profile
-// asks for egress when the PlatformSecurityPolicy changes: a catalog added to
-// preApprovedEgressCatalogs lets a waiting install go on, and one removed
-// takes its apps' egress away now, not when something else next wakes them.
+// asks for egress when the PlatformSecurityPolicy changes: a domain added to
+// its trusted domains lets a waiting install go on, and one removed takes
+// its apps' egress away now, not when something else next wakes them.
 func componentsAskingForEgressPrivileges(c client.Client) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []reconcile.Request {
 		return egressAskingComponents(ctx, c)
