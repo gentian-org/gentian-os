@@ -807,6 +807,7 @@ func main() {
 		// operator stays the store's one writer.
 		if tenantReconciler.Rights != nil {
 			lifecycle.Server.Rights = tenantReconciler.Rights
+			lifecycle.Server.RightsChanged = tenantReconciler.RightsChanged
 		}
 		// An app installed for everyone is granted by the tenant reconciler
 		// with what this service already holds: the same function behind

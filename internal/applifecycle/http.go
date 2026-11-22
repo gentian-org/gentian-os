@@ -115,6 +115,14 @@ type HTTPServer struct {
 	// given and taken. Nil on a cluster that runs no rights store, which the
 	// routes then say.
 	Rights authz.Store
+	// RightsChanged is told after what a person holds in a tenant changed:
+	// taken says something was taken away. Whatever follows from a change
+	// outside the store -- apps that are told their people, sessions that
+	// carry roles no longer held -- follows here. Nil does nothing. A
+	// failure is logged and does not undo the change: the store is what
+	// decides, and what follows is brought up by the next reconcile or
+	// sign-in.
+	RightsChanged func(ctx context.Context, tenant, subject string, taken bool) error
 }
 
 // bearer returns the token a request presents, or "".

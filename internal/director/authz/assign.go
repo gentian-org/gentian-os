@@ -306,6 +306,14 @@ func administrators(ctx context.Context, s Store, tenant string, without []Tuple
 	if err != nil {
 		return nil, fmt.Errorf("read the administrators of %s: %w", tenant, err)
 	}
+	return holdersAmong(ctx, s, tenant, on, gone)
+}
+
+// holdersAmong is the accounts a list of entries on one object names: the
+// ones named directly, and the holders of every position named, the
+// positions that include such a position among them. Entries in gone are
+// read as if they were not there.
+func holdersAmong(ctx context.Context, s Store, tenant string, on []Tuple, gone map[string]bool) (map[string]bool, error) {
 	users := map[string]bool{}
 	var queue []string
 	seen := map[string]bool{}
@@ -346,6 +354,76 @@ func administrators(ctx context.Context, s Store, tenant string, without []Tuple
 		}
 	}
 	return users, nil
+}
+
+// AppHolders reads who holds a role on one app of tenant, for an app that
+// cannot read its people's roles from a token and is told them instead.
+//
+// Administrators are the accounts given admin on the app, directly or
+// through a position, and for an add-on the administrators of its base.
+// Users are everyone who may use the app: the accounts given user, the
+// holders of each role its profile declares, and its administrators.
+// Subjects, sorted.
+func AppHolders(ctx context.Context, s Store, tenant, profile string) (administrators, users []string, err error) {
+	if !ValidName(tenant) || !ValidName(profile) {
+		return nil, nil, fmt.Errorf("%w: %q", ErrInvalidID, tenant+"/"+profile)
+	}
+	app := App(tenant, profile)
+	collect := func(into map[string]bool, object, relation string) error {
+		on, err := s.Read(ctx, Tuple{Relation: relation, Object: object})
+		if err != nil {
+			return fmt.Errorf("read %s on %s: %w", relation, object, err)
+		}
+		got, err := holdersAmong(ctx, s, tenant, on, nil)
+		if err != nil {
+			return err
+		}
+		for user := range got {
+			into[user] = true
+		}
+		return nil
+	}
+	admins := map[string]bool{}
+	if err := collect(admins, app, RoleAdmin); err != nil {
+		return nil, nil, err
+	}
+	bases, err := s.Read(ctx, Tuple{Relation: "base", Object: app})
+	if err != nil {
+		return nil, nil, fmt.Errorf("read the base of %s: %w", app, err)
+	}
+	for _, t := range bases {
+		if ofTenant(t.User, "app:", tenant) {
+			if err := collect(admins, t.User, RoleAdmin); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	all := map[string]bool{}
+	for user := range admins {
+		all[user] = true
+	}
+	if err := collect(all, app, RoleUser); err != nil {
+		return nil, nil, err
+	}
+	roles, err := declaredRolesOf(ctx, s.Read, tenant, app)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, role := range roles {
+		if err := collect(all, role, "holder"); err != nil {
+			return nil, nil, err
+		}
+	}
+	return subjectsOf(admins), subjectsOf(all), nil
+}
+
+func subjectsOf(users map[string]bool) []string {
+	out := make([]string, 0, len(users))
+	for user := range users {
+		out = append(out, strings.TrimPrefix(user, "user:"))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // keepsAnAdministrator refuses taking entries that would leave the tenant

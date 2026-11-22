@@ -14,6 +14,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
 import java.security.Signature;
@@ -24,6 +25,9 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import io.gentianos.keycloak.events.DirectorEventListenerProviderFactory;
+import org.jboss.logging.Logger;
+import org.keycloak.Config;
 import org.keycloak.util.JsonSerialization;
 
 /**
@@ -43,6 +47,41 @@ final class RolesClient {
     private final String keyId;
     private final PrivateKey key;
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+
+    private static final Logger LOG = Logger.getLogger(RolesClient.class);
+
+    /** Null while the hook is not configured: every token it is asked for then fails. */
+    private static volatile RolesClient configured;
+
+    /**
+     * Reads where to ask and what to sign with from the configuration of the
+     * {@code gentian-app-roles} mapper ({@code url}, {@code key-id},
+     * {@code private-key-file}); the SAML mapper asks through the same
+     * client. Unconfigured is said at start and is not fatal: a realm with
+     * no client that carries a roles mapper never asks.
+     */
+    static void configure(Config.Scope config) {
+        String url = config.get("url");
+        String keyId = config.get("key-id");
+        String keyFile = config.get("private-key-file");
+        if (url == null || url.isBlank() || keyId == null || keyFile == null) {
+            LOG.warn("gentian-app-roles is not configured (url, key-id, private-key-file): "
+                + "a client that carries it signs nobody in");
+            return;
+        }
+        try {
+            PrivateKey key = DirectorEventListenerProviderFactory.readKey(Path.of(keyFile));
+            configured = new RolesClient(url, keyId, key);
+        } catch (Exception e) {
+            throw new IllegalStateException("gentian-app-roles: cannot read " + keyFile, e);
+        }
+        LOG.infof("roles on apps are asked at %s, signed with key %s", url, keyId);
+    }
+
+    /** The configured client, or null. */
+    static RolesClient configured() {
+        return configured;
+    }
 
     RolesClient(String url, String keyId, PrivateKey key) {
         this.url = URI.create(url);

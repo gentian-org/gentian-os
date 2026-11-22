@@ -12,8 +12,6 @@ package io.gentianos.keycloak.roles;
 import com.fasterxml.jackson.core.type.TypeReference;
 import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
-import java.nio.file.Path;
-import java.security.PrivateKey;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -82,26 +80,9 @@ public final class AppRolesMapper extends AbstractOIDCProtocolMapper
                 ProviderConfigProperty.STRING_TYPE, null));
     }
 
-    /** Null while the hook is not configured: every token it is asked for then fails. */
-    private volatile RolesClient client;
-
     @Override
     public void init(Config.Scope config) {
-        String url = config.get("url");
-        String keyId = config.get("key-id");
-        String keyFile = config.get("private-key-file");
-        if (url == null || url.isBlank() || keyId == null || keyFile == null) {
-            LOG.warn("gentian-app-roles is not configured (url, key-id, private-key-file): "
-                + "a client that carries it issues no token");
-            return;
-        }
-        try {
-            PrivateKey key = io.gentianos.keycloak.events.DirectorEventListenerProviderFactory.readKey(Path.of(keyFile));
-            client = new RolesClient(url, keyId, key);
-        } catch (Exception e) {
-            throw new IllegalStateException("gentian-app-roles: cannot read " + keyFile, e);
-        }
-        LOG.infof("roles for app tokens are asked at %s, signed with key %s", url, keyId);
+        RolesClient.configure(config);
     }
 
     @Override
@@ -165,7 +146,7 @@ public final class AppRolesMapper extends AbstractOIDCProtocolMapper
             return (Map<String, List<String>>) asked;
         }
         Map<String, List<String>> held = null;
-        RolesClient c = client;
+        RolesClient c = RolesClient.configured();
         if (c != null) {
             try {
                 held = c.ask(tenant, app, person);

@@ -311,3 +311,43 @@ func TestWhatIsGivenAnswersInTheStore(t *testing.T) {
 		t.Error("a removed person still uses an app")
 	}
 }
+
+// An app that is told its people is told who administers it and who may use
+// it: given directly or through a position, with the base's administrators
+// for an add-on and the holders of its declared roles among its users.
+func TestAnAppsHoldersAreReadThroughPositions(t *testing.T) {
+	ctx := context.Background()
+	s := tenantStore(t, "demo")
+	give := func(sub string, a Assignment) {
+		t.Helper()
+		if _, err := Give(ctx, s, "demo", sub, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	give("anna", Assignment{Position: PositionAppAdministrator})
+	give("ben", Assignment{App: "shop-sales", Role: "manager"})
+	give("cleo", Assignment{App: "shop-sales", Role: RoleUser})
+	give("dan", Assignment{App: "shop", Role: RoleAdmin})
+	give("eve", Assignment{Position: PositionUser})
+
+	admins, users, err := AppHolders(ctx, s, "demo", "shop-sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(admins, ",") != "anna,dan" {
+		t.Errorf("administrators of the add-on = %v, want the base's: anna through her position, dan directly", admins)
+	}
+	if strings.Join(users, ",") != "anna,ben,cleo,dan" {
+		t.Errorf("users of the add-on = %v", users)
+	}
+	_, users, err = AppHolders(ctx, s, "demo", "wiki")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(users, ",") != "anna,eve" {
+		t.Errorf("users of an app for everyone = %v, want its administrator and the holder of User", users)
+	}
+	if _, _, err := AppHolders(ctx, s, "demo", "no/such"); !errors.Is(err, ErrInvalidID) {
+		t.Errorf("err = %v, want ErrInvalidID", err)
+	}
+}
