@@ -7,8 +7,8 @@
         "uri": "/stores/S1/check",
         "authorization": "Bearer tok",
         "contentType": "application/json",
-        "contentLength": 101,
-        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+        "contentLength": 136,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\",\"consistency\":\"HIGHER_CONSISTENCY\"}"
       }
     ],
     "result": [
@@ -24,8 +24,8 @@
         "uri": "/stores/S1/check",
         "authorization": "Bearer tok",
         "contentType": "application/json",
-        "contentLength": 101,
-        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+        "contentLength": 136,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\",\"consistency\":\"HIGHER_CONSISTENCY\"}"
       }
     ],
     "result": [
@@ -41,8 +41,8 @@
         "uri": "/stores/S1/check",
         "authorization": "Bearer tok",
         "contentType": "application/json",
-        "contentLength": 101,
-        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+        "contentLength": 136,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\",\"consistency\":\"HIGHER_CONSISTENCY\"}"
       }
     ],
     "result": [
@@ -61,8 +61,8 @@
         "uri": "/stores/S1/check",
         "authorization": "Bearer tok",
         "contentType": "application/json",
-        "contentLength": 101,
-        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+        "contentLength": 136,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\",\"consistency\":\"HIGHER_CONSISTENCY\"}"
       }
     ],
     "result": [
@@ -81,8 +81,8 @@
         "uri": "/stores/S1/check",
         "authorization": "Bearer tok",
         "contentType": "application/json",
-        "contentLength": 101,
-        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\"}"
+        "contentLength": 136,
+        "body": "{\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"viewer\",\"object\":\"tenant:t\"},\"authorization_model_id\":\"M1\",\"consistency\":\"HIGHER_CONSISTENCY\"}"
       }
     ],
     "result": [
@@ -100,8 +100,8 @@
         "method": "POST",
         "uri": "/stores/S1/check",
         "contentType": "application/json",
-        "contentLength": 81,
-        "body": "{\"tuple_key\":{\"user\":\"\",\"relation\":\"\",\"object\":\"\"},\"authorization_model_id\":\"M1\"}"
+        "contentLength": 116,
+        "body": "{\"tuple_key\":{\"user\":\"\",\"relation\":\"\",\"object\":\"\"},\"authorization_model_id\":\"M1\",\"consistency\":\"HIGHER_CONSISTENCY\"}"
       }
     ],
     "result": [
@@ -165,7 +165,7 @@
         "authorization": "Bearer tok",
         "contentType": "application/json",
         "contentLength": 65,
-        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:\",\"user\":\"user:a\"}}"
+        "body": "{\"page_size\":100,\"tuple_key\":{\"user\":\"user:a\",\"object\":\"group:\"}}"
       }
     ],
     "result": [
@@ -188,7 +188,7 @@
         "authorization": "Bearer tok",
         "contentType": "application/json",
         "contentLength": 70,
-        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\",\"relation\":\"member\"}}"
+        "body": "{\"page_size\":100,\"tuple_key\":{\"relation\":\"member\",\"object\":\"group:g\"}}"
       }
     ],
     "result": [
@@ -211,7 +211,7 @@
         "authorization": "Bearer tok",
         "contentType": "application/json",
         "contentLength": 86,
-        "body": "{\"page_size\":100,\"tuple_key\":{\"object\":\"group:g\",\"relation\":\"member\",\"user\":\"user:a\"}}"
+        "body": "{\"page_size\":100,\"tuple_key\":{\"user\":\"user:a\",\"relation\":\"member\",\"object\":\"group:g\"}}"
       }
     ],
     "result": [

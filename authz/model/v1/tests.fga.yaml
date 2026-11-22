@@ -105,6 +105,24 @@ tuples:
   - {user: position:demo/executive,            relation: included_in, object: position:demo/sales-manager}
   - {user: position:demo/engineer#holder,      relation: user,   object: tenant:demo}
 
+  # --- what the operator derives from the above (derived_*), never given:
+  # Sales manager's role manager includes salesman, is a role on the add-on,
+  # and the add-on is used inside its base
+  - {user: position:demo/sales-manager#holder, relation: derived_holder, object: role:demo/odoo-sales/salesman}
+  - {user: position:demo/sales-manager#holder, relation: derived_user,   object: app:demo/odoo-sales}
+  - {user: position:demo/sales-manager#holder, relation: derived_user,   object: app:demo/odoo}
+  # Executive holds what Sales manager holds, through the inclusion
+  - {user: position:demo/executive#holder, relation: derived_holder, object: role:demo/odoo-sales/manager}
+  - {user: position:demo/executive#holder, relation: derived_holder, object: role:demo/odoo-sales/salesman}
+  - {user: position:demo/executive#holder, relation: derived_user,   object: tenant:demo}
+  - {user: position:demo/executive#holder, relation: derived_user,   object: app:demo/odoo-sales}
+  - {user: position:demo/executive#holder, relation: derived_user,   object: app:demo/odoo}
+  # marc's role in sales lets him into the add-on and its base
+  - {user: user:marc, relation: derived_user, object: app:demo/odoo-sales}
+  - {user: user:marc, relation: derived_user, object: app:demo/odoo}
+  # odin administers odoo, so its add-on
+  - {user: user:odin, relation: derived_admin, object: app:demo/odoo-sales}
+
   # --- contracts, shared instances
   - {user: tenant:demo,        relation: tenant,   object: contract:demo/file-store}
   - {user: app:demo/nextcloud, relation: provider, object: contract:demo/file-store}
@@ -239,7 +257,9 @@ tests:
 
   - name: a position includes a position — who holds Executive holds what Sales manager holds
     check:
-      - {user: user:eve,  object: position:demo/sales-manager,  assertions: {holder: true}}
+      # holder is who was given the position; what Executive holds through
+      # Sales manager is in the derived entries, and the checks below read it
+      - {user: user:eve,  object: position:demo/sales-manager,  assertions: {holder: false}}
       - {user: user:sven, object: position:demo/executive,      assertions: {holder: false}}
       - {user: user:eve,  object: role:demo/odoo-sales/manager, assertions: {holder: true}}
       - {user: user:eve,  object: app:demo/odoo,                assertions: {can_use: true}}

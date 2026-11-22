@@ -132,8 +132,20 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 	// A tenant whose declared positions the store cannot hold is left as it
 	// is and the others are written; the error names it and asks again.
-	if err := r.Graph.ReconcilePositions(ctx, positions); err != nil {
-		return ctrl.Result{}, fmt.Errorf("project positions: %w", err)
+	positionsErr := r.Graph.ReconcilePositions(ctx, positions)
+	// What follows from what is given, written for every tenant here, the
+	// one whose positions were refused included: what it has stays derived
+	// from what the store holds for it.
+	names := make([]string, 0, len(positions))
+	for tenant := range positions {
+		names = append(names, tenant)
+	}
+	sort.Strings(names)
+	if err := authz.ReconcileDerived(ctx, r.Graph, names); err != nil {
+		return ctrl.Result{}, fmt.Errorf("derive what follows from what is given: %w", err)
+	}
+	if positionsErr != nil {
+		return ctrl.Result{}, fmt.Errorf("project positions: %w", positionsErr)
 	}
 
 	logger.V(1).Info("authorization structure projected",

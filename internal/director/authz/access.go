@@ -410,7 +410,7 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 	}
 	// beside[app] are the apps an app's permissions can follow from: its
 	// base, and its add-ons.
-	beside := map[string][]string{}
+	beside := map[string][]besideApp{}
 	declared := map[string][]string{}
 	scan := func(object string, keep bool) error {
 		typ, _, _ := strings.Cut(object, ":")
@@ -420,7 +420,7 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 		}
 		for _, t := range tuples {
 			if typ == "app" && (t.Relation == "base" || t.Relation == "addon") && ofTenant(t.User, "app:", tenant) {
-				beside[object] = append(beside[object], t.User)
+				beside[object] = append(beside[object], besideApp{app: t.User, edge: t.Relation})
 			}
 			if typ == "app" && t.Relation == "declared" && ofTenant(t.User, "role:", tenant) {
 				declared[object] = append(declared[object], t.User)
@@ -587,12 +587,26 @@ func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tena
 	return out, nil
 }
 
+// besideApp is an app another one's permissions can follow from: its base
+// (edge "base") or one of its add-ons (edge "addon").
+type besideApp struct {
+	app, edge string
+}
+
 // followsFromBeside reports whether a permission on an app follows from
-// what is in effect on its base or on one of its add-ons.
-func followsFromBeside(g *modelGraph, permission string, beside []string, inEffect map[string]map[string]bool) bool {
+// what is in effect on its base or on one of its add-ons: the base's admin
+// administers it, and whoever holds a role on an add-on uses its base. The
+// store keeps both as derived entries; this says where they come from.
+func followsFromBeside(g *modelGraph, permission string, beside []besideApp, inEffect map[string]map[string]bool) bool {
 	for _, other := range beside {
-		for _, edge := range []string{"base", "addon"} {
-			if g.followsFrom("app", permission, edge, inEffect[other]) {
+		there := inEffect[other.app]
+		switch other.edge {
+		case "base":
+			if there[RoleAdmin] && g.reach("app", RoleAdmin)[permission] {
+				return true
+			}
+		case "addon":
+			if (there[RoleUser] || there[RoleAdmin]) && g.reach("app", RoleUser)[permission] {
 				return true
 			}
 		}

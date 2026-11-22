@@ -167,6 +167,10 @@ func parseModel(raw []byte) (*modelGraph, error) {
 		// right.
 		if td.Metadata != nil {
 			for name, meta := range td.Metadata.Relations {
+				// What the operator derives is not a role anybody was given.
+				if IsDerived(name) {
+					continue
+				}
 				for _, d := range meta.DirectlyRelatedUserTypes {
 					if d.Type == "user" || (d.Type == "group" && d.Relation == "member") ||
 						(d.Type == "position" && d.Relation == "holder") {

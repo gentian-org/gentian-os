@@ -44,6 +44,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/gentian-org/gentian-os/internal/openfga"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
@@ -272,7 +274,9 @@ func inTenant(object, tenant string) bool {
 // tile the caller may not open is left out, because showing it and refusing
 // the click tells a person about something they have no business knowing of.
 func (s *Server) tenantTiles(w http.ResponseWriter, r *http.Request, c call) {
-	ctx := r.Context()
+	// Tiles only show: their answers may come from OpenFGA's caches, a few
+	// seconds behind. Opening an app is checked again, fresh, at its door.
+	ctx := openfga.WithFastAnswer(r.Context())
 	catalogue, err := s.catalogue()
 	if err != nil {
 		s.cfg.Log.ErrorContext(ctx, "the tile catalog cannot be read", "path", s.cfg.TilesPath, "error", err.Error())

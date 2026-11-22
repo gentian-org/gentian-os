@@ -30,7 +30,8 @@ Zanzibar family; each rule names what it prevents.
 | R1a | **Ids contain neither `:` nor `#`**, which OpenFGA rejects. A position is `position:<tenant>/<name>`, a declared role `role:<tenant>/<profile>/<name>`; tenant, profile, position and role names are DNS labels. One package builds every id (`internal/director/authz`, which the operator's projection and the arbiter import). | tuples the server refuses |
 | R2 | **Roles are nouns, held by a person or by a position**, never by a group of the identity provider. On a tenant and on an app a role takes `user:<sub>` or `position:<t>/<name>#holder`; a position is held by `user:<sub>` ([iam.md §1.2](iam.md)). A cluster role is held by name on the Cluster claim (`spec.platformAccess.roleHolders`, AD-16) and takes `user:<realm>/<sub>`, the account qualified by its realm, never a plain `user:<sub>`; so do `perimeter_approver` and `auditor` on a tenant. `break_glass` is held by a person with a reason, until a time. | a role held without git or the store saying so; a holder tuple a token of another realm could match |
 | R3 | **Permissions are `can_<verb>`**, one per verb an enforcement point exposes, computed from roles. **PEPs check permissions, never roles.** | a PEP encoding "admin may…" in code; a new verb without a relation |
-| R4 | **One parent relation per type** (`cluster`, `tenant`); derivation is `<relation> from <parent>`, never a copied tuple. | authority granted sideways |
+| R4 | **One parent relation per type** (`cluster`, `tenant`); derivation between scopes is `<relation> from <parent>`, never a copied tuple. | authority granted sideways |
+| R4a | **Inside a tenant, what follows is written, not walked.** What a position holds through the positions it includes, a role through the roles it includes, a declared role's use of its app, a base's admin on its add-ons and an add-on role's use of its base are `derived_*` entries the operator writes from what was given (`internal/director/authz/derived.go`), never given by anybody. A check reads them in one step; the given entries stay as they are, so a view tells what was given from what follows. | a check that walks every inclusion, role and add-on of a tenant on every request |
 | R5 | **`but not` only for least-privilege invariants.** The model has none today: `admin` on an app includes its other roles, so that somebody can always configure it. | exclusion logic scattered through permissions |
 | R7 | **Who holds what is stored; contextual tuples carry runtime facts only.** A person's positions and roles are tuples the operator writes when they are given through the registrar, and takes when they are taken. Everything else -- what a position is, tenant→cluster, app→tenant, the cluster's role holders -- is a stored tuple the operator projects from what git declares once Argo CD has applied it (AD-12). | a copy of rights in the identity provider; a second place a right can be changed; rights in every token |
 | R8 | **Every relation ships with three tests** (`authz/model/v1/tests.fga.yaml`): the grant, the denial for the neighboring role, the derivation through the parent. | a relation nobody exercised |
@@ -52,6 +53,12 @@ honest:
   person or ending their realm session stops new tokens at the issuer, and
   the edge's next refresh fails, so the bound is the access token's
   lifetime, five minutes, independent of any tuple.
+- **Only what only shows may be answered from a cache.** The desktop's
+  tiles and the access pages ask OpenFGA for its fastest answer
+  (`MINIMIZE_LATENCY`), which its check and iterator caches may serve a
+  few seconds behind the store; every other check asks
+  `HIGHER_CONSISTENCY` and reads the store as it is
+  (`internal/openfga`, `WithFastAnswer`).
 - **Contextual tuples never carry what a person holds.** A request may add
   facts that exist only for that request; identity and rights are never
   among them.
@@ -84,6 +91,7 @@ seen the result.
 | *(no bootstrap tuple for the platform tenant)* | `tenant#admin` derives `or admin from operated_by`, so a platform administrator is an administrator of `tenant:platform`, and of any tenant that has not withdrawn the consent, through the chain. Writing the cluster's administrators into a tenant relation would be the copied tuple R4 forbids, and a tuple somebody has to remember to remove |
 | `app:<t>/<p>#tenant@tenant:<t>` | app install |
 | `app:<t>/<p>#base@app:<t>/<addon>` and `#addon` the other way; `role:<t>/<p>/<r>#app@app:<t>/<p>`, `#declared`, `#included_in` | app install (`internal/director/authz/apps.go`): an add-on is an app of its own tied to its base, and each role the profile declares is tied to its app |
+| `tenant:<t>#derived_<role>`, `app:<t>/<p>#derived_<role>`, `role:<t>/<p>/<r>#derived_holder`, each `@position:<t>/<name>#holder` or `@user:<sub>` | after every projection of a tenant's apps and positions, and after every role given to or taken from a person directly: exactly what follows from what is given (R4a), the stale ones removed |
 | `position:<t>/<name>#holder@user:<sub>`; `<object>#<role>@user:<sub>` for a role given directly | when a tenant's administrator gives it, through the registrar; taken the same way, and when the realm says the person was removed. A cluster administrator who enters a tenant, and a person of another tenant who signs in to it, are given theirs when they arrive ([iam.md §1.1c](iam.md)) |
 
 Two relations the model defines that no tuple feeds and no enforcement
