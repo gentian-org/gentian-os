@@ -24,9 +24,8 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"golang.org/x/crypto/argon2"
 
-	"github.com/gentian-org/gentian-os/internal/keycloak"
-
 	"github.com/gentian-org/gentian-os/internal/authz"
+	dauthz "github.com/gentian-org/gentian-os/internal/director/authz"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -132,20 +131,28 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 	return names, nil
 }
 
-// keycloakTenantMembers is the enabled members of the tenant's members group,
-// by username: what keycloakRealmUsers answers, for a realm that also holds
-// accounts people made themselves.
+// keycloakTenantMembers is the tenant's people who are enabled accounts of
+// its realm, by username: what keycloakRealmUsers answers, for a realm that
+// also holds accounts people made themselves. The people are the holders of
+// the tenant's position user, as the rights store names them.
 func (r *TenantReconciler) keycloakTenantMembers(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	if r.Rights == nil {
+		return nil, errNoRightsStore
+	}
 	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return nil, fmt.Errorf("load keycloak-admin: %w", err)
 	}
-	members, err := kc.ListGroupMembers(ctx, keycloakRealmName(tenant), keycloak.TenantMembersGroup(tenant.Name))
+	people, err := dauthz.PositionHolders(ctx, r.Rights, tenant.Name, dauthz.PositionUser)
+	if err != nil {
+		return nil, err
+	}
+	accounts, err := kc.ListRealmUsers(ctx, keycloakRealmName(tenant))
 	if err != nil {
 		return nil, err
 	}
 	var names []string
-	for _, m := range members {
+	for _, m := range accountsOf(accounts, people) {
 		if m.Username != "" {
 			names = append(names, m.Username)
 		}

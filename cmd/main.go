@@ -836,7 +836,7 @@ func main() {
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 			TenancyMode:  tenancyMode,
 		},
-		Counter: &controller.UsageStatisticsCounts{Client: mgr.GetClient()},
+		Counter: &controller.UsageStatisticsCounts{Client: mgr.GetClient(), Rights: tenantReconciler.Rights},
 		Key: func() (*usagestatistics.Key, error) {
 			return usagestatistics.KeyFromFile(envvar.Or("USAGE_STATISTICS_KEY_FILE", "/etc/gentian/usage-statistics/signing_seed"))
 		},
