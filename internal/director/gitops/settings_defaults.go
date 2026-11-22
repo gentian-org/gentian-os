@@ -29,7 +29,6 @@ var clusterSettingDefaults = map[string]string{
 	"mail.starttls":                                  "true",
 	"mail.ssl":                                       "false",
 	"tenancyMode":                                    "multi",
-	"platformRoles.admin":                            "gentian:platform:admin",
 	"tenantDefaults.limitRange.defaultCpu":           "500m",
 	"tenantDefaults.limitRange.defaultMemory":        "512Mi",
 	"tenantDefaults.limitRange.defaultRequestCpu":    "100m",

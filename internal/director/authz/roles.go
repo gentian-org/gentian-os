@@ -36,49 +36,13 @@ var ClusterRoles = []string{
 	"break_glass",
 }
 
-// ClaimRoles maps each field of the Cluster claim's spec.platformRoles, as an
-// operator writes it, to the cluster relation it grants: the two roles a
-// Keycloak group of the kernel realm holds. The claim's spelling and the
-// model's are kept apart on purpose, and this is the one place they meet:
-// the operator's projection and the director's reading of the claim both
-// translate through it, so the two cannot drift into projecting one set of
-// roles and checking another.
-var ClaimRoles = map[string]string{
-	"admin":      "admin",
-	"breakGlass": "break_glass",
-}
-
-// RolesFromClaim translates spec.platformRoles of the Cluster claim into the
-// relation-keyed map ReconcileClusterRoles takes. A field with an empty group
-// grants nothing and is left out.
-//
-// A field the mapping does not know is returned in unknown, sorted, rather
-// than passed through: ReconcileClusterRoles would refuse the whole map for
-// it, and the caller decides whether that is an error or something to log
-// and project around.
-func RolesFromClaim(claim map[string]string) (roles map[string]string, unknown []string) {
-	roles = map[string]string{}
-	for field, group := range claim {
-		rel, ok := ClaimRoles[field]
-		if !ok {
-			unknown = append(unknown, field)
-			continue
-		}
-		if group != "" {
-			roles[rel] = group
-		}
-	}
-	sort.Strings(unknown)
-	return roles, unknown
-}
-
 // HolderRoles are the roles the Cluster claim gives a person by name
 // (spec.platformAccess.roleHolders), keyed by the claim's spelling, each with
-// the relation it grants. Never admin: that stays with the kernel realm's
-// group. breakGlass is held by a person with a reason and until a time, and
-// goes at that time. auditor and tenantAuditor grant the relation of one
+// the relation it grants. admin is the cluster's administrator. breakGlass
+// is held by a person with a reason and until a time, and goes at that time. auditor and tenantAuditor grant the relation of one
 // name on the cluster and on one tenant.
 var HolderRoles = map[string]string{
+	"admin":             "admin",
 	"securityOfficer":   "security_officer",
 	"auditor":           "auditor",
 	"serviceAdmin":      "service_admin",
@@ -97,8 +61,8 @@ const ScopeCluster = "cluster"
 // when that tenant's people may not hold the role:
 //
 //	securityOfficer, auditor           cluster, for anybody who may be named
-//	serviceAdmin, sharedAppsAdmin,
-//	breakGlass                         cluster, for a person of the platform tenant only
+//	admin, serviceAdmin,
+//	sharedAppsAdmin, breakGlass        cluster, for a person of the platform tenant only
 //	perimeterApprover                  cluster for a person of the platform tenant,
 //	                                   tenant:<t> for an administrator of tenant t
 //	tenantAuditor                      none: its scope is the entry's (EntryScope)
@@ -111,7 +75,7 @@ func HolderScope(role, tenant string) (scope string, ok bool) {
 	switch role {
 	case "securityOfficer", "auditor":
 		return ScopeCluster, true
-	case "serviceAdmin", "sharedAppsAdmin", "breakGlass":
+	case "admin", "serviceAdmin", "sharedAppsAdmin", "breakGlass":
 		return ScopeCluster, platform
 	case "perimeterApprover":
 		if platform {
@@ -204,39 +168,16 @@ func CheckAs(ctx context.Context, c Checker, requestID, user, holder, relation, 
 // A holder with Tenant set is not the cluster's and is left to
 // ReconcileTenants.
 //
-// Declarative, not additive. A role whose group the claim drops loses its
+// Declarative, not additive. A role holder the claim drops loses the
 // tuple, so authority over a cluster can be taken away by editing the claim
 // rather than by remembering to delete something. That is also why this reads
 // what is stored first: the claim is the whole truth about these relations,
 // and anything else found under them was either a previous claim's answer or
 // something nobody declared.
-//
-// Group MEMBERSHIP is not touched here. It is a projection of Keycloak, fed by
-// the event listener, and the two must not both write it.
-func (c *OpenFGA) ReconcileClusterRoles(ctx context.Context, cluster string, roles map[string]string, holders []RoleHolder) error {
+func (c *OpenFGA) ReconcileClusterRoles(ctx context.Context, cluster string, holders []RoleHolder) error {
 	object := Cluster(cluster)
 
-	// A key the model has no relation for is a mistake in the claim, and a
-	// silent one: OpenFGA accepts the tuple and it then matches nothing.
-	for rel := range roles {
-		if !groupRelation(rel) {
-			return fmt.Errorf("cluster role %q is not one a group holds", rel)
-		}
-	}
-
 	want := map[string]Tuple{}
-	for _, rel := range ClusterRoles {
-		group, ok := roles[rel]
-		if !ok || group == "" {
-			continue
-		}
-		obj, err := Group(group)
-		if err != nil {
-			return fmt.Errorf("role %s names group %q: %w", rel, group, err)
-		}
-		t := Tuple{User: obj + "#member", Relation: rel, Object: object}
-		want[key(t)] = t
-	}
 	for _, h := range holders {
 		if h.Tenant != "" {
 			continue
@@ -282,15 +223,6 @@ func (c *OpenFGA) ReconcileClusterRoles(ctx context.Context, cluster string, rol
 	c.log.InfoContext(ctx, "cluster roles reconciled",
 		"cluster", cluster, "granted", len(writes), "revoked", len(deletes))
 	return nil
-}
-
-func groupRelation(rel string) bool {
-	for _, r := range ClaimRoles {
-		if r == rel {
-			return true
-		}
-	}
-	return false
 }
 
 func holderRelation(rel string) bool {

@@ -130,8 +130,8 @@ func loadOpenFGA(t testing.TB, base string) (storeID, modelID string) {
 	}
 	tuples := fixture.Tuples
 	// The fixture's cluster is cluster:main; these tests serve Cluster.
-	// Bind the administrators' group to it so cluster verbs can be checked.
-	tuples = append(tuples, map[string]any{"user": "group:gentian/platform/admin#member", "relation": "admin", "object": "cluster:" + Cluster})
+	// Its administrator is the fixture's, so cluster verbs can be checked.
+	tuples = append(tuples, map[string]any{"user": "user:alice", "relation": "admin", "object": "cluster:" + Cluster})
 	// The role holders the claim names, as the accounts of the realms these
 	// tests issue tokens for -- the fixture's own name realms kernel and
 	// demo: the platform tenant's people of realm gentian, on this cluster

@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -28,7 +29,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	kcadmin "github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/envvar"
 )
 
 // The authorization graph's STRUCTURE is cluster state, so the operator
@@ -83,9 +86,9 @@ type AuthzProjectionReconciler struct {
 	// effect, so each is one log line and not one every requeue.
 	notInEffectWarned map[string]bool
 
-	// unknownRoleWarned holds the claim fields already reported as naming no
-	// relation, so a misspelt role is one log line and not one every requeue.
-	unknownRoleWarned map[string]bool
+	// BootstrapAdministrator answers the realm and the id of the account the
+	// install made, "" when it is not there. Nil asks the kernel realm.
+	BootstrapAdministrator func(ctx context.Context) (realm, id string, err error)
 }
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=clusters,verbs=get;list;watch
@@ -97,22 +100,15 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 	logger := log.FromContext(ctx)
 
-	roles, err := r.platformRoles(ctx)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("read platform roles from the Cluster claim: %w", err)
-	}
-	if len(roles) == 0 {
-		// Worth saying rather than passing over: an empty projection is a
-		// cluster nobody administers, and it looks exactly like a broken
-		// login from the outside.
-		logger.Info("the Cluster claim assigns no platform roles, so nobody administers this cluster",
-			"setting", "spec.platformRoles")
-	}
 	holders, nextExpiry, err := r.roleHolders(ctx, time.Now())
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("read role holders from the Cluster claim: %w", err)
 	}
-	if err := r.Graph.ReconcileClusterRoles(ctx, r.Cluster, roles, holders); err != nil {
+	holders, err = r.withBootstrapAdministrator(ctx, holders)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("find the install's administrator: %w", err)
+	}
+	if err := r.Graph.ReconcileClusterRoles(ctx, r.Cluster, holders); err != nil {
 		return ctrl.Result{}, fmt.Errorf("project cluster roles: %w", err)
 	}
 
@@ -141,7 +137,7 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 
 	logger.V(1).Info("authorization structure projected",
-		"cluster", r.Cluster, "roles", len(roles), "holders", len(holders), "tenants", len(tenants))
+		"cluster", r.Cluster, "holders", len(holders), "tenants", len(tenants))
 	// Again when the next role holder's entry expires, so the role goes at
 	// its time and not up to a requeue later.
 	requeue := authzProjectionRequeue
@@ -153,51 +149,51 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
-// platformRoles is spec.platformRoles from the Cluster claim: the group that
-// holds each platform role, keyed by the cluster relation it grants.
+// withBootstrapAdministrator adds the account the install made as the
+// cluster's administrator, while the Cluster claim names none.
 //
-// From the claim and not from a ConfigMap derived from it: the claim in git is
-// where authority over a cluster is written down, and a cluster must not be
-// able to widen its own administrators' rights by editing something inside
-// itself.
-//
-// The claim spells the roles its own way (securityOfficer), the graph its way
-// (security_officer); authz.RolesFromClaim is the one translation between
-// them. A field the translation does not know is logged once and skipped, not
-// returned as an error: this reconciler also projects every tenant and every
-// installed app, and a typo in one role of the claim must not take the whole
-// cluster's rights down with it.
-func (r *AuthzProjectionReconciler) platformRoles(ctx context.Context) (map[string]string, error) {
-	list := &unstructured.UnstructuredList{}
-	list.SetGroupVersionKind(schema.GroupVersionKind{
-		Group: clusterClaimGVK.Group, Version: clusterClaimGVK.Version, Kind: clusterClaimGVK.Kind + "List",
-	})
-	if err := r.List(ctx, list, client.InNamespace(clusterConfigNamespace)); err != nil {
+// Somebody has to administer a cluster before anybody can be named on its
+// claim through the console, and a claim that names nobody must not leave
+// the cluster to nobody. The install makes one account in the kernel realm,
+// admin@<kernel domain>; it holds admin until the claim names an
+// administrator, and from then on only if the claim names it. An account
+// that is not there yet, or no longer, holds nothing, and is said.
+func (r *AuthzProjectionReconciler) withBootstrapAdministrator(ctx context.Context, holders []authz.RoleHolder) ([]authz.RoleHolder, error) {
+	for _, h := range holders {
+		if h.Relation == "admin" && h.Tenant == "" {
+			return holders, nil
+		}
+	}
+	lookup := r.BootstrapAdministrator
+	if lookup == nil {
+		lookup = r.bootstrapAdministrator
+	}
+	realm, id, err := lookup(ctx)
+	if err != nil {
 		return nil, err
 	}
-	out := map[string]string{}
-	for i := range list.Items {
-		fields, found, err := unstructured.NestedStringMap(list.Items[i].Object, "spec", "platformRoles")
-		if err != nil || !found {
-			continue
-		}
-		roles, unknown := authz.RolesFromClaim(fields)
-		for _, field := range unknown {
-			if r.unknownRoleWarned == nil {
-				r.unknownRoleWarned = map[string]bool{}
-			}
-			if r.unknownRoleWarned[field] {
-				continue
-			}
-			r.unknownRoleWarned[field] = true
-			log.FromContext(ctx).Info("the Cluster claim names a platform role the graph has no relation for; it is not projected",
-				"claim", list.Items[i].GetName(), "setting", "spec.platformRoles."+field)
-		}
-		for rel, group := range roles {
-			out[rel] = group
-		}
+	if id == "" {
+		log.FromContext(ctx).Info("the Cluster claim names no administrator and the install's account is not there, so nobody administers this cluster",
+			"setting", "spec.platformAccess.roleHolders")
+		return holders, nil
 	}
-	return out, nil
+	return append(holders, authz.RoleHolder{Relation: "admin", Realm: realm, Subject: id}), nil
+}
+
+// bootstrapAdministrator asks the kernel realm for the account the install
+// made, by its name.
+func (r *AuthzProjectionReconciler) bootstrapAdministrator(ctx context.Context) (realm, id string, err error) {
+	domain := os.Getenv("KERNEL_DOMAIN")
+	if domain == "" {
+		return "", "", nil
+	}
+	realm = envvar.Or("GENTIAN_PLATFORM_REALM", "kernel")
+	kc, err := kcadmin.LoadKeycloakAdminClient(ctx, r.Client)
+	if err != nil {
+		return "", "", err
+	}
+	id, err = kc.UserIDByUsername(ctx, realm, "admin@"+domain)
+	return realm, id, err
 }
 
 // roleHolders is spec.platformAccess.roleHolders from the Cluster claim: the
