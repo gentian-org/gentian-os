@@ -1295,6 +1295,18 @@ type TenantApp struct {
 	// +optional
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
 
+	// Positions names the positions of the tenant whose holders use this
+	// app: each holds the app's role user. A name is one of the positions
+	// every tenant has or one the tenant declares (spec.positions); a name
+	// that is neither gives nothing. defaultGrant is the position user, and
+	// the two are read together.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Positions []string `json:"positions,omitempty"`
+
 	// Placed says the platform put this app here, because its profile is
 	// placeable (ComponentProfile spec.placement). The director's placement
 	// worker writes and removes such an entry and nobody else changes it:

@@ -40,6 +40,9 @@ type App struct {
 	// DefaultGrant is whether every member of the tenant has access to the
 	// app by default: the install was made for everyone.
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
+	// Positions are the positions whose holders use the app, beside the
+	// position user that DefaultGrant stands for.
+	Positions []string `json:"positions,omitempty"`
 	// Catalogue is the source the pinned build was fetched from.
 	Catalogue string `json:"catalogue,omitempty"`
 	// UpdateMode is the tenant's override of how the app moves to newer

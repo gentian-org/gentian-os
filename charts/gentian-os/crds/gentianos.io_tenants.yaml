@@ -295,6 +295,20 @@ spec:
                         export leaves it out, and the cluster an import lands on places its
                         own.
                       type: boolean
+                    positions:
+                      description: |-
+                        Positions names the positions of the tenant whose holders use this
+                        app: each holds the app's role user. A name is one of the positions
+                        every tenant has or one the tenant declares (spec.positions); a name
+                        that is neither gives nothing. defaultGrant is the position user, and
+                        the two are read together.
+                      items:
+                        maxLength: 63
+                        pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      maxItems: 256
+                      type: array
+                      x-kubernetes-list-type: set
                     profile:
                       description: |-
                         Profile is the name of the ComponentProfile to install.
