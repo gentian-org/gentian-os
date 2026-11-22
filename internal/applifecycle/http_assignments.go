@@ -123,6 +123,7 @@ func (h *HTTPServer) handleGive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.recordAssignment(r, "given", a, changed)
+	h.rightsChanged(r, changed, false)
 	writeJSON(w, http.StatusOK, AssignmentAnswer{Changed: changed})
 }
 
@@ -141,6 +142,7 @@ func (h *HTTPServer) handleTake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.recordAssignment(r, "taken", a, changed)
+	h.rightsChanged(r, changed, true)
 	writeJSON(w, http.StatusOK, AssignmentAnswer{Changed: changed})
 }
 
@@ -158,6 +160,7 @@ func (h *HTTPServer) handleRemovePersonRights(w http.ResponseWriter, r *http.Req
 		ctrllog.FromContext(r.Context()).WithName("assignments").Info("a person's rights removed",
 			"tenant", r.PathValue("tenant"), "subject", r.PathValue("subject"), "entries", removed, "actor", r.Header.Get(actorHeader))
 	}
+	h.rightsChanged(r, removed > 0, true)
 	writeJSON(w, http.StatusOK, AssignmentAnswer{Changed: removed > 0, Removed: removed})
 }
 
@@ -207,4 +210,15 @@ func (h *HTTPServer) recordAssignment(r *http.Request, what string, a authz.Assi
 	ctrllog.FromContext(r.Context()).WithName("assignments").Info("an assignment "+what,
 		"tenant", r.PathValue("tenant"), "subject", r.PathValue("subject"),
 		"position", a.Position, "app", a.App, "role", a.Role, "actor", r.Header.Get(actorHeader))
+}
+
+// rightsChanged tells what follows from a change, when there was one.
+func (h *HTTPServer) rightsChanged(r *http.Request, changed, taken bool) {
+	if !changed || h.RightsChanged == nil {
+		return
+	}
+	if err := h.RightsChanged(r.Context(), r.PathValue("tenant"), r.PathValue("subject"), taken); err != nil {
+		ctrllog.FromContext(r.Context()).WithName("assignments").Error(err, "what follows from a change of rights was not done",
+			"tenant", r.PathValue("tenant"), "subject", r.PathValue("subject"), "taken", taken)
+	}
 }

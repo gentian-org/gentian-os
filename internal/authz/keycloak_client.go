@@ -834,3 +834,17 @@ func (c *KeycloakAdminClient) UserIDByUsername(ctx context.Context, realm, usern
 	}
 	return "", nil
 }
+
+// EndUserSessions ends every session the account has in the realm. The
+// realm tells each app that declared where it hears of a sign-out; the
+// person signs in again and their tokens are written anew. An account the
+// realm does not know has no session to end, which is not an error.
+func (c *KeycloakAdminClient) EndUserSessions(ctx context.Context, realm, userID string) error {
+	token, err := c.adminToken(ctx)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/admin/realms/%s/users/%s/logout", url.PathEscape(realm), url.PathEscape(userID))
+	_, err = c.doAdminExpect(ctx, token, http.MethodPost, path, nil, http.StatusNoContent, http.StatusOK, http.StatusNotFound)
+	return err
+}

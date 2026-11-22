@@ -70,7 +70,7 @@ public class DirectorEventListenerProviderFactory implements EventListenerProvid
         LOG.infof("membership events go to %s, signed with key %s", url, keyId);
     }
 
-    static PrivateKey readKey(Path file) throws Exception {
+    public static PrivateKey readKey(Path file) throws Exception {
         String pem = Files.readString(file)
             .replace("-----BEGIN PRIVATE KEY-----", "")
             .replace("-----END PRIVATE KEY-----", "")

@@ -30,6 +30,125 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
+// DefaultRolesClaim is the token claim a person's roles on an app are
+// written to where its profile names none.
+const DefaultRolesClaim = "gentian_roles"
+
+// ProfileRoles are the roles of an app, as its profile declares them.
+//
+// Every app has user, the lowest, and admin, the highest: admin holds every
+// other role of the app. A profile may leave either without a name inside
+// the app, and then the token says nothing for it.
+//
+// The token of a person who signs in to the app carries two claims: the
+// claim named here, with the in-app names of the roles the person holds on
+// the app and on the add-ons activated in it, and that claim's name followed
+// by "_mapped", with every in-app name the platform decides. An app sets the
+// first and takes away the rest of the second; what is in neither is its own
+// to keep.
+type ProfileRoles struct {
+	// Claim is the token claim the roles are written to. An add-on's is not
+	// read: its roles are written to the claim of the app it is activated in.
+	// +optional
+	// +kubebuilder:default=gentian_roles
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9_-]*$`
+	Claim string `json:"claim,omitempty"`
+
+	// User is what the role user is called inside the app.
+	// +optional
+	User *ProfileRoleNames `json:"user,omitempty"`
+
+	// Admin is what the role admin is called inside the app.
+	// +optional
+	Admin *ProfileRoleNames `json:"admin,omitempty"`
+
+	// Declared are the roles of the app between user and admin.
+	// +optional
+	// +kubebuilder:validation:MaxItems=40
+	// +listType=map
+	// +listMapKey=name
+	Declared []ProfileRole `json:"declared,omitempty"`
+}
+
+// ProfileRoleNames is what a role is called inside the app.
+type ProfileRoleNames struct {
+	// InApp are the app's own names for the role: a group, a role, whatever
+	// the app reads from the claim.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	InApp []string `json:"inApp,omitempty"`
+}
+
+// ProfileRole is a role an app declares beside user and admin.
+type ProfileRole struct {
+	// Name is the role's name on the platform.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="!(self in ['user', 'admin'])",message="user and admin are roles every app has"
+	Name string `json:"name"`
+
+	// Title is the role as people read it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=80
+	Title string `json:"title,omitempty"`
+
+	// Description says what the role is for.
+	// +optional
+	// +kubebuilder:validation:MaxLength=400
+	Description string `json:"description,omitempty"`
+
+	// Includes are other declared roles of the app whose holders the holders
+	// of this one are too: manager includes salesman.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	Includes []string `json:"includes,omitempty"`
+
+	// InApp are the app's own names for the role.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	InApp []string `json:"inApp,omitempty"`
+}
+
+// RolesClaim is the claim the profile's roles are written to.
+func (r *ProfileRoles) RolesClaim() string {
+	if r == nil || r.Claim == "" {
+		return DefaultRolesClaim
+	}
+	return r.Claim
+}
+
+// InAppNames is what each role of the profile is called inside the app, by
+// the role's name on the platform. A role with no name inside the app is
+// left out; nil for a profile that declares no roles.
+func (r *ProfileRoles) InAppNames() map[string][]string {
+	if r == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	if r.User != nil && len(r.User.InApp) > 0 {
+		out["user"] = r.User.InApp
+	}
+	if r.Admin != nil && len(r.Admin.InApp) > 0 {
+		out["admin"] = r.Admin.InApp
+	}
+	for _, role := range r.Declared {
+		if len(role.InApp) > 0 {
+			out[role.Name] = role.InApp
+		}
+	}
+	return out
+}
+
 // ProvisioningSpec declares app-specific user lifecycle mappings.
 type ProvisioningSpec struct {
 	// PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app

@@ -37,6 +37,10 @@ global:
     directorURL: ""
     # The id the director lists this key under.
     keyID: gentian-listener
+    # Where the token hook asks which roles a person holds on the app they
+    # sign in to. Supplied by the ApplicationSet. Empty leaves the hook
+    # unconfigured: a client that carries it then issues no token.
+    signInRolesURL: ""
 
 # The keycloakx chart's values (charts/keycloakx-7.3.2.tgz). What used to be
 # the keycloak-idp-base-values ConfigMap a Crossplane Release merged.
@@ -263,6 +267,15 @@ keycloakx:
     - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_KEY_ID
       value: {{ .Values.global.eventListener.keyID | quote }}
     - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_PRIVATE_KEY_FILE
+      value: /etc/gentian/listener/listener.pem
+    # The token hook (gentian-app-roles): where it asks for a person's roles
+    # on the app they sign in to, signed with the same key. The answer is
+    # given only to a request carrying one of the listed signatures.
+    - name: KC_SPI_PROTOCOL_MAPPER_GENTIAN_APP_ROLES_URL
+      value: {{ .Values.global.eventListener.signInRolesURL | quote }}
+    - name: KC_SPI_PROTOCOL_MAPPER_GENTIAN_APP_ROLES_KEY_ID
+      value: {{ .Values.global.eventListener.keyID | quote }}
+    - name: KC_SPI_PROTOCOL_MAPPER_GENTIAN_APP_ROLES_PRIVATE_KEY_FILE
       value: /etc/gentian/listener/listener.pem
   resources:
     requests:

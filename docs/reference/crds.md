@@ -866,6 +866,18 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `spec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `spec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `spec.roles` | object |  | `Roles` are the roles people hold on this app: user and admin, which every app has, and the further ones it declares, each with what it is called inside the app. |
+| `spec.roles.admin` | object |  | `Admin` is what the role admin is called inside the app. |
+| `spec.roles.admin.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
+| `spec.roles.claim` | string |  | `Claim` is the token claim the roles are written to. |
+| `spec.roles.declared` | []object |  | `Declared` are the roles of the app between user and admin. |
+| `spec.roles.declared[].description` | string |  | `Description` says what the role is for. |
+| `spec.roles.declared[].inApp` | []string |  | `InApp` are the app's own names for the role. |
+| `spec.roles.declared[].includes` | []string |  | `Includes` are other declared roles of the app whose holders the holders of this one are too: manager includes salesman. |
+| `spec.roles.declared[].name` | string | yes | `Name` is the role's name on the platform. |
+| `spec.roles.declared[].title` | string |  | `Title` is the role as people read it. |
+| `spec.roles.user` | object |  | `User` is what the role user is called inside the app. |
+| `spec.roles.user.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
 | `spec.secrets` | object |  | `Secrets` are values the platform generates and holds that have no external counterparty. |
 | `spec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `spec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |
@@ -1766,6 +1778,18 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
 | `status.profileSpec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
 | `status.profileSpec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `status.profileSpec.roles` | object |  | `Roles` are the roles people hold on this app: user and admin, which every app has, and the further ones it declares, each with what it is called inside the app. |
+| `status.profileSpec.roles.admin` | object |  | `Admin` is what the role admin is called inside the app. |
+| `status.profileSpec.roles.admin.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
+| `status.profileSpec.roles.claim` | string |  | `Claim` is the token claim the roles are written to. |
+| `status.profileSpec.roles.declared` | []object |  | `Declared` are the roles of the app between user and admin. |
+| `status.profileSpec.roles.declared[].description` | string |  | `Description` says what the role is for. |
+| `status.profileSpec.roles.declared[].inApp` | []string |  | `InApp` are the app's own names for the role. |
+| `status.profileSpec.roles.declared[].includes` | []string |  | `Includes` are other declared roles of the app whose holders the holders of this one are too: manager includes salesman. |
+| `status.profileSpec.roles.declared[].name` | string | yes | `Name` is the role's name on the platform. |
+| `status.profileSpec.roles.declared[].title` | string |  | `Title` is the role as people read it. |
+| `status.profileSpec.roles.user` | object |  | `User` is what the role user is called inside the app. |
+| `status.profileSpec.roles.user.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
 | `status.profileSpec.secrets` | object |  | `Secrets` are values the platform generates and holds that have no external counterparty. |
 | `status.profileSpec.secrets.derived` | []object |  | `Derived` secrets are keys the platform adds to the credentials Secret it manages for the component, under the names given. |
 | `status.profileSpec.secrets.derived[].key` | string | yes | `Key` is the Secret key, and therefore the environment variable name when the app consumes the Secret with envFrom (e.g. |

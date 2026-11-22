@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
+	"encoding/json"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -180,6 +181,38 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 			},
 			"providerConfigRef": identityProvider,
 		}))
+	}
+
+	// The person's roles on the app, in the app's own names. The platform's
+	// mapper asks the rights store at every token and writes two claims: the
+	// in-app names of the roles held, and every in-app name it decides
+	// (<claim>_mapped), so that the app can take away what is no longer
+	// held and leave alone what was never the platform's.
+	if roles := id.in.Roles; roles != nil && len(roles.InApp) > 0 {
+		inApp, err := json.Marshal(roles.InApp)
+		if err == nil {
+			objs = append(objs, identityObject("client.keycloak.crossplane.io/v1alpha1", "ProtocolMapper", id.name("oidc-app-roles"), map[string]interface{}{
+				"deletionPolicy": "Delete",
+				"forProvider": map[string]interface{}{
+					"realmId":        id.realm,
+					"clientIdRef":    identityRef(clientName),
+					"name":           "app-roles",
+					"protocol":       "openid-connect",
+					"protocolMapper": "gentian-app-roles",
+					"config": map[string]interface{}{
+						"claim.name":                roles.Claim,
+						"gentian.tenant":            id.tenant,
+						"gentian.app":               id.in.ProfileName,
+						"gentian.roles":             string(inApp),
+						"id.token.claim":            "true",
+						"access.token.claim":        "true",
+						"userinfo.token.claim":      "true",
+						"introspection.token.claim": "false",
+					},
+				},
+				"providerConfigRef": identityProvider,
+			}))
+		}
 	}
 
 	if hasPack {

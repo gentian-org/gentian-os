@@ -132,6 +132,11 @@ func (r *ComponentReconciler) renderInput(
 		return nil, err
 	}
 	in.Addons = ids
+	roles, err := r.tokenRoles(ctx, comp, profile)
+	if err != nil {
+		return nil, err
+	}
+	in.Roles = roles
 	// The granted hosts outside, in the pods' host table, at the address of
 	// each host's Service on the gateway for outgoing connections. The
 	// reconciler holds the chart until every one is carried.
@@ -907,4 +912,36 @@ func covers(have, want interface{}) bool {
 	default:
 		return equality.Semantic.DeepEqual(have, want)
 	}
+}
+
+// tokenRoles is what the app's sign-in token says of a person's roles: the
+// in-app names its profile gives its roles, and the ones each add-on
+// activated in it gives its own. Nil when none of them names a role inside
+// the app.
+//
+// The names are the profile's own, not a build's: what a role is called in
+// the app is read where the rights store reads which roles there are.
+func (r *ComponentReconciler) tokenRoles(
+	ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
+) (*apprender.TokenRoles, error) {
+	out := &apprender.TokenRoles{Claim: profile.Spec.Roles.RolesClaim(), InApp: map[string]map[string][]string{}}
+	if names := profile.Spec.Roles.InAppNames(); len(names) > 0 {
+		out.InApp[comp.Spec.ProfileRef.Name] = names
+	}
+	for _, name := range comp.Spec.Addons {
+		addon := &gentianov1alpha1.ComponentProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name}, addon); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		if names := addon.Spec.Roles.InAppNames(); len(names) > 0 {
+			out.InApp[name] = names
+		}
+	}
+	if len(out.InApp) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }

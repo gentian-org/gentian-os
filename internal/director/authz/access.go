@@ -174,6 +174,59 @@ func (c *OpenFGA) AppRoles(ctx context.Context, requestID, tenant, profile, sub 
 	return appRoles(ctx, c.Read, ask, tenant, profile, sub)
 }
 
+// AppRoleSet is the roles a person holds on one app, or on one add-on.
+type AppRoleSet struct {
+	// App is the profile name.
+	App string `json:"app"`
+	// Roles are the roles held, sorted: user, admin and declared ones.
+	Roles []string `json:"roles"`
+}
+
+// SignInRoles answers what a sign-in to an app carries: the roles the
+// account sub holds on the app, and on each add-on activated in it, since
+// an add-on's roles are used inside its base. The app first, its add-ons
+// after it by name; an app or add-on the person holds nothing on is left
+// out, and an app the tenant has not answers nothing.
+func (c *OpenFGA) SignInRoles(ctx context.Context, requestID, tenant, profile, sub string) ([]AppRoleSet, error) {
+	ask := func(ctx context.Context, questions []Question) ([]bool, error) {
+		return c.BatchCheck(ctx, requestID, questions)
+	}
+	return signInRoles(ctx, c.Read, ask, tenant, profile, sub)
+}
+
+func signInRoles(ctx context.Context, read readFunc, ask askFunc, tenant, profile, sub string) ([]AppRoleSet, error) {
+	out := []AppRoleSet{}
+	own, err := appRoles(ctx, read, ask, tenant, profile, sub)
+	if err != nil {
+		return nil, err
+	}
+	if len(own) > 0 {
+		out = append(out, AppRoleSet{App: profile, Roles: own})
+	}
+	base := App(tenant, profile)
+	tuples, err := read(ctx, Tuple{User: base, Relation: "base", Object: "app:"})
+	if err != nil {
+		return nil, fmt.Errorf("read the add-ons of %s: %w", base, err)
+	}
+	addons := make([]string, 0, len(tuples))
+	for _, t := range tuples {
+		if ofTenant(t.Object, "app:", tenant) {
+			addons = append(addons, profileOf(t.Object, tenant))
+		}
+	}
+	sort.Strings(addons)
+	for _, addon := range addons {
+		roles, err := appRoles(ctx, read, ask, tenant, addon, sub)
+		if err != nil {
+			return nil, err
+		}
+		if len(roles) > 0 {
+			out = append(out, AppRoleSet{App: addon, Roles: roles})
+		}
+	}
+	return out, nil
+}
+
 type (
 	readFunc func(context.Context, Tuple) ([]Tuple, error)
 	askFunc  func(context.Context, []Question) ([]bool, error)

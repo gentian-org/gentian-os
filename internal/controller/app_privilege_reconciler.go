@@ -28,6 +28,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
+	dauthz "github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/provisioning/privilege"
 )
@@ -39,16 +40,18 @@ const (
 	// re-check above.
 	appPrivilegeJobPollAfter = 10 * time.Second
 
-	// appPrivilegeRequestedAtAnnotation is set by the Admin Console BFF when
-	// gentian:tenant:<t>:app-admins membership changes. The operator clears
-	// per-app sync fingerprints while requested != processed.
+	// appPrivilegeRequestedAtAnnotation is set when what a person holds in
+	// the tenant changed (RightsChanged). The operator clears per-app sync
+	// fingerprints while requested != processed.
 	appPrivilegeRequestedAtAnnotation = "gentianos.io/app-privilege-requested-at"
 	appPrivilegeProcessedAtAnnotation = "gentianos.io/app-privilege-processed-at"
 	appPrivilegeSyncAnnotationPrefix  = "gentianos.io/app-privilege-sync-"
 )
 
-// ensureAppPrivileges maps gentian:tenant:<t>:app-admins members into each
-// installed app's declared privileged role (ComponentProfile.spec.hooks.provisioning).
+// ensureAppPrivileges tells each installed app that cannot read its people's
+// roles from a token who its administrators and its users are, as the rights
+// store names them, through the
+// sync Job its profile declares (ComponentProfile.spec.hooks.provisioning).
 func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	// The installed apps: a component the platform places is not among
 	// the apps whose privileged role app-admins are mapped into.
@@ -78,11 +81,18 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("load keycloak admin: %w", err)
 	}
-	members, err := kc.ListGroupMembers(ctx, tenant.Name, gentianTenantAppAdminsGroup(tenant.Name))
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("list app-admins members: %w", err)
+	// Who holds what is the rights store's to say; the realm says who the
+	// accounts are. Without the store nobody can be told to an app, and an
+	// empty list would take every administrator away.
+	if r.Rights == nil {
+		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
+			"NoRightsStore", "The rights store is not connected; app roles are not applied")
+		return ctrl.Result{RequeueAfter: appPrivilegeRequeueAfter}, nil
 	}
-	fingerprint := privilege.MemberFingerprint(members)
+	accounts, err := kc.ListRealmUsers(ctx, keycloakRealmName(tenant))
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("list the realm's accounts: %w", err)
+	}
 
 	var privilegedApps []string
 	syncFailed := false
@@ -115,13 +125,15 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 			return ctrl.Result{RequeueAfter: appPrivilegeRequeueAfter}, nil
 		}
 
-		// Everyone the tenant entitled to the app, beside its administrators:
-		// the script may give them the app's ordinary roles.
-		users, err := kc.ListGroupMembers(ctx, tenant.Name, gentianTenantAppGroup(tenant.Name, profileName))
+		// The app's administrators, and everyone who may use it: the script
+		// gives the first its privileged role and may give the rest the
+		// app's ordinary ones.
+		adminSubjects, userSubjects, err := dauthz.AppHolders(ctx, r.Rights, tenant.Name, profileName)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("list %s users: %w", profileName, err)
+			return ctrl.Result{}, fmt.Errorf("read who holds %s: %w", profileName, err)
 		}
-		appFingerprint := fingerprint + "@" + privilege.UsersFingerprint(users) +
+		members, users := accountsOf(accounts, adminSubjects), accountsOf(accounts, userSubjects)
+		appFingerprint := privilege.MemberFingerprint(members) + "@" + privilege.UsersFingerprint(users) +
 			"@" + privilege.DeclarationFingerprint(profile.Provisioning())
 		if r.appPrivilegeSynced(tenant, profileName, appFingerprint) {
 			continue
@@ -373,4 +385,59 @@ func (r *TenantReconciler) persistAppPrivilegeFingerprint(ctx context.Context, t
 
 func appPrivilegeAnnotationKey(profileName string) string {
 	return appPrivilegeSyncAnnotationPrefix + profileName
+}
+
+// accountsOf is the realm's accounts among subjects, in the realm's order.
+// A subject the realm does not know is left out: there is nobody to tell
+// the app about.
+func accountsOf(accounts []authz.KeycloakUser, subjects []string) []authz.KeycloakUser {
+	wanted := make(map[string]bool, len(subjects))
+	for _, s := range subjects {
+		wanted[s] = true
+	}
+	out := []authz.KeycloakUser{}
+	for _, a := range accounts {
+		if wanted[a.ID] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// RightsChanged is what follows, outside the rights store, from a change of
+// what a person holds in a tenant.
+//
+// The apps that are told their people (provisioning.syncJob) are told again
+// now rather than at the next idle pass: the request annotation makes the
+// tenant reconcile and forget what it last told them.
+//
+// When something was taken away, the person's sessions in the realm are
+// ended. A token carries the roles held when it was written, and the realm
+// cannot end one app's session alone; it tells every app that declared
+// where it hears of a sign-out, and the next sign-in carries the roles as
+// they are. A role that was given waits for the person's next sign-in.
+func (r *TenantReconciler) RightsChanged(ctx context.Context, tenantName, subject string, taken bool) error {
+	tenant := &gentianov1alpha1.Tenant{}
+	if err := r.Get(ctx, types.NamespacedName{Name: tenantName}, tenant); err != nil {
+		return err
+	}
+	orig := tenant.DeepCopy()
+	if tenant.Annotations == nil {
+		tenant.Annotations = map[string]string{}
+	}
+	tenant.Annotations[appPrivilegeRequestedAtAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
+	if err := r.Patch(ctx, tenant, client.MergeFrom(orig)); err != nil {
+		return fmt.Errorf("ask for the apps to be told: %w", err)
+	}
+	if !taken {
+		return nil
+	}
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
+	if err != nil {
+		return fmt.Errorf("load keycloak admin: %w", err)
+	}
+	if err := kc.EndUserSessions(ctx, keycloakRealmName(tenant), subject); err != nil {
+		return fmt.Errorf("end the person's sessions: %w", err)
+	}
+	return nil
 }

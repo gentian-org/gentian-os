@@ -433,6 +433,11 @@ usher:
   # Where the operator's listener answers, for the usher's reads of live
   # state. Empty is the listener of this release.
   appLifecycleURL: ""
+  # The port the sign-in question is answered on: which roles a person holds
+  # on an app, asked by the identity provider when it issues the app's
+  # token and signed with its listener key (membershipListener.keysSecretRef).
+  # Not served while no key is listed.
+  signInRolesPort: 8083
   resources:
     requests:
       cpu: 20m
