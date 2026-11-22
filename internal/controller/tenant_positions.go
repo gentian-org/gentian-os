@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -48,15 +49,53 @@ func installedAppsOf(ctx context.Context, c client.Client, tenant *gentianov1alp
 				"tenant", tenant.Name, "error", err.Error())
 			continue
 		}
-		entry := authz.InstalledApp{Profile: profile, ForEveryone: app.DefaultGrant}
+		entry := authz.InstalledApp{Profile: profile, ForEveryone: app.DefaultGrant, Roles: declaredRolesOf(ctx, c, profile)}
 		for _, addon := range app.Addons {
 			entry.Addons = append(entry.Addons, authz.InstalledApp{
-				Profile: addon, ForEveryone: app.AddonDefaultGranted(addon),
+				Profile: addon, ForEveryone: app.AddonDefaultGranted(addon), Roles: declaredRolesOf(ctx, c, addon),
 			})
 		}
 		out = append(out, entry)
 	}
 	return out, nil
+}
+
+// declaredRolesOf is the roles a profile declares beside user and admin.
+// None for a profile that cannot be read: the app is in the store all the
+// same, with the two roles every app has.
+func declaredRolesOf(ctx context.Context, c client.Client, name string) []authz.DeclaredRole {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	if err := c.Get(ctx, client.ObjectKey{Name: name}, profile); err != nil {
+		if !apierrors.IsNotFound(err) {
+			log.FromContext(ctx).Info("declared roles not read", "profile", name, "error", err.Error())
+		}
+		return nil
+	}
+	return declaredRoles(profile.Spec.Roles)
+}
+
+// declaredRoles reads a profile's declared roles as the store holds them.
+// An inclusion of a role the profile does not declare is dropped here, so
+// that one slip in a profile does not stop a tenant's rights being written.
+func declaredRoles(roles *gentianov1alpha1.ProfileRoles) []authz.DeclaredRole {
+	if roles == nil {
+		return nil
+	}
+	known := map[string]bool{}
+	for _, r := range roles.Declared {
+		known[r.Name] = true
+	}
+	var out []authz.DeclaredRole
+	for _, r := range roles.Declared {
+		role := authz.DeclaredRole{Name: r.Name}
+		for _, inc := range r.Includes {
+			if known[inc] && inc != r.Name {
+				role.Includes = append(role.Includes, inc)
+			}
+		}
+		out = append(out, role)
+	}
+	return out
 }
 
 // positionsOf is the tenant's positions: the three every tenant has, for

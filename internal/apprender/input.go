@@ -105,6 +105,9 @@ type Input struct {
 	// Addons are the addons selected into this app, by the names the app
 	// knows them by.
 	Addons []string
+	// Roles is what the app's sign-in token says of a person's roles, nil
+	// for an app whose profile and add-ons name no role inside the app.
+	Roles *TokenRoles
 	// BridgedAddons are, for a bridge whose profile names
 	// spec.bridge.addonsValuesPath, the IDs of the add-ons selected into the
 	// app it connects; empty when there are none.
@@ -128,6 +131,16 @@ type Input struct {
 	// now, by name. A few renders depend on them: an id the realm assigned,
 	// or an object that goes on being rendered once it exists.
 	Observed map[string]*unstructured.Unstructured
+}
+
+// TokenRoles is what an app's sign-in token carries of a person's roles.
+type TokenRoles struct {
+	// Claim is the claim the in-app names are written to.
+	Claim string
+	// InApp is what each role is called inside the app, by profile name --
+	// the app's own and each activated add-on's -- and by the role's name on
+	// the platform.
+	InApp map[string]map[string][]string
 }
 
 // PullSecrets are the tenant's pull Secrets this app's chart and images are

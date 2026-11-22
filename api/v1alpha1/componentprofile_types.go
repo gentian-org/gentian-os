@@ -400,6 +400,15 @@ type ComponentProfileSpec struct {
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	ComesWith []string `json:"comesWith,omitempty"`
 
+	// Roles are the roles people hold on this app: user and admin, which
+	// every app has, and the further ones it declares, each with what it is
+	// called inside the app. What a person holds is in the rights store; the
+	// app reads it from the sign-in token (roles.claim), in its own names.
+	// An add-on declares its own, and they reach the token of the app it is
+	// activated in.
+	// +optional
+	Roles *ProfileRoles `json:"roles,omitempty"`
+
 	// DefaultForTenants is placement {tenants: every}.
 	//
 	// Superseded by placement: read for one release so that catalogs

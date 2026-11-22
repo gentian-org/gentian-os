@@ -220,13 +220,20 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rc *Receiver) verify(header string, body []byte) error {
+	return VerifySignature(rc.keys, header, body, rc.now())
+}
+
+// VerifySignature checks a SignatureHeader over body against keys at now:
+// a listed key, a timestamp inside the window, and a signature that
+// verifies. It is how anything in the cluster knows a request is Keycloak's.
+func VerifySignature(keys map[string]ed25519.PublicKey, header string, body []byte, now time.Time) error {
 	fields := map[string]string{}
 	for _, part := range strings.Split(header, ",") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(part), "="); ok {
 			fields[k] = v
 		}
 	}
-	key, ok := rc.keys[fields["keyid"]]
+	key, ok := keys[fields["keyid"]]
 	if !ok {
 		return errors.New("unknown key id")
 	}
@@ -234,7 +241,7 @@ func (rc *Receiver) verify(header string, body []byte) error {
 	if err != nil {
 		return errors.New("no timestamp")
 	}
-	if d := rc.now().Sub(time.Unix(ts, 0)); d > window || d < -window {
+	if d := now.Sub(time.Unix(ts, 0)); d > window || d < -window {
 		return errors.New("timestamp outside the window")
 	}
 	sig, err := base64.StdEncoding.DecodeString(fields["sig"])

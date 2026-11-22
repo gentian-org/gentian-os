@@ -374,6 +374,36 @@ func TestAppRolesAreWhatTheStoreAnswers(t *testing.T) {
 	}
 }
 
+// A sign-in to an app carries the person's roles on the app and on each
+// add-on activated in it, and leaves out what they hold nothing on.
+func TestASignInCarriesTheRolesOnTheAppAndItsAddons(t *testing.T) {
+	tuples := []Tuple{
+		{User: "tenant:demo", Relation: "tenant", Object: "app:demo/shop"},
+		{User: "tenant:demo", Relation: "tenant", Object: "app:demo/shop-sales"},
+		{User: "tenant:demo", Relation: "tenant", Object: "app:demo/shop-stock"},
+		{User: "app:demo/shop", Relation: "base", Object: "app:demo/shop-sales"},
+		{User: "app:demo/shop", Relation: "base", Object: "app:demo/shop-stock"},
+		{User: "app:demo/shop-sales", Relation: "app", Object: "role:demo/shop-sales/manager"},
+		{User: "app:other/shop", Relation: "base", Object: "app:other/shop-sales"},
+	}
+	var asked []Question
+	got, err := signInRoles(context.Background(), store(tuples...), answering(&asked,
+		"user:eve user app:demo/shop",
+		"user:eve user app:demo/shop-sales", "user:eve holder role:demo/shop-sales/manager",
+	), "demo", "shop", "eve")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].App != "shop" || strings.Join(got[0].Roles, ",") != "user" ||
+		got[1].App != "shop-sales" || strings.Join(got[1].Roles, ",") != "manager,user" {
+		t.Errorf("roles = %+v, want shop: user and shop-sales: manager, user", got)
+	}
+	got, err = signInRoles(context.Background(), store(tuples...), answering(&asked), "demo", "shop", "anna")
+	if err != nil || got == nil || len(got) != 0 {
+		t.Errorf("roles = %+v, err = %v, want an empty list for a person who holds nothing", got, err)
+	}
+}
+
 // An app's view lists who was given each role, the declared ones too.
 func TestAnAppsViewListsItsDeclaredRoles(t *testing.T) {
 	view, err := appView(context.Background(), store(demo...), "demo", "shop-sales")

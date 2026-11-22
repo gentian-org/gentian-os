@@ -1,1 +1,2 @@
 io.gentianos.keycloak.binding.RequestParameterMapper
+io.gentianos.keycloak.roles.AppRolesMapper

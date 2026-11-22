@@ -5127,6 +5127,105 @@ spec:
                             == ''
                     type: object
                 type: object
+              roles:
+                description: |-
+                  Roles are the roles people hold on this app: user and admin, which
+                  every app has, and the further ones it declares, each with what it is
+                  called inside the app. What a person holds is in the rights store; the
+                  app reads it from the sign-in token (roles.claim), in its own names.
+                  An add-on declares its own, and they reach the token of the app it is
+                  activated in.
+                properties:
+                  admin:
+                    description: Admin is what the role admin is called inside the
+                      app.
+                    properties:
+                      inApp:
+                        description: |-
+                          InApp are the app's own names for the role: a group, a role, whatever
+                          the app reads from the claim.
+                        items:
+                          maxLength: 128
+                          minLength: 1
+                          type: string
+                        maxItems: 20
+                        type: array
+                        x-kubernetes-list-type: set
+                    type: object
+                  claim:
+                    default: gentian_roles
+                    description: |-
+                      Claim is the token claim the roles are written to. An add-on's is not
+                      read: its roles are written to the claim of the app it is activated in.
+                    maxLength: 64
+                    pattern: ^[A-Za-z][A-Za-z0-9_-]*$
+                    type: string
+                  declared:
+                    description: Declared are the roles of the app between user and
+                      admin.
+                    items:
+                      description: ProfileRole is a role an app declares beside user
+                        and admin.
+                      properties:
+                        description:
+                          description: Description says what the role is for.
+                          maxLength: 400
+                          type: string
+                        inApp:
+                          description: InApp are the app's own names for the role.
+                          items:
+                            maxLength: 128
+                            minLength: 1
+                            type: string
+                          maxItems: 20
+                          type: array
+                          x-kubernetes-list-type: set
+                        includes:
+                          description: |-
+                            Includes are other declared roles of the app whose holders the holders
+                            of this one are too: manager includes salesman.
+                          items:
+                            type: string
+                          maxItems: 20
+                          type: array
+                          x-kubernetes-list-type: set
+                        name:
+                          description: Name is the role's name on the platform.
+                          maxLength: 63
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                          x-kubernetes-validations:
+                          - message: user and admin are roles every app has
+                            rule: '!(self in [''user'', ''admin''])'
+                        title:
+                          description: Title is the role as people read it.
+                          maxLength: 80
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    maxItems: 40
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  user:
+                    description: User is what the role user is called inside the app.
+                    properties:
+                      inApp:
+                        description: |-
+                          InApp are the app's own names for the role: a group, a role, whatever
+                          the app reads from the claim.
+                        items:
+                          maxLength: 128
+                          minLength: 1
+                          type: string
+                        maxItems: 20
+                        type: array
+                        x-kubernetes-list-type: set
+                    type: object
+                type: object
               secrets:
                 description: |-
                   Secrets are values the platform generates and holds that have no external
