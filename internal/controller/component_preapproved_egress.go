@@ -12,9 +12,12 @@ package controller
 
 import (
 	"context"
+	"slices"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -73,29 +76,64 @@ func mergeAnswered(a, b map[string]struct{}) map[string]struct{} {
 // takes its apps' egress away now, not when something else next wakes them.
 func componentsAskingForEgressPrivileges(c client.Client) handler.EventHandler {
 	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []reconcile.Request {
-		profiles := &gentianov1alpha1.ComponentProfileList{}
-		if err := c.List(ctx, profiles); err != nil {
-			return nil
-		}
-		asking := map[string]struct{}{}
-		for i := range profiles.Items {
-			if p := profiles.Items[i].Privileges(); p != nil && len(p.Egress) > 0 {
-				asking[profiles.Items[i].Name] = struct{}{}
-			}
-		}
-		if len(asking) == 0 {
-			return nil
-		}
-		comps := &gentianov1alpha1.ComponentList{}
-		if err := c.List(ctx, comps); err != nil {
-			return nil
-		}
-		var out []reconcile.Request
-		for i := range comps.Items {
-			if _, ok := asking[comps.Items[i].Spec.ProfileRef.Name]; ok {
-				out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&comps.Items[i])})
-			}
-		}
-		return out
+		return egressAskingComponents(ctx, c)
 	})
+}
+
+// trustedDomainsChanged passes a Tenant update that changes the domains the
+// tenant's own list answers: one added, one removed, or the list delegated
+// or taken back.
+func trustedDomainsChanged() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			before, ok1 := e.ObjectOld.(*gentianov1alpha1.Tenant)
+			after, ok2 := e.ObjectNew.(*gentianov1alpha1.Tenant)
+			return ok1 && ok2 && !slices.Equal(security.TenantTrustedDomains(before), security.TenantTrustedDomains(after))
+		},
+	}
+}
+
+// componentsOfTenantAskingForEgress wakes the tenant's Components whose
+// profile asks for egress: a domain the tenant stops trusting takes its apps'
+// egress away now, and one it starts trusting lets a waiting install go on.
+func componentsOfTenantAskingForEgress(c client.Client) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		tenant, ok := obj.(*gentianov1alpha1.Tenant)
+		if !ok {
+			return nil
+		}
+		return egressAskingComponents(ctx, c, client.InNamespace(tenant.NamespaceName()))
+	})
+}
+
+// egressAskingComponents are the Components, of the namespace opts name or
+// of every one, whose profile asks for egress.
+func egressAskingComponents(ctx context.Context, c client.Client, opts ...client.ListOption) []reconcile.Request {
+	profiles := &gentianov1alpha1.ComponentProfileList{}
+	if err := c.List(ctx, profiles); err != nil {
+		return nil
+	}
+	asking := map[string]struct{}{}
+	for i := range profiles.Items {
+		if p := profiles.Items[i].Privileges(); p != nil && len(p.Egress) > 0 {
+			asking[profiles.Items[i].Name] = struct{}{}
+		}
+	}
+	if len(asking) == 0 {
+		return nil
+	}
+	comps := &gentianov1alpha1.ComponentList{}
+	if err := c.List(ctx, comps, opts...); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for i := range comps.Items {
+		if _, ok := asking[comps.Items[i].Spec.ProfileRef.Name]; ok {
+			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&comps.Items[i])})
+		}
+	}
+	return out
 }
