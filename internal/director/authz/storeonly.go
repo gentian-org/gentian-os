@@ -139,7 +139,7 @@ func StoreOnlyOf(ctx context.Context, store Reader, cluster, tenant string, apps
 		if claimTenantRelation(t.Relation) {
 			continue
 		}
-		if p := plain(t); !derived[key(p)] && !heldByPosition(p, tenant) {
+		if p := plain(t); !derived[key(p)] && !heldByPosition(p, tenant) && !IsDerived(p.Relation) {
 			out.Granted = append(out.Granted, p)
 		}
 	}
@@ -194,7 +194,9 @@ func StoreOnlyOf(ctx context.Context, store Reader, cluster, tenant string, apps
 		}
 		for _, t := range entries {
 			p := plain(t)
-			if structural(p) || heldByPosition(p, tenant) {
+			// What the operator derives follows from the rest and is
+			// derived again after a restore; it is nobody's grant.
+			if structural(p) || heldByPosition(p, tenant) || IsDerived(p.Relation) {
 				continue
 			}
 			out.Granted = append(out.Granted, p)

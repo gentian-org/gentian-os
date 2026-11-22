@@ -64,6 +64,21 @@ openfga:
   extraEnvVars:
     - name: OPENFGA_EXPERIMENTALS
       value: authzen
+    # The cache of raw entries a check reads, beside the cache of answers
+    # (checkQueryCache). Both serve only a request that asks for the fastest
+    # answer (consistency MINIMIZE_LATENCY): the desktop's tiles and the
+    # access pages. Every other check asks HIGHER_CONSISTENCY and reads the
+    # store as it is (internal/openfga, WithFastAnswer). The cache controller
+    # drops cached entries once the store changed.
+    - name: OPENFGA_CHECK_ITERATOR_CACHE_ENABLED
+      value: "true"
+    - name: OPENFGA_CHECK_ITERATOR_CACHE_TTL
+      value: 10s
+    - name: OPENFGA_CACHE_CONTROLLER_ENABLED
+      value: "true"
+  checkQueryCache:
+    enabled: true
+    ttl: 10s
   # A desktop's tiles are one batch of checks that fans out into hundreds of
   # dispatches at once; one CPU throttled it to seconds.
   resources:

@@ -134,13 +134,28 @@ func Give(ctx context.Context, s Store, tenant, sub string, a Assignment) (chang
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", t.Object, err)
 	}
-	if len(have) > 0 {
-		return false, nil
+	if len(have) == 0 {
+		if err := s.Write(ctx, []Tuple{t}, nil); err != nil {
+			return false, fmt.Errorf("give %s on %s: %w", t.Relation, t.Object, err)
+		}
 	}
-	if err := s.Write(ctx, []Tuple{t}, nil); err != nil {
-		return false, fmt.Errorf("give %s on %s: %w", t.Relation, t.Object, err)
+	// Derived also when it was held already: a give asked again repairs
+	// what an interrupted one left underived.
+	if err := deriveAfter(ctx, s, tenant, user, t); err != nil {
+		return len(have) == 0, err
 	}
-	return true, nil
+	return len(have) == 0, nil
+}
+
+// deriveAfter writes what follows for a person once a role given to them
+// directly changed. A position needs nothing: it carries its own.
+func deriveAfter(ctx context.Context, s Store, tenant, user string, changed ...Tuple) error {
+	for _, t := range changed {
+		if !strings.HasPrefix(t.Object, "position:") {
+			return deriveFor(ctx, s, tenant, user)
+		}
+	}
+	return nil
 }
 
 // Take makes the account sub no longer hold an assignment in tenant. Taking
@@ -167,6 +182,9 @@ func Take(ctx context.Context, s Store, tenant, sub string, a Assignment) (chang
 	}
 	if err := s.Write(ctx, nil, []Tuple{t}); err != nil {
 		return false, fmt.Errorf("take %s on %s: %w", t.Relation, t.Object, err)
+	}
+	if err := deriveAfter(ctx, s, tenant, user, t); err != nil {
+		return true, err
 	}
 	return true, nil
 }
@@ -272,6 +290,9 @@ func RemovePerson(ctx context.Context, s Store, tenant, sub string) (int, error)
 	}
 	if err := s.Write(ctx, nil, tuples); err != nil {
 		return 0, fmt.Errorf("remove what %s holds in %s: %w", user, tenant, err)
+	}
+	if err := deriveAfter(ctx, s, tenant, user, tuples...); err != nil {
+		return len(tuples), err
 	}
 	return len(tuples), nil
 }

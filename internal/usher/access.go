@@ -14,6 +14,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/gentian-org/gentian-os/internal/openfga"
+
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/guard"
 )
@@ -26,7 +28,7 @@ import (
 // personAccess answers what one person holds in the tenant and on each of
 // its apps, and through which position.
 func (s *Server) personAccess(w http.ResponseWriter, r *http.Request, c call) {
-	access, err := s.cfg.Access.PersonAccess(r.Context(), guard.ID(r.Context()), s.cfg.Cluster, c.tenant, r.PathValue("id"))
+	access, err := s.cfg.Access.PersonAccess(openfga.WithFastAnswer(r.Context()), guard.ID(r.Context()), s.cfg.Cluster, c.tenant, r.PathValue("id"))
 	if errors.Is(err, authz.ErrInvalidID) {
 		fail(w, r, http.StatusNotFound, "no such person")
 		return
@@ -42,7 +44,7 @@ func (s *Server) personAccess(w http.ResponseWriter, r *http.Request, c call) {
 // it holds, what it includes, and who was given it. The tenant in the path
 // is the only one read: a position is named within its tenant.
 func (s *Server) positionAccess(w http.ResponseWriter, r *http.Request, c call) {
-	access, err := s.cfg.Access.PositionAccess(r.Context(), c.tenant, r.PathValue("name"))
+	access, err := s.cfg.Access.PositionAccess(openfga.WithFastAnswer(r.Context()), c.tenant, r.PathValue("name"))
 	if errors.Is(err, authz.ErrInvalidID) {
 		fail(w, r, http.StatusNotFound, "no such position in this tenant")
 		return
@@ -57,7 +59,7 @@ func (s *Server) positionAccess(w http.ResponseWriter, r *http.Request, c call) 
 // appAccess answers who holds which role on one app of the tenant, and what
 // each role carries.
 func (s *Server) appAccess(w http.ResponseWriter, r *http.Request, c call) {
-	view, err := s.cfg.Access.AppAccess(r.Context(), c.tenant, r.PathValue("p"))
+	view, err := s.cfg.Access.AppAccess(openfga.WithFastAnswer(r.Context()), c.tenant, r.PathValue("p"))
 	if errors.Is(err, authz.ErrInvalidID) {
 		fail(w, r, http.StatusNotFound, "no such app")
 		return

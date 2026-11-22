@@ -42,9 +42,11 @@ type position
   relations
     define tenant: [tenant]
     # sales-manager included_in executive: whoever holds executive holds
-    # sales-manager. The writer refuses a circle.
+    # sales-manager. The writer refuses a circle. Not followed by a check:
+    # the operator writes what the including position holds through it as
+    # derived_* entries on each thing (see "derived" below).
     define included_in: [position]
-    define holder: [user] or holder from included_in
+    define holder: [user]
 
 type cluster
   relations
@@ -94,8 +96,13 @@ type tenant
     # installs — goes with it. `cluster` above stays: it is what audit and
     # approval derive through, and it is not removable.
     define operated_by: [cluster]
-    define admin: [user, position#holder] or admin from operated_by
-    define user: [user, position#holder] or admin
+    define admin: [user, position#holder] or admin from operated_by or derived_admin
+    define user: [user, position#holder] or admin or derived_user
+    # derived — written by the operator only, never given: what follows from
+    # what was given (a position's included positions). Checks read it in
+    # one step instead of walking the inclusions.
+    define derived_admin: [user, position#holder]
+    define derived_user: [user, position#holder]
     # A role holder of scope tenant:<t> (an administrator of this tenant), or
     # the cluster's perimeter approver.
     define perimeter_approver: [user] or perimeter_approver from cluster
@@ -154,6 +161,8 @@ type tenant
 # credential the tenant holds for their repository. The platform does no
 # license gating.
 # An installed app, app:<tenant>/<profile>. An add-on is an app of its own.
+# base, addon and declared are structure: the operator derives from them
+# (derived_*), a check does not follow them.
 type app
   relations
     define tenant: [tenant]
@@ -166,10 +175,17 @@ type app
     # Administration inside the app. Per app: the admin of one is nothing in
     # another, and the tenant's admin is not an app's. The admin of a base
     # administers its add-ons.
-    define admin: [user, position#holder] or admin from base
+    define admin: [user, position#holder] or derived_admin
     # Whoever holds any role on the app may use it, and whoever holds a role
     # on an add-on may enter its base: an add-on is used inside it.
-    define user: [user, position#holder] or admin or holder from declared or user from addon
+    define user: [user, position#holder] or admin or derived_user
+    # derived — written by the operator only, never given: the admin of an
+    # add-on's base (derived_admin); whoever holds one of the app's declared
+    # roles or any role on one of its add-ons (derived_user); and what a
+    # position holds through the positions it includes. A check reads these
+    # in one step instead of walking bases, add-ons, roles and inclusions.
+    define derived_admin: [user, position#holder]
+    define derived_user: [user, position#holder]
 
     define can_use: user
     define can_launch: can_use                    # app tiles; also L2 on the app's own route
@@ -191,7 +207,10 @@ type role
   relations
     define app: [app]
     define included_in: [role]
-    define holder: [user, position#holder] or admin from app or holder from included_in
+    define holder: [user, position#holder] or admin from app or derived_holder
+    # derived — written by the operator only: the holders of a role that
+    # includes this one, and what a position holds through its inclusions.
+    define derived_holder: [user, position#holder]
 
 type contract
   relations
