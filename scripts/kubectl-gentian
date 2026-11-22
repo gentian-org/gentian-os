@@ -98,7 +98,7 @@
 #                                                the internet has them: present, pending, missing, or held by another record
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
-#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
+#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone] [--approve-egress]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
 #   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>]
@@ -997,12 +997,13 @@ cmd_apps_list() {
 # way the director fetches the bundle from the source and installs nothing
 # unless it hashes to the digest sent.
 _apps_install() {
-    local app="$1" t="$2" everyone="$3" from="" digest=""
+    local app="$1" t="$2" everyone="$3" from="" digest="" approve="false"
     shift 3
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --from) from="${2:?}"; shift 2 ;;
             --digest) digest="${2:?}"; shift 2 ;;
+            --approve-egress) approve="true"; shift ;;
             *) shift ;;
         esac
     done
@@ -1039,9 +1040,28 @@ _apps_install() {
     # The one spelling a manifest carries, so what is printed is what is recorded.
     digest="$(printf '%s' "${digest}" | tr '[:upper:]' '[:lower:]')"
     [[ "${digest}" == sha256:* ]] || digest="sha256:${digest}"
+    # What the build, and the apps it comes with, ask for beyond the tenant:
+    # said before the install, and approved with it under --approve-egress by
+    # whoever is the tenant's perimeter approver.
+    local asks waiting approving="[]"
+    asks="$(_call GET "/v1/tenants/${t}/catalogues/${from}/entries/${app}/asks?digest=${digest}")" || exit 1
+    waiting="$(printf '%s' "${asks}" | jq -r '.egress | length')"
+    if [[ "${waiting}" != "0" ]]; then
+        echo "It asks for outbound access:"
+        printf '%s' "${asks}" | jq -r '.egress[] |
+            "  \(.install) \(.privilege)" +
+            (if (.hosts // []) | length > 0 then "  to \(.hosts | join(", "))" else "  by address" end) +
+            (if (.reason // "") != "" then "  -- \(.reason)" else "" end)'
+        if [[ "${approve}" == "true" ]]; then
+            [[ "$(printf '%s' "${asks}" | jq -r '.mayApprove')" == "true" ]] ||
+                die "--approve-egress is the perimeter approver's of ${t}; install without it, and the app waits for their answer"
+            approving="$(printf '%s' "${asks}" | jq -c '[.egress[] | {install, privilege}]')"
+        fi
+    fi
     local body answer status commit message
-    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --argjson e "${everyone}" \
-        '{coordinate: $c, digest: $d} + (if $e then {defaultGrant: true} else {} end)')"
+    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --argjson e "${everyone}" --argjson a "${approving}" \
+        '{coordinate: $c, digest: $d} + (if $e then {defaultGrant: true} else {} end) +
+         (if ($a | length) > 0 then {approve: $a} else {} end)')"
     answer="$(_call POST "/v1/tenants/${t}/apps/${app}" "${body}")" || exit 1
     status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
     commit="$(printf '%s' "${answer}" | jq -r '.commit // "" | .[0:8]')"
@@ -1065,6 +1085,17 @@ _apps_install() {
                 echo "Moving ${app} in ${t} to this build: committed (${commit:-no commit id}); the platform rolls it out."
             else
                 echo "Installing ${app} into ${t}: committed (${commit:-no commit id}); the platform installs it."
+            fi
+            if [[ "${waiting}" != "0" ]]; then
+                local approved
+                approved="$(printf '%s' "${answer}" | jq -r '(.approved // []) | length')"
+                if [[ "${approved}" == "${waiting}" ]]; then
+                    echo "Its outbound access is approved, by you."
+                elif [[ "${approve}" == "true" ]]; then
+                    echo "Approved ${approved} of ${waiting} requests; the rest wait: 'kubectl gentian apps approve <app> --tenant ${t}' lists them." >&2
+                else
+                    echo "It waits for that approval: install with --approve-egress, or 'kubectl gentian apps approve <app> <kind>/<name> --tenant ${t}'."
+                fi
             fi ;;
     esac
 }

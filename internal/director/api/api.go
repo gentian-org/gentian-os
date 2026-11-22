@@ -168,6 +168,7 @@ type Repository interface {
 	PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, reason string, meta gitops.Meta) (gitops.Result, error)
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
+	EgressPolicy(ctx context.Context) (catalogs, trustedDomains []string, err error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	AllowMacWaiver(ctx context.Context, waiver gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	PlatformClusterRoles(ctx context.Context) ([]gitops.ClusterRoleAllowance, error)
@@ -530,6 +531,9 @@ func (s *Server) routes() {
 	// may see what it could install.
 	s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
 	s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries", "can_view", tenantObject, s.listCatalogueEntries)
+	// What one build of an entry asks for, before it is installed
+	// (install_asks.go).
+	s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries/{p}/asks", "can_view", tenantObject, s.catalogueEntryAsks)
 	// A tenant's administrator adding a catalog for their own tenant.
 	// can_install_app, the relation an install asks: a catalog decides
 	// what the tenant can install, and nobody who may not install should be
@@ -1126,6 +1130,12 @@ type installRequest struct {
 	// Absent leaves an installed app's entry as it is; false states that
 	// access is given per person.
 	DefaultGrant *bool `json:"defaultGrant,omitempty"`
+	// Approve names egress requests of this build, or of the apps it comes
+	// with, that the caller approves with the install (install_asks.go):
+	// each is recorded as a grant by the caller once the app is installed.
+	// It needs can_approve_privilege on the tenant, and a request the build
+	// does not state refuses the install.
+	Approve []approvedRequest `json:"approve,omitempty"`
 }
 
 // install commits an app to a tenant's manifest.
@@ -1223,6 +1233,12 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		c.meta.Decision += " and can_grant " + target
 	}
+	// Approvals given with the install are the perimeter approver's to
+	// give, asked like the rest before anything is fetched or written.
+	approving, ok := s.mayApproveWithInstall(w, r, c, tenant, body.Approve)
+	if !ok {
+		return
+	}
 	// The profile itself (AD-3).
 	//
 	// Before the app entry, not after: an entry naming a profile the cluster
@@ -1292,6 +1308,26 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 
+	// What the build asks for, read before the apps it comes with are
+	// written: an approval of something it does not state is refused with
+	// nothing of the tenant's changed.
+	var asks []askedEgress
+	if len(body.Approve) > 0 {
+		origin := ""
+		if source != nil {
+			origin = source.origin(tenant)
+		}
+		if asks, err = s.installAsks(ctx, tenant, profile, definition, origin, catalogueName); err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if missing := notAsked(body.Approve, asks); missing != "" {
+			s.fail(w, r, http.StatusUnprocessableEntity, "the install approves "+approveSummary(body.Approve)+
+				", and this build and the apps it comes with do not ask for "+missing+". Nothing was installed")
+			return
+		}
+	}
+
 	// The apps it comes with, before its own entry: an app is not installed
 	// without them, and one that cannot be had refuses the install with
 	// nothing of the tenant's changed.
@@ -1312,9 +1348,19 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	if err == nil && definition != nil && len(definition.Spec.ComesWith) > 0 {
 		s.approveAmong(ctx, tenant)
 	}
+	var approved []approvedRequest
+	if err == nil && len(body.Approve) > 0 {
+		approved = s.grantWithInstall(ctx, c, tenant, approving, body.Approve, asks)
+	}
 	if err != nil || retry == nil {
-		if err == nil && len(came) > 0 {
-			out := map[string]any{"status": res.Status, "installedWith": came}
+		if err == nil && (len(came) > 0 || len(body.Approve) > 0) {
+			out := map[string]any{"status": res.Status}
+			if len(came) > 0 {
+				out["installedWith"] = came
+			}
+			if len(body.Approve) > 0 {
+				out["approved"] = approved
+			}
 			if res.Changed {
 				out["commit"] = res.Commit
 			}

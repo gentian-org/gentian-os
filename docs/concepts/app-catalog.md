@@ -742,6 +742,16 @@ A profile the platform ships itself, which no catalog brought, has its egress
 requests answered by the platform: nobody in a tenant chose it, and what it
 reaches is decided with the release that ships it.
 
+Whoever installs an app and is the tenant's perimeter approver can answer its
+egress requests in the install. The director says what a build asks for before
+it is installed (`GET /v1/tenants/{t}/catalogues/{s}/entries/{p}/asks?digest=`:
+the app's requests and those of the apps it comes with that nobody answered
+yet, and whether the caller may approve them). The install then names the
+requests approved (`approve` in its body), and each is written as that
+person's grant once the app is installed. A request the build does not state
+refuses the install; so does an approval by somebody who is not the approver.
+An install without `approve` leaves the requests waiting.
+
 ---
 
 ## 16. Secrets: three kinds

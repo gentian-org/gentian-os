@@ -458,6 +458,7 @@ kubectl gentian apps install xwiki-ce --tenant demo                  # the build
 kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several catalogues serve the name
 kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
 kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
+kubectl gentian apps install xwiki-ce --tenant demo --approve-egress # and approves the outbound access it asks for
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
 kubectl gentian apps outdated [--tenant demo]                     # which installs are behind their catalog, and why they stay
@@ -563,6 +564,14 @@ are members when the app's group first exists are added to it once, and
 somebody invited later has it preselected. It needs the right to grant in the
 tenant as well as to install. Without the flag, access is given per person
 ([store-contract.md](../concepts/store-contract.md) §3).
+
+An install first says what the build, and the apps it comes with, ask for
+beyond the tenant: each egress request that would wait for an approval, with
+its hosts and the profile's reason. `--approve-egress` approves those requests
+with the install: each is recorded as a grant by you, as `apps approve` records
+one. It needs the perimeter approver's right in the tenant
+(`can_approve_privilege`); without that right nothing is installed. Without the
+flag the app is installed and waits for the approver, as before.
 
 Inspect app reconciliation:
 
