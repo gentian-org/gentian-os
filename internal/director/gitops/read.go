@@ -20,7 +20,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
 	"sigs.k8s.io/yaml"
-
 )
 
 // App is one entry of a tenant's apps list as git records it.

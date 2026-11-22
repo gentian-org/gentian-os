@@ -5239,7 +5239,7 @@ spec:
                             x-kubernetes-list-type: set
                         type: object
                       claim:
-                        default: gentian_roles
+                        default: gentian_app_roles
                         description: |-
                           Claim is the token claim the roles are written to. An add-on's is not
                           read: its roles are written to the claim of the app it is activated in.

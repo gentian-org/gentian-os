@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -46,7 +47,8 @@ type secondFactorAccounts interface {
 // the next one.
 //
 // A realm several tenants share is read for all of them: the mark stays
-// while the person administers any.
+// while the person administers any. The cluster's administrators, who are
+// accounts of the platform's realm, carry it there too.
 func (r *TenantReconciler) ensureSecondFactorMarks(ctx context.Context, tenant *gentianov1alpha1.Tenant, kc secondFactorAccounts) error {
 	if r.Rights == nil {
 		return nil
@@ -68,6 +70,17 @@ func (r *TenantReconciler) ensureSecondFactorMarks(ctx context.Context, tenant *
 		}
 		for _, s := range subjects {
 			administers[s] = true
+		}
+	}
+	// The cluster's administrators are accounts of the platform's realm,
+	// holding their role by name: the same rule, read off the cluster.
+	if r.ClusterID != "" {
+		holders, err := r.Rights.Read(ctx, dauthz.Tuple{Relation: dauthz.RoleAdmin, Object: dauthz.Cluster(r.ClusterID)})
+		if err != nil {
+			return fmt.Errorf("read the cluster's administrators: %w", err)
+		}
+		for _, sub := range clusterAdministratorsOf(holders, realm) {
+			administers[sub] = true
 		}
 	}
 	accounts, err := kc.ListRealmAccounts(ctx, realm)
@@ -101,6 +114,18 @@ func secondFactorChanges(accounts []authz.KeycloakUser, administers map[string]b
 		}
 		if marked != administers[a.ID] {
 			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// clusterAdministratorsOf is the subjects among a cluster's admin entries
+// that are accounts of realm: user:<realm>/<sub>.
+func clusterAdministratorsOf(holders []dauthz.Tuple, realm string) []string {
+	var out []string
+	for _, t := range holders {
+		if sub, ok := strings.CutPrefix(t.User, "user:"+realm+"/"); ok && sub != "" && !strings.Contains(sub, "#") {
+			out = append(out, sub)
 		}
 	}
 	return out

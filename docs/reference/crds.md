@@ -1937,8 +1937,6 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.grants[].grantedAt` | string (date-time) |  | `GrantedAt` is when. |
 | `spec.grants[].grantedBy` | string |  | `GrantedBy` is the Keycloak subject who granted it, set by the director from the caller's token, never supplied by a caller. |
 | `spec.grants[].reason` | string |  | `Reason` in the granter's words, where they gave one. |
-| `spec.groups` | []object |  | `Groups` are groups of the tenant's realm declared in git; see TenantGroup. |
-| `spec.groups[].name` | string | yes | `Name` is the group's name in the realm. |
 | `spec.homes` | map[string]string |  | `Homes` names, per contract, the installed app that is the tenant's home for that kind of data (file-store, calendar-store, contacts-store): the provider every… |
 | `spec.isolation` | object |  | `Isolation` describes the workload isolation boundaries for this tenant. |
 | `spec.isolation.databasePrefix` | string |  | `DatabasePrefix` is the prefix for all database names belonging to this tenant. |
@@ -2031,7 +2029,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.security.session.maxHours` | integer (int32) |  | `MaxHours` ends it regardless of activity. |
 | `spec.security.session.rememberMe` | boolean |  | `RememberMe` offers the longer session the realm is configured for. |
 | `spec.signInFrom` | []object |  | `SignInFrom` are other tenants of this cluster whose people sign in here; see TenantSignInFrom. |
-| `spec.signInFrom[].groups` | []string |  | `Groups` are the groups of this tenant its people are in: a name of spec.groups, or members (the tenant's members, who may enter it). |
+| `spec.signInFrom[].positions` | []string |  | `Positions` are the positions of this tenant its people are given when they arrive: user (a person of the tenant, who may enter it) or a name of spec.positions. |
 | `spec.signInFrom[].tenant` | string | yes | `Tenant` is the other tenant. |
 | `spec.signInTo` | []string |  | `SignInTo` are other tenants of this cluster this tenant's people may sign in to with their account here: this tenant's half of the other's spec.signInFrom. |
 | `spec.signUp` | object |  | `SignUp` is whether people make their own accounts in the realm. |

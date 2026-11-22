@@ -811,7 +811,6 @@ func (s *Server) routes() {
 		// whoever may install's to do, as uninstalling is; provisioning hands
 		// an app to people, which is can_grant's.
 		s.guarded("POST /v1/tenants/{t}/actions/purge-app", "can_install_app", tenantObject, s.purgeApp)
-		s.guarded("POST /v1/tenants/{t}/actions/provision-app", "can_grant", tenantObject, s.provisionApp)
 		// Removing one piece a newer build of an app left on the cluster,
 		// for the administrator of a tenant that has the app. Whoever may
 		// install's, as uninstalling and purging are -- and not that alone:

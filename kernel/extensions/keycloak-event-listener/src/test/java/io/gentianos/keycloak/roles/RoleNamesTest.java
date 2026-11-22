@@ -104,4 +104,11 @@ class RoleNamesTest {
         assertEquals(List.of("tenant-admin"), PartnerRolesMapper.roles(List.of("admin", "user"), List.of("auditor")));
         assertEquals(List.of(), PartnerRolesMapper.roles(List.of("user"), List.of()));
     }
+
+    @Test
+    void anAppWithNoNamesOfItsOwnGetsThePlatforms() {
+        assertEquals(List.of("admin", "odoo-sales-ce/user", "user"), RoleNames.platform("odoo-base-ce",
+            Map.of("odoo-base-ce", List.of("user", "admin"), "odoo-sales-ce", List.of("user"))));
+        assertEquals(List.of(), RoleNames.platform("odoo-base-ce", Map.of()));
+    }
 }

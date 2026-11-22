@@ -385,7 +385,7 @@ func TestAnAppsClientCarriesItsRolesMapper(t *testing.T) {
 		t.Fatalf("an app that names no role carries the mapper: %v", cfg)
 	}
 	in = fixtureInput(t, "testdata/render/app-build")
-	in.Roles = &TokenRoles{Claim: "gentian_roles", InApp: map[string]map[string][]string{
+	in.Roles = &TokenRoles{Claim: "gentian_app_roles", InApp: map[string]map[string][]string{
 		in.ProfileName: {"user": {"base.group_user"}, "admin": {"base.group_system"}},
 		"shop-sales":   {"user": {"sales.salesman"}},
 	}}
@@ -393,7 +393,7 @@ func TestAnAppsClientCarriesItsRolesMapper(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("no roles mapper on the client")
 	}
-	if cfg["claim.name"] != "gentian_roles" || cfg["gentian.tenant"] != in.TenantName || cfg["gentian.app"] != in.ProfileName {
+	if cfg["claim.name"] != "gentian_app_roles" || cfg["gentian.tenant"] != in.TenantName || cfg["gentian.app"] != in.ProfileName {
 		t.Errorf("mapper config = %v", cfg)
 	}
 	want := `{"` + in.ProfileName + `":{"admin":["base.group_system"],"user":["base.group_user"]},"shop-sales":{"user":["sales.salesman"]}}`

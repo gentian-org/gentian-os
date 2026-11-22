@@ -39,8 +39,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
   kubectl gentian tenants mail-mode <name> [<mode>]          what the operator provisions for its mail:
                                                             selfhosted, external, transport-only, disabled
-  kubectl gentian tenants groups <name> [<group>... | --clear]   its own groups, declared in git
-  kubectl gentian tenants sign-in <name> [--from <tenant> --groups <g>,... | --remove <tenant>]
+  kubectl gentian tenants sign-in <name> [--from <tenant> --positions <p>,... | --remove <tenant>]
                                                             people of another tenant of this cluster signing in here
   kubectl gentian tenants partners <name>                    realms of other clusters its realm links accounts with
   kubectl gentian tenants partners <name> add <partner> --issuer <https://<host>/<path to the realm>>

@@ -32,7 +32,7 @@ import (
 
 // DefaultRolesClaim is the token claim a person's roles on an app are
 // written to where its profile names none.
-const DefaultRolesClaim = "gentian_roles"
+const DefaultRolesClaim = "gentian_app_roles"
 
 // ProfileRoles are the roles of an app, as its profile declares them.
 //
@@ -50,7 +50,7 @@ type ProfileRoles struct {
 	// Claim is the token claim the roles are written to. An add-on's is not
 	// read: its roles are written to the claim of the app it is activated in.
 	// +optional
-	// +kubebuilder:default=gentian_roles
+	// +kubebuilder:default=gentian_app_roles
 	// +kubebuilder:validation:MaxLength=64
 	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9_-]*$`
 	Claim string `json:"claim,omitempty"`

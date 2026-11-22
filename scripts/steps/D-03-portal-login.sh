@@ -12,7 +12,7 @@ source "${SCRIPT_DIR}/scripts/steps/B-01-bootstrap-apps.sh"
 
 # The bootstrap that turns a running Keycloak into one this cluster can be
 # signed in to: the kernel realm, the confidential clients Argo CD and Headlamp
-# authenticate with, the gentian:platform:admin group, and the administrator
+# authenticate with, the cluster-roles scope, and the administrator
 # account itself -- whose password is derived from the master password, like
 # every other kernel credential. Neither the desktop nor the kernel zone's edge
 # client is this step's to create: both belong to the platform tenant, which

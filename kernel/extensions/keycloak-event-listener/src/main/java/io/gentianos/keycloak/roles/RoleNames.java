@@ -49,6 +49,27 @@ final class RoleNames {
         return new ArrayList<>(out);
     }
 
+    /**
+     * The roles held in the platform's own names, for an app whose profile
+     * gives them none inside the app: the app's roles as they are (user,
+     * admin, a declared one), an add-on's behind its profile name
+     * ({@code odoo-sales-ce/admin}). Sorted, each once.
+     */
+    static List<String> platform(String app, Map<String, List<String>> held) {
+        TreeSet<String> out = new TreeSet<>();
+        if (held != null) {
+            for (Map.Entry<String, List<String>> entry : held.entrySet()) {
+                if (entry.getValue() == null) {
+                    continue;
+                }
+                for (String role : entry.getValue()) {
+                    out.add(entry.getKey().equals(app) ? role : entry.getKey() + "/" + role);
+                }
+            }
+        }
+        return new ArrayList<>(out);
+    }
+
     /** Every in-app name the platform decides: sorted, each once. */
     static List<String> mapped(Map<String, Map<String, List<String>>> inApp) {
         TreeSet<String> out = new TreeSet<>();

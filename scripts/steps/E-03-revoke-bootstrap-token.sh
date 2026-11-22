@@ -52,8 +52,8 @@ _revoke_export_layout() {
 # whole chain: discovery URL set, Keycloak client Ready, client Secret present,
 # auth backend configured, role exists. Every link absent by default and present
 # only when something created it — and every one of them true while no token
-# opens anything. The role binds a group claim, and if Keycloak emits
-# "admin" where the role expects "/gentian:platform:admin", the parts
+# opens anything. The role binds the cluster roles claim, and if the token
+# carries no "admin" where the role expects it, the parts
 # are all there and the login is refused. Revoking on that evidence is changing
 # the locks and posting the old key through the letterbox without trying the new
 # one; the recovery is re-initialising OpenBao.
