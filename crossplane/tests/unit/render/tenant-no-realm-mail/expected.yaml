@@ -1491,11 +1491,6 @@ spec:
         - admin
         view:
         - admin
-      validator:
-      - config:
-          options:
-          - "true"
-        name: options
     group:
     - displayDescription: Attributes, which refer to user metadata
       displayHeader: User metadata

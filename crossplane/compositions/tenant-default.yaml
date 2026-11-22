@@ -2900,10 +2900,6 @@ spec:
                     permissions:
                       - view: [admin]
                         edit: [admin]
-                    validator:
-                      - name: options
-                        config:
-                          options: ["true"]
               providerConfigRef:
                 name: keycloak
 
@@ -3321,15 +3317,18 @@ spec:
             apiVersion: client.keycloak.crossplane.io/v1alpha1
             kind: ProtocolMapper
             metadata:
-              name: {{ $tenant }}-partner-{{ $b.name }}-roles
+              {{- /* Named apart from the attribute mapper it took the place
+                   of: the provider does not change a mapper's kind in place,
+                   so the earlier one is removed and this one made. */}}
+              name: {{ $tenant }}-partner-{{ $b.name }}-store-roles
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-roles
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-partner-{{ $b.name }}-store-roles
             spec:
               deletionPolicy: Delete
               forProvider:
                 realmId: {{ $realm }}
                 clientScopeId: {{ $scopeID }}
-                name: gentian-roles
+                name: partner-roles
                 protocol: openid-connect
                 protocolMapper: gentian-partner-roles
                 config:

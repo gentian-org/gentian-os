@@ -377,10 +377,10 @@ apiVersion: client.keycloak.crossplane.io/v1alpha1
 kind: ProtocolMapper
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: demo-app-sign-in-admin-mapper
+    crossplane.io/composition-resource-name: demo-app-sign-in-roles-mapper
   labels:
     crossplane.io/composite: render-demo-app-fixture
-  name: demo-demo-app-sign-in-admin-mapper
+  name: demo-demo-app-sign-in-roles-mapper
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -396,7 +396,7 @@ spec:
       gentian.app: demo-app
       gentian.roles: '{"demo-app":{"admin":["gentian-app-admin"]}}'
       gentian.tenant: demo
-    name: app-admin
+    name: app-roles
     protocol: saml
     protocolMapper: gentian-saml-app-roles
     realmId: demo
