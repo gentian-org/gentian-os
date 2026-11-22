@@ -213,6 +213,15 @@ func TestComponentProfileRules(t *testing.T) {
 		{"a service on the perimeter", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: none, backend: {service: x, port: 80}}\n", "a service exposes on the gateway only"},
 		{"a service tile asking about an app", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQU5v2HwADOgHiG7pP+wAAAABJRU5ErkJggg==\", relation: can_use, object: app}}\n", "a service's tile asks on the cluster"},
 		{"a service given to every tenant", "  classes: [service]\n  launch: none\n  trustTier: platform\n  defaultForTenants: true\n", "defaultForTenants is for class app"},
+		// An egress request names hosts, leaves them to the approver, or states
+		// a rule: one of the three.
+		{"egress by hosts", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        hosts: [erp.example.org]\n", ""},
+		{"egress named at approval", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        hostsAtApproval: true\n", ""},
+		{"egress by rule", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        rule: {ports: [{port: 25, protocol: TCP}]}\n", ""},
+		{"egress by hosts and named at approval", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        hosts: [erp.example.org]\n        hostsAtApproval: true\n", "one of the three"},
+		{"egress by rule and named at approval", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        rule: {ports: [{port: 25, protocol: TCP}]}\n        hostsAtApproval: true\n", "one of the three"},
+		{"egress with nothing to reach", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n", "one of the three"},
+		{"egress named at approval set false", "  classes: [app]\n  launch: none\n  trustTier: certified\n  requires:\n    privileges:\n      egress:\n      - name: out\n        reason: reaches what it needs\n        hostsAtApproval: false\n", "one of the three"},
 
 		// Launch: a person must be able to reach what they installed.
 		{"launch is not optional", "  classes: [app]\n  trustTier: certified" + gateway, "launch"},
@@ -433,6 +442,8 @@ func TestComponentRules(t *testing.T) {
 		{"a grant for something that is not a privilege", component("  class: app\n  privileges:\n  - {privilege: root, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: \"because it was asked for\"}\n"), "", "privilege"},
 		{"a grant without a comment of the approver", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\"}\n"), "", ""},
 		{"a grant with a short comment", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: ok}\n"), "", ""},
+		{"a grant naming hosts", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", hosts: [erp.example.org, \"files.example.org:8443\"]}\n"), "", ""},
+		{"a grant naming what is not a host", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", hosts: [\"https://erp.example.org\"]}\n"), "", "should match"},
 
 		{"class changed in place", component("  class: shared-app\n"), component("  class: app\n"), "class is immutable"},
 		// The one carve-out, and it is not a loosening: a Component with no

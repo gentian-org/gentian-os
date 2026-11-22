@@ -740,6 +740,16 @@ type TenantPrivilegeGrant struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	Digest string `json:"digest,omitempty"`
+
+	// Hosts are the hosts an egress grant opens, for a request whose hosts
+	// are named at approval (hostsAtApproval): each one name, lower case,
+	// with a port where it is not 443. Ignored for any other request.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=259
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$`
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // Grant is this entry as the Component carries it.
@@ -751,6 +761,7 @@ func (g *TenantPrivilegeGrant) Grant() PrivilegeGrant {
 		Reason:     g.Reason,
 		ExpiresAt:  g.ExpiresAt,
 		Digest:     g.Digest,
+		Hosts:      g.Hosts,
 	}
 }
 

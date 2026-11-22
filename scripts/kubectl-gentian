@@ -99,7 +99,7 @@
 #   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone] [--approve-egress]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
-#   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>]
+#   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...
 #                                                             approve one request: egress (the tenant's perimeter approver),
 #                                                             podSecurity or clusterRoles (the cluster's security officer),
 #                                                             apiExtensions or a role that writes (break-glass)
@@ -2919,11 +2919,13 @@ cmd_apps() {
 # for, as the cluster has it.
 cmd_apps_approve() {
     local usage_text app="" privilege="" reason="" expires="" t answer kind name
+    local -a hosts=()
     usage_text='usage: kubectl gentian apps approve <app> --tenant <tenant>
-       kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>]'
+       kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...'
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --tenant|-t) t="${2:-}"; shift 2 || die "--tenant needs a value" ;;
+            --host) [[ -n "${2:-}" ]] || die "--host needs a value"; hosts+=("$2"); shift 2 ;;
             --reason) reason="${2:-}"; shift 2 || die "--reason needs a value" ;;
             --expires) expires="${2:-}"; shift 2 || die "--expires needs a value" ;;
             -*) die "unknown option $1" ;;
@@ -2973,8 +2975,24 @@ cmd_apps_approve() {
         echo "Approving the definitions of ${privilege} as the profile has them now (${digest})."
     fi
 
+    # An egress request whose hosts are named at approval opens the hosts
+    # the approval names, and nothing without them.
+    if [[ "${kind}" == "egress" ]]; then
+        local at_approval
+        answer="$(_call_usher GET "/v1/tenants/${t}/apps/status")" || exit 1
+        at_approval="$(jq -r --arg a "${app}" --arg p "${privilege}" \
+            '[.apps[]? | (., .addons[]?) | select(.name == $a or .profile == $a) | .pendingPrivilegeApprovals[]? | select(.privilege == $p) | .hostsAtApproval // false][0] // false' <<<"${answer}")"
+        if [[ "${at_approval}" == "true" && ${#hosts[@]} -eq 0 ]]; then
+            die "${privilege} of ${app} opens the hosts its approval names: add --host <host> for each one."
+        fi
+    elif [[ ${#hosts[@]} -gt 0 ]]; then
+        die "--host belongs to an egress approval"
+    fi
+    local hosts_json
+    hosts_json="$(printf '%s\n' "${hosts[@]+"${hosts[@]}"}" | jq -R . | jq -sc 'map(select(. != ""))')"
+
     answer="$(_call PUT "/v1/tenants/${t}/privileges/${app}/${kind}/${name}" \
-        "$(jq -n --arg r "${reason}" --arg e "${expires}" --arg d "${digest}" '(if $r == "" then {} else {reason: $r} end) + (if $e == "" then {} else {expiresAt: $e} end) + (if $d == "" then {} else {digest: $d} end)')")" || exit 1
+        "$(jq -n --arg r "${reason}" --arg e "${expires}" --arg d "${digest}" --argjson h "${hosts_json}" '(if $r == "" then {} else {reason: $r} end) + (if $e == "" then {} else {expiresAt: $e} end) + (if $d == "" then {} else {digest: $d} end) + (if ($h | length) == 0 then {} else {hosts: $h} end)')")" || exit 1
     if [[ "$(jq -r '.status // ""' <<<"${answer}")" == "unchanged" ]]; then
         echo "${privilege} of ${app} in ${t} is approved already; nothing was committed."
         return 0

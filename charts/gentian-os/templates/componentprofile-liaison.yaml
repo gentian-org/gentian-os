@@ -70,14 +70,8 @@ spec:
             Reaches the authorization servers of the outside services the
             tenant's bridges name, over https: to register, to trade a
             person's sign-in for a credential, to renew it and to give it up.
-          rule:
-            to:
-              - ipBlock:
-                  cidr: 0.0.0.0/0
-                  except: [10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16]
-            ports:
-              - protocol: TCP
-                port: 443
+            The approver names those servers' hosts.
+          hostsAtApproval: true
   # What the consumer calls: it tells the liaison the outside services and
   # asks for a credential per call.
   provides:

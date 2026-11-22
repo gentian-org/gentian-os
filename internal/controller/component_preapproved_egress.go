@@ -49,6 +49,10 @@ func answeredEgress(ctx context.Context, c client.Client, profile *gentianov1alp
 	if hostnames.PlatformShipped(profile) {
 		out := map[string]struct{}{}
 		for i := range profile.Privileges().Egress {
+			// Hosts named at approval are a person's to name, shipped or not.
+			if profile.Privileges().Egress[i].HostsAtApproval {
+				continue
+			}
 			out[security.PrivilegeRef(security.PrivilegeEgress, profile.Privileges().Egress[i].Name)] = struct{}{}
 		}
 		return out, nil

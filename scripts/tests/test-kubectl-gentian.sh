@@ -465,19 +465,39 @@ fresh; reply GET /v1/tenants/team/apps/status 200 '{"tenant":"team","apps":[{"pr
 gentian apps approve aluvian-commerce --tenant team
 has "apps approve without a request lists what the app waits for" "${OUT}" "  egress/intake"
 is "... and asks nothing to change" "$(writes)" ""
-fresh; reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
+fresh; reply GET /v1/tenants/team/apps/status 200 '{"tenant":"team","apps":[{"profile":"aluvian-commerce","name":"aluvian-commerce","pendingPrivileges":["egress/intake"],"pendingPrivilegeApprovals":[{"privilege":"egress/intake","approvedBy":"perimeter-approver","hosts":["site-api.aluvian.io"]}]}]}'
+reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian apps approve aluvian-commerce egress/intake --tenant team --reason "reads the website's order requests"
 is "apps approve sends one PUT with the reason" "$(writes | tr -d '\n' | tr -s ' ')" \
     'PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake { "reason": "reads the website'"'"'s order requests"}'
 has "... and says it is committed" "${OUT}" "Approved egress/intake for aluvian-commerce in team: committed (01234567)"
 fresh
-fresh; reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
+fresh; reply GET /v1/tenants/team/apps/status 200 '{"tenant":"team","apps":[{"profile":"aluvian-commerce","name":"aluvian-commerce","pendingPrivileges":["egress/intake"],"pendingPrivilegeApprovals":[{"privilege":"egress/intake","approvedBy":"perimeter-approver","hosts":["site-api.aluvian.io"]}]}]}'
+reply PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian apps approve aluvian-commerce egress/intake --tenant team
 is "apps approve without a reason sends one PUT with no reason" "$(writes | tr -d '\n' | tr -s ' ')" \
     'PUT /v1/tenants/team/privileges/aluvian-commerce/egress/intake {}'
 fresh
 gentian apps approve aluvian-commerce hostNetwork/x --tenant team --reason "because it needs it"
 refused "a request of no known kind is a usage error"
+
+# An egress request whose hosts are named at approval opens the hosts the
+# approval names: one --host each, and none is refused before anything is
+# sent. --host belongs to an egress approval.
+AT='{"tenant":"team","apps":[{"profile":"operations-sync-ee","name":"operations-sync-ee","pendingPrivileges":["egress/backends"],"pendingPrivilegeApprovals":[{"privilege":"egress/backends","approvedBy":"perimeter-approver","hostsAtApproval":true}]}]}'
+fresh; reply GET /v1/tenants/team/apps/status 200 "${AT}"
+gentian apps approve operations-sync-ee egress/backends --tenant team
+refused "an approval naming no host of a request that needs them"
+is "... and nothing is sent" "$(writes)" ""
+fresh; reply GET /v1/tenants/team/apps/status 200 "${AT}"
+reply PUT /v1/tenants/team/privileges/operations-sync-ee/egress/backends 202 '{"status":"updated","commit":"0123456789abcdef"}'
+gentian apps approve operations-sync-ee egress/backends --tenant team --host erp.example.org --host files.example.org:8443
+is "apps approve --host sends the hosts with the approval" "$(writes | tr -d '\n' | tr -s ' ')" \
+    'PUT /v1/tenants/team/privileges/operations-sync-ee/egress/backends { "hosts": [ "erp.example.org", "files.example.org:8443" ]}'
+fresh
+gentian apps approve backup-scheduler-ee podSecurity/run-as-root --tenant platform --host erp.example.org
+refused "--host on another kind is a usage error"
+is "... and nothing is sent" "$(cat "${CALLS}")" ""
 
 # An API extension's approval names the definitions it approves: the digest
 # the cluster reports for the pending request.

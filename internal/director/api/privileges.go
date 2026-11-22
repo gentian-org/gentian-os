@@ -12,14 +12,17 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/egress"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -55,6 +58,43 @@ type grantPrivilegeRequest struct {
 	// the same approval, by the same approver, so the waiver takes effect.
 	// Both halves are the security officer's (cluster#can_approve).
 	Allowlist *gitops.MacWaiver `json:"allowlist,omitempty"`
+	// Hosts are, for an egress request whose hosts are named at approval
+	// (hostsAtApproval), the hosts the approver lets the install reach:
+	// "erp.example.org", "files.example.org:8443". The grant opens these and
+	// no others. Ignored by the cluster for any other egress request.
+	Hosts []string `json:"hosts,omitempty"`
+}
+
+// maxGrantHosts is how many hosts one grant may name, the schema's bound.
+const maxGrantHosts = 64
+
+// grantHost is the shape the schema holds a grant's host to.
+var grantHost = regexp.MustCompile(`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$`)
+
+// approvalHosts are the hosts an approval names, each once and sorted, or
+// why they are refused: a host must be a name outside the cluster.
+func approvalHosts(in []string) ([]string, error) {
+	if len(in) > maxGrantHosts {
+		return nil, fmt.Errorf("a grant names at most %d hosts", maxGrantHosts)
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range in {
+		s := strings.ToLower(strings.TrimSpace(raw))
+		if !grantHost.MatchString(s) || len(s) > 259 {
+			return nil, fmt.Errorf("%q is not a host: write a name, with a port where it is not 443, as in erp.example.org or files.example.org:8443", raw)
+		}
+		h, err := egress.ParseHost(s)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[h.String()] {
+			seen[h.String()] = true
+			out = append(out, h.String())
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // tenantPrivileges answers what has been granted for this tenant, from git.
@@ -207,7 +247,7 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 	}
 	var body grantPrivilegeRequest
 	if err := decode(r, &body); err != nil && !errors.Is(err, io.EOF) {
-		s.fail(w, r, http.StatusBadRequest, `body must be {"reason": "...", "expiresAt": "<RFC 3339>"}; both optional`)
+		s.fail(w, r, http.StatusBadRequest, `body must be {"reason": "...", "expiresAt": "<RFC 3339>", "hosts": ["..."]}; all optional`)
 		return
 	}
 	// The length the CRD enforces anyway, refused here so the answer says
@@ -238,6 +278,18 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 		s.fail(w, r, http.StatusBadRequest, "digest belongs to an apiExtensions approval")
 		return
 	}
+	var hosts []string
+	if len(body.Hosts) > 0 {
+		if kind != security.PrivilegeEgress {
+			s.fail(w, r, http.StatusBadRequest, "hosts belong to an egress approval")
+			return
+		}
+		var err error
+		if hosts, err = approvalHosts(body.Hosts); err != nil {
+			s.fail(w, r, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if body.Allowlist != nil {
 		if kind != security.PrivilegePodSecurity {
 			s.fail(w, r, http.StatusBadRequest, "allowlist belongs to a podSecurity approval")
@@ -263,6 +315,7 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 		Reason:     strings.TrimSpace(body.Reason),
 		ExpiresAt:  body.ExpiresAt,
 		Digest:     body.Digest,
+		Hosts:      hosts,
 	}, c.meta)
 	s.written(w, r, res, err)
 }

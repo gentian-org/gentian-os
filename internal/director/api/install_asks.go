@@ -50,6 +50,9 @@ type askedEgress struct {
 	Reason string `json:"reason,omitempty"`
 	// Hosts are the hosts a request by host names; none for one by address.
 	Hosts []string `json:"hosts,omitempty"`
+	// HostsAtApproval says the approver names the hosts, for an app whose
+	// destinations its installation chooses.
+	HostsAtApproval bool `json:"hostsAtApproval,omitempty"`
 	// CameWith names the app this one comes with, for a request that is not
 	// the app's own.
 	CameWith string `json:"cameWith,omitempty"`
@@ -128,8 +131,8 @@ func asksOf(install string, definition *gentianov1alpha1.ComponentProfile, origi
 			return err == nil && until.After(now)
 		})
 		out = append(out, askedEgress{
-			Install: install, Privilege: ref, Reason: e.Reason, Hosts: e.Hosts, CameWith: cameWith,
-			answered: shipped || catalog || domain || granted,
+			Install: install, Privilege: ref, Reason: e.Reason, Hosts: e.Hosts, HostsAtApproval: e.HostsAtApproval, CameWith: cameWith,
+			answered: (shipped && !e.HostsAtApproval) || catalog || domain || granted,
 		})
 	}
 	return out
@@ -306,15 +309,17 @@ func notAsked(approve []approvedRequest, asks []askedEgress) string {
 // grantWithInstall records the approvals an install named, once the install
 // is written: one grant each, by the caller, for every request that still
 // waits. One that policy answers, or that was granted before, is left as it
-// is. A grant that cannot be written leaves its request waiting, as if it
+// is, and so is one whose hosts are named at approval. A grant that cannot be written leaves its request waiting, as if it
 // had not been named; the answer lists what was approved.
 func (s *Server) grantWithInstall(ctx context.Context, c call, tenant, decision string, approve []approvedRequest, asks []askedEgress) []approvedRequest {
 	approved := []approvedRequest{}
 	meta := c.meta
 	meta.Decision = decision
 	for _, a := range approve {
+		// A request whose hosts are named at approval is approved where the
+		// hosts are named, not with the install.
 		waits := slices.ContainsFunc(asks, func(e askedEgress) bool {
-			return e.Install == a.Install && e.Privilege == a.Privilege && !e.answered
+			return e.Install == a.Install && e.Privilege == a.Privilege && !e.answered && !e.HostsAtApproval
 		})
 		if !waits {
 			continue

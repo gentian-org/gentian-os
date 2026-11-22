@@ -595,10 +595,12 @@ type PodSecurityWaiver struct {
 //
 // Hosts is the form for a destination that has a name. The connections pass
 // the gateway for outgoing connections, which lets through the hosts that
-// were granted and records each connection. Rule is for what that gateway
+// were granted and records each connection. HostsAtApproval is the same way
+// for a component whose destinations its installation chooses: the approver
+// names the hosts, and the grant carries them. Rule is for what that gateway
 // cannot carry, a protocol that names no host, and the approver reads it as
 // addresses and ports.
-// +kubebuilder:validation:XValidation:rule="has(self.rule) != has(self.hosts)",message="an egress request states hosts or a rule, one of the two"
+// +kubebuilder:validation:XValidation:rule="[has(self.rule), has(self.hosts), has(self.hostsAtApproval) && self.hostsAtApproval].filter(f, f).size() == 1",message="an egress request states hosts, hostsAtApproval or a rule, one of the three"
 type EgressRequest struct {
 	// Name is what a PrivilegeGrant refers to. Unique within the profile.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -614,6 +616,15 @@ type EgressRequest struct {
 	// +kubebuilder:validation:items:MaxLength=259
 	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$`
 	Hosts []string `json:"hosts,omitempty"`
+	// HostsAtApproval says the hosts are named by whoever approves the
+	// request, for this install: for a component whose destinations its
+	// installation chooses, such as the operator's own ERP or a storage
+	// bucket. The grant carries the hosts the approver named, and the
+	// connections pass the gateway for outgoing connections like those of
+	// Hosts. No trusted domain answers such a request: no host is known
+	// before somebody names it.
+	// +optional
+	HostsAtApproval bool `json:"hostsAtApproval,omitempty"`
 	// Rule is the egress to allow by address.
 	// +optional
 	Rule *networkingv1.NetworkPolicyEgressRule `json:"rule,omitempty"`

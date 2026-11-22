@@ -263,6 +263,7 @@ Component is an installed instance of a ComponentProfile.
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
 | `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
+| `spec.privileges[].hosts` | []string |  | `Hosts` are the hosts an egress grant opens, for a request whose hosts are named at approval (hostsAtApproval): each one name, lower case, with a port where it… |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>, where kind is podSecurity, egress, clusterRoles or apiExtensions. |
 | `spec.privileges[].reason` | string |  | `Reason` is a comment the approver may leave, in their own words. |
 | `spec.profileRef` | object | yes | `ProfileRef` names the catalog entry this is an instance of. |
@@ -745,6 +746,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.privileges.clusterRoles[].serviceAccount` | string |  | `ServiceAccount` is the ServiceAccount the component's chart runs its pods under, in the component's namespace. |
 | `spec.requires.privileges.egress` | []object |  | `Egress` opens outbound network beyond the tenant baseline. |
 | `spec.requires.privileges.egress[].hosts` | []string |  | `Hosts` are the hosts outside the cluster the component connects to, each one name, lower case, with a port where it is not 443: "graph.microsoft.com"… |
+| `spec.requires.privileges.egress[].hostsAtApproval` | boolean |  | `HostsAtApproval` says the hosts are named by whoever approves the request, for this install: for a component whose destinations its installation chooses, such… |
 | `spec.requires.privileges.egress[].name` | string | yes | `Name` is what a PrivilegeGrant refers to. |
 | `spec.requires.privileges.egress[].reason` | string | yes | `Reason` is what the approver reads. |
 | `spec.requires.privileges.egress[].rule` | object |  | `Rule` is the egress to allow by address. |
@@ -1658,6 +1660,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.privileges.clusterRoles[].serviceAccount` | string |  | `ServiceAccount` is the ServiceAccount the component's chart runs its pods under, in the component's namespace. |
 | `status.profileSpec.requires.privileges.egress` | []object |  | `Egress` opens outbound network beyond the tenant baseline. |
 | `status.profileSpec.requires.privileges.egress[].hosts` | []string |  | `Hosts` are the hosts outside the cluster the component connects to, each one name, lower case, with a port where it is not 443: "graph.microsoft.com"… |
+| `status.profileSpec.requires.privileges.egress[].hostsAtApproval` | boolean |  | `HostsAtApproval` says the hosts are named by whoever approves the request, for this install: for a component whose destinations its installation chooses, such… |
 | `status.profileSpec.requires.privileges.egress[].name` | string | yes | `Name` is what a PrivilegeGrant refers to. |
 | `status.profileSpec.requires.privileges.egress[].reason` | string | yes | `Reason` is what the approver reads. |
 | `status.profileSpec.requires.privileges.egress[].rule` | object |  | `Rule` is the egress to allow by address. |
@@ -2000,6 +2003,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.privileges[].approver` | string | yes | `Approver` is the Keycloak subject who said yes, set by the director from the caller's token. |
 | `spec.privileges[].digest` | string |  | `Digest` pins an apiExtensions grant to the definitions it approved: sha256 of the request as the approver read it (security.APIExtensionDigest). |
 | `spec.privileges[].expiresAt` | string (date-time) |  | `ExpiresAt` bounds the grant. |
+| `spec.privileges[].hosts` | []string |  | `Hosts` are the hosts an egress grant opens, for a request whose hosts are named at approval (hostsAtApproval): each one name, lower case, with a port where it… |
 | `spec.privileges[].install` | string | yes | `Install` names the Component this grant is for, which is the component's object name in the tenant's namespace. |
 | `spec.privileges[].privilege` | string | yes | `Privilege` names one entry of the profile's request, as \<kind>/\<name>. |
 | `spec.privileges[].reason` | string |  | `Reason` is a comment the approver may leave, in their own words. |
