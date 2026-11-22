@@ -711,11 +711,10 @@ func main() {
 			setupLog.Error(err, "unable to create controller", "controller", "AuthzProjection")
 			os.Exit(1)
 		}
-		// Membership, from the same graph client and for the same reason.
-		// Keycloak states a user's whole group set, signed; this applies it.
-		// It was the director's last write to the graph, which is what kept
-		// the director's token a writing token. Nothing is carried on to the
-		// apps' own stores: no group of the realm carries a right.
+		// What only a realm sees happen to a person: somebody arriving
+		// from another realm is given what the tenant declares for them,
+		// and what a removed person held goes with them.
+		arrivals := &controller.RealmArrivals{Client: mgr.GetClient(), Rights: graph}
 		// What components keep for a person in the vault ends when the
 		// realm says the person is gone. Without a vault there is nothing
 		// kept.
@@ -726,7 +725,7 @@ func main() {
 				Vault:  secrets.NewKVClient(addr, envvar.Or("BAO_ROLE", "gentian-os-operator"), ""),
 			}
 		}
-		listener, err := controller.NewMembershipListener(graph, nil, departures, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		listener, err := controller.NewMembershipListener(arrivals, slog.New(slog.NewJSONHandler(os.Stderr, nil)), arrivals, departures)
 		if err != nil {
 			setupLog.Error(err, "unable to create the membership listener")
 			os.Exit(1)
@@ -737,16 +736,6 @@ func main() {
 				os.Exit(1)
 			}
 			setupLog.Info("membership listener enabled", "addr", listener.Addr)
-			// The statements that did not arrive: people no longer in
-			// Keycloak lose their memberships at the next sweep.
-			if err := mgr.Add(&controller.MembershipSweep{
-				Receiver: listener.Receiver,
-				Client:   mgr.GetClient(),
-				Log:      listener.Log,
-			}); err != nil {
-				setupLog.Error(err, "unable to add the membership sweep")
-				os.Exit(1)
-			}
 		}
 	}
 

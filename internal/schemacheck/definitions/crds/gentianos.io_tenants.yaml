@@ -763,37 +763,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - app
                 x-kubernetes-list-type: map
-              groups:
-                description: |-
-                  Groups are groups of the tenant's realm declared in git; see
-                  TenantGroup.
-                items:
-                  description: |-
-                    TenantGroup is a group of the tenant's realm declared in git. The platform
-                    makes it; people are put in it in the Admin Console, and an app's profile
-                    or a TenantSignInFrom names it. It is not renamed or deleted from the
-                    console: git holds it.
-                  properties:
-                    name:
-                      description: |-
-                        Name is the group's name in the realm. Not one the platform's own
-                        groups take (gentian...).
-                      maxLength: 63
-                      minLength: 1
-                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                      type: string
-                      x-kubernetes-validations:
-                      - message: names beginning with gentian are the platform's own
-                          groups
-                        rule: '!self.startsWith(''gentian'')'
-                  required:
-                  - name
-                  type: object
-                maxItems: 50
-                type: array
-                x-kubernetes-list-map-keys:
-                - name
-                x-kubernetes-list-type: map
               homes:
                 additionalProperties:
                   type: string
@@ -1522,28 +1491,31 @@ spec:
                 items:
                   description: |-
                     TenantSignInFrom is another tenant of this cluster whose people sign in to
-                    this one with their account there, and the groups of this tenant they are
-                    in for it. It takes both tenants: this one names the other here, and the
+                    this one with their account there, and the positions of this tenant they
+                    are given for it. It takes both tenants: this one names the other here, and the
                     other names this one in its spec.signInTo. Either alone opens nothing.
 
                     The platform makes, in the other tenant's realm, the client this realm
                     signs in with (authenticated by a JWT this realm signs: no secret), and in
                     this realm an identity provider, tenant-<other>, that trusts the other
-                    realm's verified addresses and puts each person who arrives in the groups
-                    named, at every sign-in. An account that is already here under the same
+                    realm's verified addresses; the operator gives each person who arrives
+                    the positions named. An account that is already here under the same
                     address is linked only once its owner proves it.
                   properties:
-                    groups:
+                    positions:
                       description: |-
-                        Groups are the groups of this tenant its people are in: a name of
-                        spec.groups, or members (the tenant's members, who may enter it). The
-                        tenant's administrators and its perimeter approvers are never given
-                        this way.
+                        Positions are the positions of this tenant its people are given when
+                        they arrive: user (a person of the tenant, who may enter it) or a
+                        name of spec.positions. The positions of the tenant's and of its
+                        apps' administrators are never given this way.
                       items:
                         pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                         type: string
                       maxItems: 16
                       type: array
+                      x-kubernetes-validations:
+                      - message: an administrator's position is not given by a sign-in
+                        rule: self.all(p, !(p in ['app-administrator', 'tenant-administrator']))
                     tenant:
                       description: Tenant is the other tenant.
                       maxLength: 63

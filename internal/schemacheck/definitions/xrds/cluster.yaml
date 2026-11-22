@@ -386,32 +386,6 @@ spec:
                     granted in a tenant only from a bundle signed by this
                     cluster and taken on a cluster of this id. Changing it makes
                     every earlier bundle read as another cluster's.
-                platformRoles:
-                  type: object
-                  # So the schema's per-role defaults materialise: a property's
-                  # default is only applied when the object holding it exists.
-                  default: {}
-                  description: >
-                    Which Keycloak group in the kernel realm holds each of the
-                    two platform roles held by a group. The operator projects
-                    these into OpenFGA as the cluster's role relations, so a
-                    person's authority over the cluster follows from their
-                    group membership and from nothing else. Every other
-                    cluster role is held by name (platformAccess.roleHolders).
-                  properties:
-                    admin:
-                      type: string
-                      default: "gentian:platform:admin"
-                      description: >
-                        The cluster's administrators: the claim, plans,
-                        ceilings, tenant deployment. Defaults to the group the
-                        install's bootstrap administrator is placed in.
-                    breakGlass:
-                      type: string
-                      description: >
-                        Admission overlays and raw file edits. No standing
-                        membership is expected; this names the group that is
-                        filled only when it is needed.
                 platformAccess:
                   type: object
                   description: >
@@ -430,9 +404,13 @@ spec:
                         Keyed by role, tenant and the account's subject in
                         the tenant's realm, which outlives a changed address;
                         username and email say who it is to a person reading
-                        the claim. securityOfficer and auditor are held over
-                        the cluster; serviceAdmin and sharedAppsAdmin over the
-                        cluster and by people of the platform tenant only;
+                        the claim. admin administers the cluster and is
+                        held by people of the platform tenant only; while the
+                        claim names no admin, the account the install made
+                        (admin@<kernel domain>) holds it. securityOfficer and
+                        auditor are held over the cluster; serviceAdmin and
+                        sharedAppsAdmin over the cluster and by people of the
+                        platform tenant only;
                         perimeterApprover over the cluster by a person of the
                         platform tenant, and over their own tenant
                         (tenant:<t>) by a tenant's administrator;
@@ -447,7 +425,7 @@ spec:
                         properties:
                           role:
                             type: string
-                            enum: [securityOfficer, auditor, serviceAdmin, sharedAppsAdmin, perimeterApprover, tenantAuditor, breakGlass]
+                            enum: [admin, securityOfficer, auditor, serviceAdmin, sharedAppsAdmin, perimeterApprover, tenantAuditor, breakGlass]
                           scope:
                             type: string
                             pattern: '^(cluster|tenant:[a-z0-9]([-a-z0-9]*[a-z0-9])?)$'

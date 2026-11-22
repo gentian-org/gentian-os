@@ -441,6 +441,12 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 	state.firstAdministratorResult = firstAdministrator
 
+	// A tenant that stopped letting the cluster's administrators in takes
+	// back what they were given for coming in.
+	if err := r.ensureKernelEntryWithdrawn(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("kernel entry: %w", err)
+	}
+
 	// Who administers gives a second factor: the rule follows the rights
 	// store onto the realm's accounts. Only once the realm is there.
 	if apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionIdentityReady) {
