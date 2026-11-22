@@ -2288,6 +2288,19 @@ spec:
       - config:
           max: "255"
         name: length
+    - displayName: Second factor required
+      multiValued: false
+      name: gentianRequiresMFA
+      permissions:
+      - edit:
+        - admin
+        view:
+        - admin
+      validator:
+      - config:
+          options:
+          - "true"
+        name: options
     group:
     - displayDescription: Attributes, which refer to user metadata
       displayHeader: User metadata
