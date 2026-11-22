@@ -122,7 +122,9 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("GENTIAN_LISTENER_KEYS: %w", err)
 		}
-		handler, err := usher.SignInRolesHandler(usher.SignInRolesConfig{Keys: keys, Roles: store, Log: log})
+		handler, err := usher.SignInRolesHandler(usher.SignInRolesConfig{
+			Keys: keys, Roles: store, Checker: store, Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"), Log: log,
+		})
 		if err != nil {
 			return err
 		}

@@ -9,29 +9,21 @@
  */
 package io.gentianos.keycloak.events;
 
-import java.util.List;
 import java.util.UUID;
 
-/** The three statements the director understands, as JSON. */
+/** The two statements the platform understands, as JSON. */
 final class Payload {
 
     private Payload() {
     }
 
-    static String userMemberships(String realm, String user, List<String> groups) {
-        StringBuilder json = head("user.memberships", realm).append(",\"user\":").append(quote(user)).append(",\"groups\":[");
-        for (int i = 0; i < groups.size(); i++) {
-            json.append(i == 0 ? "" : ",").append(quote(groups.get(i)));
-        }
-        return json.append("]}").toString();
+    static String userEntered(String realm, String user, String provider) {
+        return head("user.entered", realm).append(",\"user\":").append(quote(user))
+            .append(",\"provider\":").append(quote(provider)).append('}').toString();
     }
 
     static String userDeleted(String realm, String user) {
         return head("user.deleted", realm).append(",\"user\":").append(quote(user)).append('}').toString();
-    }
-
-    static String groupDeleted(String realm, String group) {
-        return head("group.deleted", realm).append(",\"group\":").append(quote(group)).append('}').toString();
     }
 
     private static StringBuilder head(String type, String realm) {

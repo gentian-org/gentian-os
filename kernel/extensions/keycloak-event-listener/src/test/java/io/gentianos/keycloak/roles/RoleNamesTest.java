@@ -84,4 +84,24 @@ class RoleNamesTest {
         assertEquals("{\"tenant\":\"acme\",\"app\":\"odoo-base-ce\",\"person\":\"p-1\"}",
             RolesClient.question("acme", "odoo-base-ce", "p-1"));
     }
+
+    @Test
+    void theQuestionAsksForClusterAndTenantRolesTheSameWay() throws IOException {
+        assertEquals("{\"cluster\":true,\"realm\":\"kernel\",\"person\":\"p-1\"}",
+            RolesClient.question(null, null, "kernel", "p-1"));
+        assertEquals("{\"tenant\":\"acme\",\"person\":\"p-1\"}",
+            RolesClient.question("acme", null, null, "p-1"));
+        RolesClient.Answer answer = RolesClient.parseAnswer(
+            "{\"apps\":[],\"cluster\":[\"admin\",\"auditor\"],\"tenant\":[\"user\"]}");
+        assertEquals(List.of("admin", "auditor"), answer.cluster);
+        assertEquals(List.of("user"), answer.tenant);
+    }
+
+    @Test
+    void aPartnerAssertionNamesWhoAdministers() {
+        assertEquals(List.of("cluster-admin", "tenant-admin"),
+            PartnerRolesMapper.roles(List.of("admin", "user"), List.of("admin")));
+        assertEquals(List.of("tenant-admin"), PartnerRolesMapper.roles(List.of("admin", "user"), List.of("auditor")));
+        assertEquals(List.of(), PartnerRolesMapper.roles(List.of("user"), List.of()));
+    }
 }
