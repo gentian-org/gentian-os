@@ -148,34 +148,6 @@ func TestKeycloakAdminClient_UpdateRealmMailSender(t *testing.T) {
 	}
 }
 
-// groupRealm is a realm's groups, as much of the admin API as deleting one
-// touches.
-func groupRealm(t *testing.T, groups map[string]bool, refuseDelete bool) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		const base = "/admin/realms/demo/groups"
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/protocol/openid-connect/token"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 300})
-		case r.Method == http.MethodGet && r.URL.Path == base:
-			out := []map[string]any{}
-			for name := range groups {
-				out = append(out, map[string]any{"id": "id-" + name, "name": name})
-			}
-			_ = json.NewEncoder(w).Encode(out)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, base+"/id-"):
-			if !refuseDelete {
-				delete(groups, strings.TrimPrefix(r.URL.Path, base+"/id-"))
-			}
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 // A pack's client scope is removed by name, with its mappers; one of
 // Keycloak's own is never removed, whatever a catalog called its scope.
 func TestDeleteClientScope(t *testing.T) {

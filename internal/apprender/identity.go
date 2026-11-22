@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package apprender
 
 import (
-	"fmt"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
@@ -112,31 +111,6 @@ func (id *identityScope) placeAll(uris []string) []string {
 // is. The realm objects are cluster-scoped, so the tenant makes them unique.
 func (id *identityScope) name(suffix string) string {
 	return id.tenant + "-" + id.in.App + "-" + suffix
-}
-
-// identityStrings reads a JSON value as a list of strings, the way the
-// Composition's join read it: a list item by item, anything else as one.
-func identityStrings(v interface{}) []string {
-	str := func(v interface{}) string {
-		if s, ok := v.(string); ok {
-			return s
-		}
-		return fmt.Sprintf("%v", v)
-	}
-	switch v := v.(type) {
-	case nil:
-		return nil
-	case []interface{}:
-		out := make([]string, 0, len(v))
-		for _, item := range v {
-			if item != nil {
-				out = append(out, str(item))
-			}
-		}
-		return out
-	default:
-		return []string{str(v)}
-	}
 }
 
 // identityProvider is the provider config every realm object is written
