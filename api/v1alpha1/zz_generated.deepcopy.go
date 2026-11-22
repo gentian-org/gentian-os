@@ -5129,6 +5129,11 @@ func (in *TenantApp) DeepCopyInto(out *TenantApp) {
 		*out = make([]AddonPin, len(*in))
 		copy(*out, *in)
 	}
+	if in.Positions != nil {
+		in, out := &in.Positions, &out.Positions
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.AddonGrants != nil {
 		in, out := &in.AddonGrants, &out.AddonGrants
 		*out = make([]AddonGrant, len(*in))
