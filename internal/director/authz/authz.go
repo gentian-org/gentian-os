@@ -133,7 +133,7 @@ func NewOpenFGA(o Options) (*OpenFGA, error) {
 		o.Logger = slog.Default()
 	}
 	if o.Client == nil {
-		o.Client = &http.Client{Timeout: 5 * time.Second}
+		o.Client = &http.Client{Timeout: 12 * time.Second}
 	}
 	if o.Now == nil {
 		o.Now = time.Now

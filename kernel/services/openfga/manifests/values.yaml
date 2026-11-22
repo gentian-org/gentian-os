@@ -24,16 +24,23 @@ openfga:
     # (templates/externalsecret.yaml); the chart reads it into
     # OPENFGA_DATASTORE_URI by secretKeyRef.
     uriSecret: openfga-credentials
+    # The pool stays warm: a desktop's tiles are one batch of checks that
+    # fans out into hundreds of queries, and opening a connection per query
+    # after an idle spell costs more than the query.
     maxOpenConns: 30
-    maxIdleConns: 10
-    connMaxIdleTime: 30s
-    connMaxLifetime: 60s
+    maxIdleConns: 30
+    connMaxIdleTime: 5m
+    connMaxLifetime: 30m
     applyMigrations: true
     # initContainer runs `openfga migrate` before the server starts. waitForMigrations
     # must stay true — the chart only renders initContainers when it is true (job
     # waiter is gated separately on migrationType=job).
     migrationType: initContainer
     waitForMigrations: true
+  # A batch of checks answered within this, OpenFGA's default 3s being too
+  # short for a desktop's tiles on a slow datastore. The callers' own clients
+  # wait longer than this (internal/director/authz/authz.go).
+  requestTimeout: 10s
   grpc:
     enabled: true
   telemetry:
