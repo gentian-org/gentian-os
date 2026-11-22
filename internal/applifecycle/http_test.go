@@ -371,7 +371,6 @@ func TestTheRoutesOpenToTheReaderAreTheUshersReads(t *testing.T) {
 		{"POST", "/v1/tenants/demo/actions/restore"},
 		{"POST", "/v1/tenants/demo/actions/notify"},
 		{"POST", "/v1/tenants/demo/actions/purge-app"},
-		{"POST", "/v1/tenants/demo/actions/provision-app"},
 		{"POST", "/v1/bundles"},
 		{"POST", "/v1/bundles/inspect"},
 		{"POST", "/v1/bundles/uploads"},

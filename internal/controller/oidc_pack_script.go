@@ -20,14 +20,13 @@ import (
 )
 
 // buildOIDCPackScript provisions Keycloak client scope, mappers,
-// client role, group role mapping, and default scopes for one OIDC client.
+// and the client itself for one OIDC client.
 func buildOIDCPackScript(
 	realmName, clientID string,
 	pack oidc.Pack,
 	templates map[string]oidc.MapperTemplate,
 	redirectURIs []string,
 	withSecret bool,
-	entitlementGroup string,
 ) string {
 	if pack.ServiceClient {
 		return buildOIDCServiceClientScript(realmName, clientID, pack)
@@ -56,11 +55,6 @@ func buildOIDCPackScript(
 		secretClause = `,\"secret\":\"${OIDC_CLIENT_SECRET}\"`
 	}
 
-	groupName := entitlementGroup
-	if groupName == "" {
-		groupName = pack.EntitlementGroup
-	}
-
 	scopeLookupBlock := keycloak.ShellLookupClientScopeID()
 	clientUUIDBlock := keycloak.ShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
 
@@ -69,7 +63,6 @@ REALM=%q
 CLIENT_ID=%q
 SCOPE_NAME=%q
 SCOPE_DESC=%q
-ENTITLEMENT_GROUP=%q
 REDIRECT_URIS='%s'
 PUBLIC_CLIENT=%s
 FULL_SCOPE_ALLOWED=%s
@@ -113,19 +106,12 @@ fi
 # --- Client role ---
 # Neither created nor read here. The operator renders a Role with the app's
 # release, which adopts the existing one by its Keycloak id rather than making
-# a second, and maps the entitlement group to it.
+# a second.
 #
 # A read of the role here would deadlock: this Job is waited on before the
 # release that brings the role is rendered, so wherever the client was there
 # and the role was not -- a reinstall after a purge, any first install -- the
 # Job would fail on a 404 for ever. Nothing in this Job needs the role.
-
-# The entitlement group is NOT mapped to the client role here. The operator
-# renders a group Roles for it, with exhaustive false so it grants that one
-# role and leaves anything else on the group alone.
-#
-# This POST swallowed its own failure, so a mapping that never happened looked
-# exactly like one that did — the same silence the default-client-scopes loop had.
 
 # The default client scopes are NOT attached here. The operator renders a
 # ClientDefaultScopes for exactly the same six — profile, email, roles,
@@ -136,7 +122,7 @@ fi
 # identical to one that did.
 
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
-		realmName, clientID, pack.ScopeName, pack.ScopeDescription, groupName,
+		realmName, clientID, pack.ScopeName, pack.ScopeDescription,
 		string(redirectJSON), publicClient, fullScope,
 		// One secretClause, not two: the second filled the client PUT that this
 		// Job no longer makes.

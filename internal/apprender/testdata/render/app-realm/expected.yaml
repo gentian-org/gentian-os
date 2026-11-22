@@ -39,33 +39,6 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: demo-app-entitlement-group
-  labels:
-    crossplane.io/composite: render-demo-app-realm-fixture
-  name: gentian-tenant-demo-app-demo-app
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XApp
-    name: render-demo-app-realm-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    attributes:
-      gentianOdooModules: account##crm
-      gentianSingle: one
-      gentianos.io/managed-by: platform
-    name: gentian:tenant:demo:app:demo-app
-    realmId: demo-people
-  providerConfigRef:
-    name: keycloak
----
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
@@ -105,33 +78,6 @@ spec:
           name: demo-app-sensitive-values
   providerConfigRef:
     name: kubernetes
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Roles
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: demo-app-group-roles
-  labels:
-    crossplane.io/composite: render-demo-app-realm-fixture
-  name: demo-demo-app-group-roles
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XApp
-    name: render-demo-app-realm-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    exhaustive: false
-    groupIdRef:
-      name: gentian-tenant-demo-app-demo-app
-    realmId: demo-people
-    roleIdsRefs:
-    - name: demo-demo-app-client-role
-  providerConfigRef:
-    name: keycloak
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object

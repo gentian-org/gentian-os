@@ -20,9 +20,8 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
+	rights "github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/mailer"
 	"github.com/gentian-org/gentian-os/internal/releaseindex"
@@ -73,6 +72,10 @@ type Service struct {
 	models func(ctx context.Context) (ModelKeys, bool, error)
 	// authorization is the arbiter's platform path, nil without one.
 	authorization AuthorizationStores
+	// Rights is the rights store, for what it still holds on an uninstalled
+	// app: who was given a role on it, which a purge removes. Nil on a
+	// cluster that runs no rights store, where there is nothing to remove.
+	Rights rights.Store
 }
 
 // AuthorizationStores is the part of the arbiter's platform path a purge
@@ -81,8 +84,9 @@ type AuthorizationStores interface {
 	Purge(ctx context.Context, tenant, component string) error
 }
 
-// accessGroups is the identity provider's groups, with the administrator
-// credential the operator holds beside it.
+// accessGroups is the identity provider, as a purge uses it for an app's
+// clients and scopes, with the administrator credential the operator holds
+// beside it.
 func (s *Service) accessGroups(ctx context.Context) (AccessGroups, error) {
 	if s.groups != nil {
 		return s.groups, nil
@@ -160,122 +164,4 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 		svc.actualSource = src
 	}
 	return svc, nil
-}
-
-func (s *Service) provisionAppGroupUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant, profileName string) error {
-	// The group's name carries the tenant's; the realm it is in is the
-	// tenant's own, which need not be called the same.
-	tenantName, realm := tenant.Name, keycloak.RealmName(tenant)
-	// ComponentProfile: AD-4 leaves one catalog kind, and this asked for
-	// the other one long after the catalog stopped shipping it, so every
-	// call failed with a NotFound and no app group ever got its attributes.
-	profile := &gentianov1alpha1.ComponentProfile{}
-	err := s.client.Get(ctx, client.ObjectKey{Name: profileName}, profile)
-	if err != nil {
-		return fmt.Errorf("failed to get ComponentProfile %s: %w", profileName, err)
-	}
-
-	// A malformed annotation gives the group no declared attributes.
-	var attrs map[string][]string
-	if val, ok := profile.GetAnnotations()[keycloak.GroupAttributesAnnotation]; ok {
-		attrs, _ = keycloak.ParseGroupAttributes(val)
-	}
-
-	kc, err := authz.LoadKeycloakAdminClient(ctx, s.client)
-	if err != nil {
-		return fmt.Errorf("load keycloak admin credentials: %w", err)
-	}
-
-	fullGroupName := keycloak.TenantAppGroup(tenantName, profileName)
-
-	// Provisioning is what separates Install from Provision, and the difference
-	// outlives this call: the tenant admin adding a user later should find this
-	// app already ticked, while one that was merely installed starts unticked.
-	// Recorded on the group because that is what the admin console reads, and
-	// because it is per app and per tenant exactly as the grant is.
-	if attrs == nil {
-		attrs = map[string][]string{}
-	}
-	attrs[keycloak.DefaultGrantAttribute] = []string{"true"}
-	attrs[keycloak.PlatformMarkerAttribute] = []string{keycloak.PlatformMarkerValue}
-
-	groupID, err := kc.EnsureGroup(ctx, realm, fullGroupName, attrs)
-	if err != nil {
-		return fmt.Errorf("ensure keycloak group %s: %w", fullGroupName, err)
-	}
-	if groupID == "" {
-		return fmt.Errorf("group %s ID not found", fullGroupName)
-	}
-
-	// Everyone in the realm -- unless people sign up to it themselves, when
-	// the realm holds accounts that are nobody's members and a grant to
-	// every member must not reach them.
-	var users []authz.KeycloakUser
-	if tenant.SignUpEnabled() {
-		users, err = kc.ListGroupMembers(ctx, realm, keycloak.TenantMembersGroup(tenantName))
-	} else {
-		users, err = kc.ListRealmUsers(ctx, realm)
-	}
-	if err != nil {
-		return fmt.Errorf("list keycloak users in realm %s: %w", realm, err)
-	}
-
-	// An installed app is for the tenant's people, and an administrator account
-	// is given one by hand if it needs it. A placed app keeps everybody: several
-	// are what administrators work with.
-	skip := map[string]bool{}
-	if profile.PlacementOf() == nil {
-		admins, err := kc.ListGroupMembers(ctx, realm, keycloak.TenantAdminsGroup(tenantName))
-		if err != nil {
-			return fmt.Errorf("list the administrators of realm %s: %w", realm, err)
-		}
-		for _, admin := range admins {
-			skip[admin.ID] = true
-		}
-	}
-
-	for _, u := range users {
-		if skip[u.ID] {
-			continue
-		}
-		if err := kc.AddUserToGroup(ctx, realm, u.ID, groupID); err != nil {
-			return fmt.Errorf("failed to add user %s to group %s: %w", u.Username, fullGroupName, err)
-		}
-	}
-
-	return nil
-}
-
-// GrantAppByDefault is ProvisionApp for a reconciler: what an app entry
-// declaring defaultGrant asks for, done when it can be.
-//
-// It waits for the app's group rather than making it. The group is created
-// with the tenant's identity, from what the profile declares, and a grant
-// that ran ahead of that would hand everybody a group nothing yet reads.
-// granted is false, with no error, while the group is not there; the caller
-// tries again.
-//
-// The realm is the tenant's own (keycloak.RealmName).
-func (s *Service) GrantAppByDefault(ctx context.Context, tenantName, profile string) (granted bool, err error) {
-	defer s.lockApp(tenantName, profile)()
-	tenant, err := s.getTenant(ctx, tenantName)
-	if err != nil {
-		return false, err
-	}
-
-	kc, err := authz.LoadKeycloakAdminClient(ctx, s.client)
-	if err != nil {
-		return false, fmt.Errorf("load keycloak admin credentials: %w", err)
-	}
-	exists, err := kc.GroupExists(ctx, keycloak.RealmName(tenant), keycloak.TenantAppGroup(tenantName, profile))
-	if err != nil {
-		return false, fmt.Errorf("look up the app's group: %w", err)
-	}
-	if !exists {
-		return false, nil
-	}
-	if err := s.provisionAppGroupUsers(ctx, tenant, profile); err != nil {
-		return false, err
-	}
-	return true, nil
 }

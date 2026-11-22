@@ -25,7 +25,6 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 func retainedByProfile(apps []RetainedApp) map[string]RetainedApp {
@@ -148,8 +147,9 @@ func TestTheRetainedReadSaysPresentAbsentOrUnknownPerKind(t *testing.T) {
 			Name: "data-ghost-release-0", Namespace: "tenant-demo",
 			Labels: map[string]string{"app.kubernetes.io/instance": "ghost-release"}}}),
 	)
-	w.groups.members[keycloak.TenantAppGroup("demo", "notes")] = nil
-	w.groups.members[keycloak.TenantAppGroup("demo", "shop")] = nil
+	// notes left a credential behind, and somebody still holds a role on it.
+	w.vault.paths["gentian-os/tenants/demo/apps/notes/internal/key"] = true
+	w.groups.members[accessOf("demo", "notes")] = []string{"ada"}
 
 	got, err := w.svc.RetainedApps(context.Background(), "demo")
 	if err != nil {
@@ -162,7 +162,7 @@ func TestTheRetainedReadSaysPresentAbsentOrUnknownPerKind(t *testing.T) {
 	notes := apps["notes"]
 	for kind, want := range map[string]string{
 		KindAccessGroup: RetainedPresent, KindDatabase: RetainedAbsent, KindObjectStorage: RetainedAbsent,
-		KindCache: RetainedAbsent, KindFiles: RetainedAbsent, KindCredentials: RetainedAbsent,
+		KindCache: RetainedAbsent, KindFiles: RetainedAbsent, KindCredentials: RetainedPresent,
 	} {
 		if notes.Kinds[kind] != want {
 			t.Errorf("notes: %s = %q, want %q", kind, notes.Kinds[kind], want)

@@ -1578,17 +1578,6 @@ type TenantStatus struct {
 	// +optional
 	ProvisionedApps []string `json:"provisionedApps,omitempty"`
 
-	// DefaultGrantedApps lists the apps whose default grant
-	// (spec.apps[].defaultGrant) has been applied: the tenant's members at
-	// that moment were added to the app's group. An app listed here is not
-	// granted again, which is what keeps a person removed from the group
-	// since then removed. An entry leaves the list when the app is
-	// uninstalled or no longer declares the grant, so declaring it again
-	// applies it again.
-	// +optional
-	// +listType=set
-	DefaultGrantedApps []string `json:"defaultGrantedApps,omitempty"`
-
 	// AppCount is the total number of apps requested in spec.
 	// +optional
 	AppCount int `json:"appCount,omitempty"`

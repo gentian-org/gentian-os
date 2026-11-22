@@ -1759,19 +1759,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              defaultGrantedApps:
-                description: |-
-                  DefaultGrantedApps lists the apps whose default grant
-                  (spec.apps[].defaultGrant) has been applied: the tenant's members at
-                  that moment were added to the app's group. An app listed here is not
-                  granted again, which is what keeps a person removed from the group
-                  since then removed. An entry leaves the list when the app is
-                  uninstalled or no longer declares the grant, so declaring it again
-                  applies it again.
-                items:
-                  type: string
-                type: array
-                x-kubernetes-list-type: set
               domain:
                 description: |-
                   Domain is the custom domain a TenantDomain binds this tenant to, copied
