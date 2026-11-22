@@ -448,14 +448,17 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 
 	// Who administers gives a second factor: the rule follows the rights
-	// store onto the realm's accounts. Only once the realm is there.
+	// store onto the realm's accounts. Only once the realm is there. A pass
+	// that fails is said and tried again at the next reconcile; it does not
+	// hold back what the tenant needs after it -- a realm that does not
+	// declare the mark yet must not stop the tenant's apps.
 	if apimeta.IsStatusConditionTrue(tenant.Status.Conditions, conditionIdentityReady) {
 		kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("load keycloak admin: %w", err)
+		if err == nil {
+			err = r.ensureSecondFactorMarks(ctx, tenant, kc)
 		}
-		if err := r.ensureSecondFactorMarks(ctx, tenant, kc); err != nil {
-			return ctrl.Result{}, fmt.Errorf("second factor rule: %w", err)
+		if err != nil {
+			log.FromContext(ctx).Error(err, "the second factor rule was not brought onto the realm's accounts", "tenant", tenant.Name)
 		}
 	}
 
