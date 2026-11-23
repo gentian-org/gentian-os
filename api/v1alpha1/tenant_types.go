@@ -661,6 +661,14 @@ type TenantExposure struct {
 	// +optional
 	Kind ExposureKind `json:"kind,omitempty"`
 
+	// SignInCookies are, for an approval of kind publicAppSignIn, the
+	// cookies and paths of the app's own sign-in the approver approved, set
+	// by the director from what the profile's entry declared then. The
+	// proxy passes only those the entry still declares among them, so a
+	// profile that later names more is not given them on this approval.
+	// +optional
+	SignInCookies *SignInCookies `json:"signInCookies,omitempty"`
+
 	// Owner is the subject that published it, set by the director from the
 	// caller's token.
 	// +kubebuilder:validation:MinLength=1
@@ -744,13 +752,14 @@ type TenantExposure struct {
 // Enablement is this entry as the Component carries it.
 func (e *TenantExposure) Enablement() ExposureEnablement {
 	return ExposureEnablement{
-		ExposureName: e.ExposureName,
-		Kind:         e.Kind,
-		Owner:        e.Owner,
-		ExpiresAt:    e.ExpiresAt,
-		ReviewAt:     e.ReviewAt,
-		Apex:         e.Apex,
-		Alias:        e.Alias,
+		ExposureName:  e.ExposureName,
+		Kind:          e.Kind,
+		SignInCookies: e.SignInCookies,
+		Owner:         e.Owner,
+		ExpiresAt:     e.ExpiresAt,
+		ReviewAt:      e.ReviewAt,
+		Apex:          e.Apex,
+		Alias:         e.Alias,
 	}
 }
 

@@ -482,3 +482,61 @@ func TestAnInsideEntryIsApprovedAndIsNoPublicAddress(t *testing.T) {
 		t.Errorf("the commit reads as a publication: %q", message)
 	}
 }
+
+// signInMode is an entry of authMode app that names the cookies of the app's
+// own sign-in, as kindsProfile writes the entry's mode.
+func signInMode(names string) string {
+	return "app\n      signInCookies:\n        names: [" + names + "]\n        paths: [/remote.php/dav/oidc]"
+}
+
+// An entry that names the cookies of the app's own sign-in asks to be
+// approved with them: the approver is told which cookies pass and where, the
+// approval records them, and a catalog entry that later names more is a
+// request again, with only what was approved passing meanwhile.
+func TestAnApprovalOfSignInCookiesRecordsThem(t *testing.T) {
+	h := startKinds(t, signInMode("oidc_session"), "", nil)
+	tom := h.token(t, "tenant-demo", "tom")
+	_, body := h.do(t, "GET", exposuresPath("demo"), tom, "")
+	got := entryOf(t, body, "nextcloud", "dav")
+	if got["kind"] != "publicAppSignIn" || got["publicAddress"] != true || got["passesCredential"] != true || got["signInCookies"] == nil {
+		t.Fatalf("an entry with its sign-in cookies = %v", got)
+	}
+	access, _ := got["access"].(string)
+	for _, says := range []string{
+		"On /remote.php/dav/oidc alone", "the cookies oidc_session are passed to the app",
+		"No other cookie the browser holds is passed, the tenant's own sign-in session among them.",
+		"The platform does not know or check who calls.",
+	} {
+		if !strings.Contains(access, says) {
+			t.Errorf("the approver is not told %q: %v", says, access)
+		}
+	}
+	if limit, _ := got["rateLimit"].(string); !strings.Contains(limit, "5 requests a second") {
+		t.Errorf("the limit = %v", got["rateLimit"])
+	}
+
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/dav", tom, `{"kind":"publicAppSignIn"}`); code != http.StatusAccepted {
+		t.Fatalf("approve = %d %v", code, body)
+	}
+	if message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%s", "main"); !strings.Contains(message, "the cookies oidc_session on /remote.php/dav/oidc") {
+		t.Errorf("the commit does not say which cookies pass: %q", message)
+	}
+	if file := registryOf(t, h, "demo"); !strings.Contains(file,
+		"kind: publicAppSignIn\n      # The cookies of the app's own sign-in, and the paths they pass on.\n      signInCookies:\n        names: [oidc_session]\n        paths: [/remote.php/dav/oidc]\n") {
+		t.Fatalf("the registry does not record the cookies:\n%s", file)
+	}
+	_, body = h.do(t, "GET", exposuresPath("demo"), tom, "")
+	if got := entryOf(t, body, "nextcloud", "dav"); got["state"] != "approved" || got["note"] != nil {
+		t.Fatalf("after the approval = %v", got)
+	}
+
+	// The catalog entry comes to name another cookie.
+	dt.Commit(t, h.remote, map[string]string{dt.CataloguePath("nextcloud.yaml"): kindsProfile("nextcloud", signInMode("oidc_session, other"), "")})
+	_, body = h.do(t, "GET", exposuresPath("demo"), tom, "")
+	got = entryOf(t, body, "nextcloud", "dav")
+	note, _ := got["note"].(string)
+	if got["state"] != "requested" || got["approval"] == nil || !strings.Contains(note, "with the sign-in cookies oidc_session on /remote.php/dav/oidc") ||
+		!strings.Contains(note, "Only what was approved passes") {
+		t.Fatalf("an entry that names more than was approved = %v", got)
+	}
+}

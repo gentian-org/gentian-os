@@ -794,6 +794,7 @@ An `expose[]` entry declares one entry point. Its fields:
 | `forwardToken` | passes the edge access token to the backend; `trustTier: platform` only, because that token is valid at the director and at every sibling |
 | `exchangeToken` | the bouncer hands the backend a token exchanged at the tenant's realm for one whose audience is this app and nothing else; any trust tier; gateway and `oidc` only |
 | `clientAuthorization: app` | the `Authorization` header is the app's own and the edge leaves it alone; a request, in force once approved |
+| `signInCookies` | `{names, paths}` on a perimeter entry of `authMode: app`: the cookies of the app's own browser sign-in, which pass on those paths alone, in force once approved as `publicAppSignIn` ([security/design.md §2.14](../security/design.md)) |
 | `annotations` | gateway policy for this host: frame ancestors, escaped-slashes action |
 | `tile` | how the entry appears on the desktop (§17.3) |
 | `backend` | `{component?, service, port}`: the Service routed to |
@@ -923,7 +924,7 @@ registry.
 # Component.spec
 exposures:
   - exposureName: public-share       # names an entry of the profile
-    kind: public                     # public | publicAppCredential | insideAppCredential | signInAppAuthorization | tokenEntry
+    kind: public                     # public | publicAppCredential | publicAppSignIn | insideAppCredential | signInAppAuthorization | tokenEntry
     owner: <keycloak subject>        # immutable: a renewal by someone else is a new enablement
     reviewAt: 2026-11-24T00:00:00Z   # always set
     expiresAt: 2026-12-24T00:00:00Z  # optional
@@ -990,7 +991,7 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
 - on an entry: a perimeter entry is `none` or `app`, never `oidc`, and the
   four modes nothing checks (`jwt`, `bearer`, `basic`, `signature`) are refused
   there; `forwardToken` is meaningless on one; `authMode: app` is perimeter
-  only; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
+  only; `signInCookies` is a perimeter entry of `authMode: app`; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
   exclude `forwardToken` and each other; `apex` is a perimeter entry with
   `authMode: none` and no `subDomain`; a gateway entry is `oidc`;
 - an OIDC audience is the profile's own name, a dash and a label;

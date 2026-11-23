@@ -1387,6 +1387,47 @@ spec:
                           maxItems: 64
                           type: array
                           x-kubernetes-list-type: set
+                        signInCookies:
+                          description: |-
+                            SignInCookies are, on a perimeter entry of authMode app, the cookies
+                            of the app's own browser sign-in and the paths it runs on: an app
+                            whose callers present its own token in the Authorization header, but
+                            which signs a person in with a redirect to the identity provider and
+                            keeps the state of that redirect in a cookie of its own. On these
+                            paths alone the publishing proxy passes the named cookies to the app
+                            and the cookies the app sets back to the browser; everywhere else on
+                            the entry no cookie passes, as on any perimeter entry. The tenant's
+                            perimeter approver approves the entry with them.
+                          properties:
+                            names:
+                              description: |-
+                                Names are the cookies passed to the app, by exact name. Every other
+                                cookie the browser holds for the domain is removed, the session of
+                                the tenant's own sign-in among them.
+                              items:
+                                pattern: ^[A-Za-z0-9_]{1,64}$
+                                type: string
+                              maxItems: 4
+                              minItems: 1
+                              type: array
+                              x-kubernetes-list-type: set
+                            paths:
+                              description: |-
+                                Paths are the path prefixes, by whole segments, where the cookies
+                                pass: the app's sign-in and its return from the identity provider.
+                                A path outside the entry's own paths publishes nothing.
+                              items:
+                                maxLength: 512
+                                pattern: ^/[A-Za-z0-9._~/-]*$
+                                type: string
+                              maxItems: 8
+                              minItems: 1
+                              type: array
+                              x-kubernetes-list-type: set
+                          required:
+                          - names
+                          - paths
+                          type: object
                         subDomain:
                           description: |-
                             SubDomain is the host label of this entry in the tenant's zone. Empty
@@ -1603,6 +1644,11 @@ spec:
                           out by a client of its own'
                         rule: '!has(self.exchangedBy) || (self.surface == ''gateway''
                           && self.authMode == ''bearer'')'
+                      - message: 'signInCookies is for a perimeter entry with authMode
+                          app: it names the cookies of the app''s own sign-in that
+                          pass on a public address where no cookie passes otherwise'
+                        rule: '!has(self.signInCookies) || (self.surface == ''perimeter''
+                          && self.authMode == ''app'')'
                     maxItems: 32
                     type: array
                     x-kubernetes-list-map-keys:

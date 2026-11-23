@@ -1089,13 +1089,14 @@ main-address setting that is not the entry's, is refused (`422`) and nothing
 is committed (§5). The read is from git: it says where an entry will answer,
 not whether it answers yet.
 
-**Five kinds of entry take an approval**, and the registry records which
+**Six kinds of entry take an approval**, and the registry records which
 one was approved (`kind`):
 
 | Kind | Declared as | Once approved |
 | --- | --- | --- |
 | `public` | `surface: perimeter`, `authMode: none` | The declared paths are published for anyone. No credential reaches the app |
 | `publicAppCredential` | `surface: perimeter`, `authMode: app` | The declared paths are published for anyone, and the caller's `Authorization` header is passed to the app as sent. The app alone checks it; the platform does not know who calls |
+| `publicAppSignIn` | `surface: perimeter`, `authMode: app`, `signInCookies` | As `publicAppCredential`, and on the paths of the app's own browser sign-in the cookies it names pass to the app and its `Set-Cookie` back to the browser. The approval records the cookies and paths; the proxy passes those the entry names that were approved, so a profile narrows them on its own and widening them takes a new approval |
 | `insideAppCredential` | `surface: inside`, `authMode: app` | Nothing is published on the internet. The declared paths answer pods of this cluster alone, as on `publicAppCredential` otherwise (below) |
 | `signInAppAuthorization` | `surface: gateway`, `authMode: oidc`, `clientAuthorization: app` | Nothing is published. Behind sign-in, the `Authorization` header is left as the app's own page sent it (§4.1) |
 | `tokenEntry` | `surface: gateway`, `authMode: bearer` | Nothing is published. On a host of its own, a program reaches the component as a person, with a token of the tenant's realm made out to that host (§4.1). The approval covers the addresses a program may be sent back to after sign-in |
@@ -1115,7 +1116,7 @@ says that the app's own calls will fail until then.
 and nothing else, lets a path through only if it has one reading, removes
 every identity header and `Cookie` on the way in and `Set-Cookie` on the way
 out, removes `Authorization` unless the entry was approved as
-`publicAppCredential`, and limits each client address: 10 MB a body,
+`publicAppCredential` or `publicAppSignIn`, and limits each client address: 10 MB a body,
 20 requests a second with 200 more at once, 100 at a time — and 5 a second,
 50 more at once, 20 at a time on an entry that passes the credential,
 because every request to it may be a guess at a password. The numbers are

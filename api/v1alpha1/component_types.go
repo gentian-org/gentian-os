@@ -174,6 +174,11 @@ type ExposureEnablement struct {
 	// +optional
 	Kind ExposureKind `json:"kind,omitempty"`
 
+	// SignInCookies are the cookies and paths of the app's own sign-in that
+	// were approved with the entry, copied from the Tenant's entry.
+	// +optional
+	SignInCookies *SignInCookies `json:"signInCookies,omitempty"`
+
 	// Owner is the Keycloak subject that enabled the surface, set by the
 	// director from the caller's token.
 	// +kubebuilder:validation:MinLength=1

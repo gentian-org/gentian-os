@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -69,6 +70,11 @@ type Exposure struct {
 	// is the app's own). Empty is "public". The operator acts on an approval
 	// only while the entry still declares the kind recorded here.
 	Kind string `json:"kind,omitempty"`
+	// SignInCookies are, for "publicAppSignIn" (a public address that passes
+	// the caller's Authorization header and, on the paths of the app's own
+	// sign-in, the cookies it names), those cookies and paths as the entry
+	// declared them when the approver said yes.
+	SignInCookies *gentianov1alpha1.SignInCookies `json:"signInCookies,omitempty"`
 	// Owner is the subject that enabled it, from the caller's token.
 	Owner string `json:"owner"`
 	// ExpiresAt is when it stops answering, RFC 3339. Empty for a surface
@@ -112,6 +118,7 @@ type Exposure struct {
 const (
 	KindPublic                 = "public"
 	KindPublicAppCredential    = "publicAppCredential"
+	KindPublicAppSignIn        = "publicAppSignIn"
 	KindInsideAppCredential    = "insideAppCredential"
 	KindSignInAppAuthorization = "signInAppAuthorization"
 	KindTokenEntry             = "tokenEntry"
@@ -120,10 +127,36 @@ const (
 // validKind reports a kind the registry records; empty is a public address.
 func validKind(k string) bool {
 	switch k {
-	case "", KindPublic, KindPublicAppCredential, KindInsideAppCredential, KindSignInAppAuthorization, KindTokenEntry:
+	case "", KindPublic, KindPublicAppCredential, KindPublicAppSignIn, KindInsideAppCredential, KindSignInAppAuthorization, KindTokenEntry:
 		return true
 	}
 	return false
+}
+
+// signInCookieName and signInCookiePath are what the Tenant's schema admits
+// for the cookies of an app's own sign-in, held here too because the
+// registry is written line by line.
+var (
+	signInCookieName = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+	signInCookiePath = regexp.MustCompile(`^/[A-Za-z0-9._~/-]{0,511}$`)
+)
+
+// validSignInCookies reports a set the registry can record as written.
+func validSignInCookies(c *gentianov1alpha1.SignInCookies) bool {
+	if len(c.Names) == 0 || len(c.Names) > 4 || len(c.Paths) == 0 || len(c.Paths) > 8 {
+		return false
+	}
+	for _, n := range c.Names {
+		if !signInCookieName.MatchString(n) {
+			return false
+		}
+	}
+	for _, p := range c.Paths {
+		if !signInCookiePath.MatchString(p) {
+			return false
+		}
+	}
+	return true
 }
 
 // ErrMainAddressHeld is a second surface asked for the cluster's main
@@ -208,6 +241,12 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	}
 	if !validKind(e.Kind) {
 		return Result{}, fmt.Errorf("%w: kind %q", ErrInvalidName, e.Kind)
+	}
+	if (e.Kind == KindPublicAppSignIn) != (e.SignInCookies != nil) {
+		return Result{}, fmt.Errorf("the cookies of an app's own sign-in are recorded with an approval of kind %s, and only with it", KindPublicAppSignIn)
+	}
+	if e.SignInCookies != nil && !validSignInCookies(e.SignInCookies) {
+		return Result{}, fmt.Errorf("%w: signInCookies", ErrInvalidName)
 	}
 	if e.Apex && e.Kind != "" && e.Kind != KindPublic {
 		return Result{}, fmt.Errorf("a bare name is for a public address that passes no credential on")
@@ -295,6 +334,9 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	switch e.Kind {
 	case KindPublicAppCredential:
 		what += " (public address that passes the caller's credential to the app)"
+	case KindPublicAppSignIn:
+		what += fmt.Sprintf(" (public address that passes the caller's credential to the app, and the cookies %s on %s)",
+			strings.Join(e.SignInCookies.Names, ", "), strings.Join(e.SignInCookies.Paths, ", "))
 	case KindInsideAppCredential:
 		if verb == "Publish" {
 			verb = "Approve"
@@ -369,7 +411,9 @@ func renderExposures(tenant string, exposures []Exposure) string {
 	b.WriteString("# kind says what was approved. None, or public: a public address that\n")
 	b.WriteString("# passes no credential on. publicAppCredential: a public address that\n")
 	b.WriteString("# passes the caller's Authorization header to the app, which alone\n")
-	b.WriteString("# checks it. insideAppCredential: NOT a public address -- the same for\n")
+	b.WriteString("# checks it. publicAppSignIn: the same, and on the paths of the app's\n")
+	b.WriteString("# own sign-in the cookies it names (signInCookies), both ways.\n")
+	b.WriteString("# insideAppCredential: NOT a public address -- the same for\n")
 	b.WriteString("# callers inside the cluster alone, at a name only the cluster's DNS\n")
 	b.WriteString("# knows. signInAppAuthorization: NOT a public address -- an entry\n")
 	b.WriteString("# behind sign-in on which the Authorization header is left as the\n")
@@ -388,6 +432,12 @@ func renderExposures(tenant string, exposures []Exposure) string {
 		b.WriteString("      exposureName: " + e.ExposureName + "\n")
 		if e.Kind != "" {
 			b.WriteString("      kind: " + e.Kind + "\n")
+		}
+		if c := e.SignInCookies; c != nil {
+			b.WriteString("      # The cookies of the app's own sign-in, and the paths they pass on.\n")
+			b.WriteString("      signInCookies:\n")
+			b.WriteString("        names: [" + strings.Join(c.Names, ", ") + "]\n")
+			b.WriteString("        paths: [" + strings.Join(c.Paths, ", ") + "]\n")
 		}
 		b.WriteString("      owner: " + e.Owner + "\n")
 		b.WriteString("      reviewAt: " + e.ReviewAt + "\n")

@@ -251,6 +251,7 @@ spec:
                       enum:
                       - public
                       - publicAppCredential
+                      - publicAppSignIn
                       - insideAppCredential
                       - signInAppAuthorization
                       - tokenEntry
@@ -270,6 +271,40 @@ spec:
                         down.
                       format: date-time
                       type: string
+                    signInCookies:
+                      description: |-
+                        SignInCookies are the cookies and paths of the app's own sign-in that
+                        were approved with the entry, copied from the Tenant's entry.
+                      properties:
+                        names:
+                          description: |-
+                            Names are the cookies passed to the app, by exact name. Every other
+                            cookie the browser holds for the domain is removed, the session of
+                            the tenant's own sign-in among them.
+                          items:
+                            pattern: ^[A-Za-z0-9_]{1,64}$
+                            type: string
+                          maxItems: 4
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        paths:
+                          description: |-
+                            Paths are the path prefixes, by whole segments, where the cookies
+                            pass: the app's sign-in and its return from the identity provider.
+                            A path outside the entry's own paths publishes nothing.
+                          items:
+                            maxLength: 512
+                            pattern: ^/[A-Za-z0-9._~/-]*$
+                            type: string
+                          maxItems: 8
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - names
+                      - paths
+                      type: object
                   required:
                   - exposureName
                   - owner
