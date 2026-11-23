@@ -524,6 +524,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.personSecrets` | object |  | `PersonSecrets` declares that the component keeps secrets that belong to one person each, with the confidant: the lasting credential of a sign-in a person gave… |
 | `spec.extensions[].kernelRequirements.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `spec.extensions[].kernelRequirements.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `spec.extensions[].kernelRequirements.rights.breakGlass` | boolean |  | `BreakGlass` lets the same key ask one question more, for a person of the platform tenant: do they hold break_glass on the cluster now (cluster#break_glass)… |
 | `spec.extensions[].kernelRequirements.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
 | `spec.extensions[].kernelRequirements.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
 | `spec.extensions[].kernelRequirements.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
@@ -839,6 +840,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.personSecrets` | object |  | `PersonSecrets` declares that the component keeps secrets that belong to one person each, with the confidant: the lasting credential of a sign-in a person gave… |
 | `spec.requires.services.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `spec.requires.services.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `spec.requires.services.rights.breakGlass` | boolean |  | `BreakGlass` lets the same key ask one question more, for a person of the platform tenant: do they hold break_glass on the cluster now (cluster#break_glass)… |
 | `spec.requires.services.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
 | `spec.requires.services.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
 | `spec.requires.services.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
@@ -1438,6 +1440,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.personSecrets` | object |  | `PersonSecrets` declares that the component keeps secrets that belong to one person each, with the confidant: the lasting credential of a sign-in a person gave… |
 | `status.profileSpec.extensions[].kernelRequirements.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `status.profileSpec.extensions[].kernelRequirements.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `status.profileSpec.extensions[].kernelRequirements.rights.breakGlass` | boolean |  | `BreakGlass` lets the same key ask one question more, for a person of the platform tenant: do they hold break_glass on the cluster now (cluster#break_glass)… |
 | `status.profileSpec.extensions[].kernelRequirements.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
 | `status.profileSpec.extensions[].kernelRequirements.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
 | `status.profileSpec.extensions[].kernelRequirements.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
@@ -1753,6 +1756,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.personSecrets` | object |  | `PersonSecrets` declares that the component keeps secrets that belong to one person each, with the confidant: the lasting credential of a sign-in a person gave… |
 | `status.profileSpec.requires.services.rights` | object |  | `Rights` declares that the component asks the platform whether a person may use an app of its tenant, for a person who is not at a browser. |
 | `status.profileSpec.requires.services.rights.audit` | boolean |  | `Audit` lets the same key ask three more questions, for a person of the platform tenant: may they audit the cluster (cluster#can_audit), may they configure it… |
+| `status.profileSpec.requires.services.rights.breakGlass` | boolean |  | `BreakGlass` lets the same key ask one question more, for a person of the platform tenant: do they hold break_glass on the cluster now (cluster#break_glass)… |
 | `status.profileSpec.requires.services.runs` | object |  | `Runs` declares that the component starts runs: of the actions installed in its tenant, and of images of its own. |
 | `status.profileSpec.requires.services.runs.callback` | object | yes | `Callback` is where a run reaches this component. |
 | `status.profileSpec.requires.services.runs.callback.path` | string |  | `Path` is put before the paths a run calls. |
