@@ -18,6 +18,8 @@ import (
 // building tenant isolation NetworkPolicies.
 type Config struct {
 	ServicesNamespace string
+	// KubeAPIServerCIDR is admitted on 443 only when no address of the API
+	// server could be read (APIServerEgress).
 	KubeAPIServerCIDR string
 	// NarrowEdge admits, from the edge namespace, the Gateway's Envoy pods
 	// alone instead of every pod there. It follows the switch the kernel

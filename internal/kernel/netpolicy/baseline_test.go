@@ -26,7 +26,7 @@ import (
 func TestBaselineNetworkPolicy_AllowsKernelAndOperatorIngress(t *testing.T) {
 	t.Parallel()
 
-	policy := netpolicy.BaselineNetworkPolicy("demo", "tenant-demo", netpolicy.DefaultConfig(), nil)
+	policy := netpolicy.BaselineNetworkPolicy("demo", "tenant-demo", netpolicy.DefaultConfig(), netpolicy.ClusterServices{})
 
 	got := map[string]bool{}
 	for _, rule := range policy.Spec.Ingress {
@@ -60,7 +60,7 @@ func TestBaselineNetworkPolicy_AdmitsOnlyTheProxiesOfTheEdge(t *testing.T) {
 	edgePeer := func(narrow bool) *networkingv1.NetworkPolicyPeer {
 		cfg := netpolicy.DefaultConfig()
 		cfg.NarrowEdge = narrow
-		policy := netpolicy.BaselineNetworkPolicy("demo", "tenant-demo", cfg, nil)
+		policy := netpolicy.BaselineNetworkPolicy("demo", "tenant-demo", cfg, netpolicy.ClusterServices{})
 		for _, rule := range policy.Spec.Ingress {
 			for i := range rule.From {
 				if sel := rule.From[i].NamespaceSelector; sel != nil &&

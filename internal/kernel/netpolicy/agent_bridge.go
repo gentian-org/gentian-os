@@ -208,7 +208,7 @@ func AgentBridgeNetworkPolicies(in BuildInput) []*networkingv1.NetworkPolicy {
 		pods := in.podsOf(bridge)
 		bridgePeers = append(bridgePeers, networkingv1.NetworkPolicyPeer{PodSelector: &pods})
 
-		egress := BaselineEgress(in.Config, in.KubeAPIEndpts)
+		egress := BaselineEgress(in.Config, in.Cluster)
 		var ingress []networkingv1.NetworkPolicyIngressRule
 		if len(callerPeers) > 0 {
 			ingress = []networkingv1.NetworkPolicyIngressRule{{From: callerPeers}}

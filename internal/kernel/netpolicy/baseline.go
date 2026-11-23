@@ -11,11 +11,8 @@ SPDX-License-Identifier: MPL-2.0
 package netpolicy
 
 import (
-	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
@@ -30,8 +27,8 @@ const baselinePolicyName = "tenant-isolation"
 // identity provider and the operator must not reach either, and which have a
 // floor of their own instead (AgentBridgeNetworkPolicies). Network rules only ever add, so
 // a pod this policy selects could not be closed again by another.
-func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice, excluded ...metav1.LabelSelectorRequirement) *networkingv1.NetworkPolicy {
-	egress := BaselineEgress(cfg, kubeAPIEndpts)
+func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, cluster ClusterServices, excluded ...metav1.LabelSelectorRequirement) *networkingv1.NetworkPolicy {
+	egress := BaselineEgress(cfg, cluster)
 
 	// The edge: the Gateways' data plane runs in the edge function's
 	// namespace, and it is what reaches a tenant's routed pods.
@@ -76,54 +73,12 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 }
 
 // BaselineEgress is what every pod of a tenant may reach without anybody
-// having asked: the cluster's DNS and the API server. An agent bridge's pods are
-// given the same, by their own policy, and so are the instances of the model
-// gateway's PostgreSQL (internal/controller/model_gateway_database_egress.go).
-func BaselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []networkingv1.NetworkPolicyEgressRule {
-	protocolTCP := corev1.ProtocolTCP
-	protocolUDP := corev1.ProtocolUDP
-	dnsPort := intstr.FromInt32(53)
-	apiServerPort := intstr.FromInt32(443)
-
-	egress := []networkingv1.NetworkPolicyEgressRule{
-		{
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protocolUDP, Port: &dnsPort},
-				{Protocol: &protocolTCP, Port: &dnsPort},
-			},
-		},
-	}
-	if cfg.KubeAPIServerCIDR != "" {
-		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-			To: []networkingv1.NetworkPolicyPeer{
-				{IPBlock: &networkingv1.IPBlock{CIDR: cfg.KubeAPIServerCIDR}},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protocolTCP, Port: &apiServerPort},
-			},
-		})
-	}
-	if kubeAPIEndpts != nil {
-		for _, ep := range kubeAPIEndpts.Endpoints {
-			for _, addr := range ep.Addresses {
-				for _, port := range kubeAPIEndpts.Ports {
-					if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP || port.Port == nil {
-						continue
-					}
-					endpointPort := intstr.FromInt32(*port.Port)
-					egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-						To: []networkingv1.NetworkPolicyPeer{
-							{IPBlock: &networkingv1.IPBlock{CIDR: addr + "/32"}},
-						},
-						Ports: []networkingv1.NetworkPolicyPort{
-							{Protocol: &protocolTCP, Port: &endpointPort},
-						},
-					})
-				}
-			}
-		}
-	}
-	return egress
+// having asked: the cluster's DNS (DNSEgress) and the API server
+// (APIServerEgress). An agent bridge's pods are given the same, by their own
+// policy, and so are the instances of the model gateway's PostgreSQL
+// (internal/controller/model_gateway_database_egress.go).
+func BaselineEgress(cfg Config, cluster ClusterServices) []networkingv1.NetworkPolicyEgressRule {
+	return append(DNSEgress(cluster.DNS), APIServerEgress(cfg.KubeAPIServerCIDR, cluster)...)
 }
 
 // EdgeGatewayClassName is the GatewayClass of the inbound Gateways.
