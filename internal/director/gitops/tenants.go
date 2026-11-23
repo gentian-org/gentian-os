@@ -451,7 +451,7 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 			if !ValidName(name) {
 				return nil, fmt.Errorf("%w: placed profile %q", ErrInvalidName, name)
 			}
-			if text, _, _, err = placeEntry(text, name, "", "", false, meta); err != nil {
+			if text, _, _, err = placeEntry(text, name, "", "", meta); err != nil {
 				return nil, err
 			}
 		}

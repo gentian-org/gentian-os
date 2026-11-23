@@ -1030,11 +1030,13 @@ for each distinct repository in the confirmation and its add-ons:
   director   PUT /v1/tenants/{t}/repositories/{name}       {"role": "apps", "type": "oci", "url": "<url>"}
   custodian  PUT /v1/credentials/repository-{name}         {"fields": {"username": "<username>", "password": "<token>"}}
 then:
-  director   POST /v1/tenants/{t}/apps/{app}               {"coordinate": "…", "digest": "…", "defaultGrant": true|false}
+  director   POST /v1/tenants/{t}/apps/{app}               {"coordinate": "…", "digest": "…", "positions": ["…"]}
+  director   PUT  /v1/tenants/{t}/apps/{app}/addons        {"addons": [{"coordinate": "…", "digest": "…"}, …]}
 ```
 
-`defaultGrant` is the person's choice in the app ("install for everyone"),
-not the store's.
+`positions` is the person's choice in the app (which positions of the tenant
+get the app), not the store's. An add-on entry carries only its
+`coordinate` and `digest`.
 
 ## 8. Errors
 

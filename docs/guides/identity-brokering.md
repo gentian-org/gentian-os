@@ -90,7 +90,8 @@ once, to confirm that it is theirs before the two are linked (Keycloak's
 A person who arrived holds nothing until they are given a position. They
 appear in the target tenant's Admin Console under *Members* after their
 first sign-in; give them the position User, which lets them enter the
-tenant, and any position of the tenant's own.
+tenant and uses no app, or All apps, which is User with every installed app,
+and any position of the tenant's own.
 
 Try it with a person of the source: the target's sign-in page shows the
 button (or, to go straight to the source, add `&kc_idp_hint=<alias>` to a

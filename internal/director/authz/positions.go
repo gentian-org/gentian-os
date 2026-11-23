@@ -26,7 +26,7 @@ import (
 // named set of roles a kind of person holds, and is what a person is given.
 //
 // What a position IS -- its name, the roles it holds, the positions it
-// includes -- is declared: three every tenant has (ShippedPositions), and
+// includes -- is declared: four every tenant has (ShippedPositions), and
 // the ones a tenant's entry in git lists. The operator writes that into the
 // store and removes what is no longer declared (ReconcilePositions). WHO
 // holds a position, or a role beside one, is not declared anywhere: it is
@@ -41,9 +41,12 @@ const (
 
 // The positions every tenant has.
 const (
-	// PositionUser is a person of the tenant: user of the tenant, and of the
-	// apps installed for everyone.
+	// PositionUser is a person of the tenant: user of the tenant, which lets
+	// them in to its desktop, and of no app.
 	PositionUser = "user"
+	// PositionAllApps uses every app and add-on installed in the tenant, and
+	// includes user.
+	PositionAllApps = "all-apps"
 	// PositionAppAdministrator administers every installed app.
 	PositionAppAdministrator = "app-administrator"
 	// PositionTenantAdministrator administers the tenant, and holds no role
@@ -91,34 +94,36 @@ type PositionSpec struct {
 }
 
 // ShippedPositions are the positions every tenant has, for its installed
-// apps: User, App administrator and Tenant administrator. A tenant's own
-// declaration cannot redefine them.
+// apps: User, All apps, App administrator and Tenant administrator. A
+// tenant's own declaration cannot redefine them.
 //
-// The administrator of a base app administers its add-ons (the model), so
-// App administrator holds admin on every app that is not an add-on.
+// User holds the role user on the tenant and nothing else. All apps
+// includes User and holds user on every installed app and add-on, so it
+// follows the installed set. The administrator of a base app administers
+// its add-ons (the model), so App administrator holds admin on every app
+// that is not an add-on.
 func ShippedPositions(apps []InstalledApp) []PositionSpec {
 	user := PositionSpec{Name: PositionUser, Roles: []RoleGrant{{Role: RoleUser}}}
+	allApps := PositionSpec{Name: PositionAllApps, Includes: []string{PositionUser}}
 	appAdmin := PositionSpec{Name: PositionAppAdministrator}
 	tenantAdmin := PositionSpec{Name: PositionTenantAdministrator, Roles: []RoleGrant{{Role: RoleAdmin}}}
 	for _, app := range apps {
 		if app.Profile == "" {
 			continue
 		}
+		allApps.Roles = append(allApps.Roles, RoleGrant{App: app.Profile, Role: RoleUser})
 		appAdmin.Roles = append(appAdmin.Roles, RoleGrant{App: app.Profile, Role: RoleAdmin})
-		if app.ForEveryone || app.GivenTo(PositionUser) {
-			user.Roles = append(user.Roles, RoleGrant{App: app.Profile, Role: RoleUser})
-		}
 		// App administrator holds admin on the app, which is user too.
 		if app.GivenTo(PositionTenantAdministrator) {
 			tenantAdmin.Roles = append(tenantAdmin.Roles, RoleGrant{App: app.Profile, Role: RoleUser})
 		}
 		for _, addon := range app.Addons {
-			if addon.ForEveryone && addon.Profile != "" {
-				user.Roles = append(user.Roles, RoleGrant{App: addon.Profile, Role: RoleUser})
+			if addon.Profile != "" {
+				allApps.Roles = append(allApps.Roles, RoleGrant{App: addon.Profile, Role: RoleUser})
 			}
 		}
 	}
-	return []PositionSpec{user, appAdmin, tenantAdmin}
+	return []PositionSpec{user, allApps, appAdmin, tenantAdmin}
 }
 
 // GivenTo reports whether the tenant gave the app to a position by name.
@@ -152,7 +157,11 @@ func WithAppsGivenTo(position PositionSpec, apps []InstalledApp) PositionSpec {
 
 // Shipped reports whether name is one of the positions every tenant has.
 func Shipped(name string) bool {
-	return name == PositionUser || name == PositionAppAdministrator || name == PositionTenantAdministrator
+	switch name {
+	case PositionUser, PositionAllApps, PositionAppAdministrator, PositionTenantAdministrator:
+		return true
+	}
+	return false
 }
 
 // grantTuple is a role a position holds, as the store's entry.
@@ -284,7 +293,7 @@ func ofTenant(object, kind, tenant string) bool {
 // each tenant given: what each is, and nothing left of one that is no longer
 // declared.
 //
-// Declared is each tenant's own positions; the three every tenant has are
+// Declared is each tenant's own positions; the four every tenant has are
 // the caller's to add (ShippedPositions). A tenant not in the map is not
 // touched. Who holds a position is not this function's and stays -- except
 // for a position that is no longer declared, whose holders go with it:
@@ -387,7 +396,7 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 }
 
 // ValidatePositions reports why a tenant's own positions cannot be declared
-// as given, or nil: together with the three every tenant has, which a
+// as given, or nil: together with the four every tenant has, which a
 // tenant's own may include and may not redefine.
 func ValidatePositions(tenant string, own []PositionSpec) error {
 	for _, p := range own {

@@ -137,10 +137,10 @@ What sign-up changes, and only in that tenant's realm:
   identity provider is not such an account. With none named it holds no
   position of the tenant, so it holds no relation on the platform: the
   bouncer refuses it the desktop and every app, the director and the usher
-  refuse every tenant route, and an app given to the position User does not
-  reach it. A position such as `customer` reaches the apps given to it and
-  nothing else. The usage statistics report counts the holders of User in
-  such a tenant, not its realm's accounts. Making such an account a person
+  refuse every tenant route. A position such as `customer` reaches the apps
+  given to it and nothing else. The usage statistics report counts the
+  holders of User, which include those of All apps, in such a tenant, not
+  its realm's accounts. Making such an account a person
   of the tenant is an administrator giving it a position, as for anybody.
 - **Its people can be sent home instead** (`spec.signUp.home`, an https
   address such as a website's account page). The tenant's bare domain then
@@ -168,8 +168,8 @@ A realm may let people of another realm — another tenant here, or a tenant of
 another cluster — sign in with their own account. People of another tenant
 of the same cluster are declared on both tenants (`spec.signInFrom`,
 `spec.signInTo`); the operator gives each person who arrives the positions
-the sign-in names, `user` or positions the tenant declares, never an
-administrator's. An entry with `holding` gives them only to a person who
+the sign-in names, `user`, `all-apps` or positions the tenant declares,
+never an administrator's. An entry with `holding` gives them only to a person who
 holds one of the named positions in the source tenant, given or through a
 position that includes it; it is asked at every arrival, and what the entry
 gives is taken from a person who no longer holds one, whoever gave it. A
@@ -337,14 +337,18 @@ Administering a tenant is not administering its apps.
 
 | Position | Holds |
 |---|---|
-| User (`user`) | `user` on the tenant, and `user` on each app given to it. Every person of the tenant holds it |
+| User (`user`) | `user` on the tenant, and no role on any app: the desktop alone. Every person of the tenant holds it |
+| All apps (`all-apps`) | `user` on every installed app and add-on of the tenant, and includes User. It follows what is installed |
 | App administrator (`app-administrator`) | `admin` on every installed app |
 | Tenant administrator (`tenant-administrator`) | `admin` on the tenant, and no role on any app |
 | a tenant's own (`spec.positions`) | the roles it names, and those of the positions it includes: an executive includes the sales manager |
 
 A person is given positions, and may be given a single role beside them as
-a visible exception. An app is given at install to the positions chosen
-(`spec.apps[].positions`; `defaultGrant` is the position User).
+a visible exception. An app reaches people through the positions it is
+given to (`spec.apps[].positions`, at install or in the console's position
+grid) and through All apps. There is no install "for everyone":
+`spec.apps[].defaultGrant`, `spec.apps[].addonGrants` and an app given to
+User are accepted and give nothing.
 
 **Who writes what.** What a position is, is declared in git with the tenant
 and written by the director as a commit. Who holds a position or a role is
@@ -381,7 +385,7 @@ screen.
 
 | Who | Holds | Desktop |
 |---|---|---|
-| **A person of the tenant** | User, and often a position of the tenant's own | The tiles of the apps they hold a role on |
+| **A person of the tenant** | User, and All apps or a position of the tenant's own | The tiles of the apps they hold a role on |
 | **Tenant administrator** | Tenant administrator | The administration console; an app's tile only with a role on that app |
 | **Perimeter approver** | Tenant administrator, and named on the Cluster claim (§1.1c) | Approves what the tenant publishes to the internet (`can_expose`) and its egress beyond the baseline (`can_approve_privilege`), and nothing else beyond the tenant administrator's. A perimeter approver of the platform tenant approves for every tenant, and so does the cluster's administrator, by default ([security/design.md §2.14](../security/design.md)) |
 | **Cluster administrator** | `admin` on the cluster, by name (§1.1c) | The platform console |

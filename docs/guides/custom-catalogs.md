@@ -776,7 +776,7 @@ which is refused while the component is placed. The desktop is the exception: it
 tenant's own and lives as long as the tenant.
 
 A profile placed `while: llm` is found through the index (`placedWith: llm`) before it is on the
-cluster, and is installed into every user tenant for everyone at the build the index lists, as an
+cluster, and is installed into every user tenant at the build the index lists, as an
 ordinary entry: it is uninstalled when the cluster stops serving models, and refused to anyone who
 asks to uninstall it.
 

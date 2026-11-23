@@ -110,7 +110,7 @@ elsewhere on the same cluster:
 
 ```
 POST /v1/tenants/{t}/apps/{profile}
-{"coordinate": "<catalogue>/<app>", "digest": "sha256:<64 hex>", "defaultGrant": true}
+{"coordinate": "<catalogue>/<app>", "digest": "sha256:<64 hex>", "positions": ["sales"]}
 ```
 
 to the director, with the person's token. The director asks one question:
@@ -121,16 +121,17 @@ confirmation in hand (§6.4), or the command line with no store at all (§9).
 
 **Who gets the app.** Installing makes an app exist; who may open it is who
 holds a role on it ([iam.md §1.2](iam.md)). The install says which positions
-of the tenant get the app: `"defaultGrant": true` gives it to the position
-User, which every person of the tenant holds, and `"positions"` names others,
-the tenant's own among them. Both are written on the app's entry in the same
-commit (`spec.apps[].defaultGrant`, `spec.apps[].positions`), and the
-operator writes the role `user` on the app for each position when it
-projects the tenant. The entry is the whole answer: a position taken off it
+of the tenant get the app in `"positions"`, written on the app's entry in the
+same commit (`spec.apps[].positions`), and the operator writes the role
+`user` on the app for each position when it projects the tenant. The entry
+is the whole answer for the positions it names: a position taken off it
 loses the app, and so does everyone who had it through that position alone.
+Beside them, the position All apps uses every installed app. There is no
+install "for everyone": the position User is the desktop alone and gives no
+app.
 
-Because this gives people access, a request that names a position, or
-carries `"defaultGrant": true`, is asked a second question, `can_grant` on
+Because this gives people access, a request that names a position is asked
+a second question, `can_grant` on
 `tenant:<t>`, and must pass both; it is refused with `403` before anything is
 fetched or written when it does not.
 
@@ -138,8 +139,8 @@ fetched or written when it does not.
 |---|---|
 | `coordinate` | `<catalogue>/<app>`, optional. The catalog must be one the tenant sees (§9): a source of the whole cluster, or a catalog of this tenant's own. The profile bundle is fetched from it and committed before the install. A coordinate in any other catalog is refused. The app named must be the `{profile}` in the path |
 | `digest` | travels with a `coordinate`, and only with one: required beside it, refused without it. Stated with or without capitals; recorded as `sha256:<lowercase hex>` |
-| `defaultGrant` | optional boolean. `true` gives the app to the position User and needs `can_grant` as well; `false` removes the key from an entry that had it; absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
-| `positions` | optional list of position names: the three every tenant has, or ones the tenant declares; another name is refused with `400`. Sent on an installed app it replaces the list. `user` in it is written as `defaultGrant` |
+| `positions` | optional list of position names: the four every tenant has, or ones the tenant declares; another name is refused with `400`. Sent on an installed app it replaces the list, and removes a `defaultGrant` the entry still carries. `user` in it gives nothing and is not written. Absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
+| `defaultGrant` | accepted and has no effect |
 
 **An install comes from a catalog source the cluster declares,** for all
 its tenants or for this one (§9). A pin is
@@ -152,15 +153,15 @@ hash to the digest, so the two fields travel together or not at all:
 | `coordinate` in a catalog the cluster declares no source for | refused with `422`, naming the catalog and the sources there are. Nothing is fetched or written |
 | `digest` and no `coordinate` | refused with `422`: there is nowhere to fetch the bytes it is the digest of |
 | `coordinate` and no `digest` | refused with `400` |
-| neither | nothing is fetched and nothing pinned. It installs a profile the cluster already holds, and on an installed app it states `defaultGrant` and leaves the pin as it is |
+| neither | nothing is fetched and nothing pinned. It installs a profile the cluster already holds, and on an installed app it states `positions` and leaves the pin as it is |
 
 | Answer | Meaning |
 |---|---|
 | `202 {"status":"installed","commit":…}` | committed to `gentian-deployments` |
-| `202 {"status":"updated","commit":…}` | the app was installed already, and the pin moved or `defaultGrant` was stated with another value than the entry had |
+| `202 {"status":"updated","commit":…}` | the app was installed already, and the pin moved or `positions` stated another list than the entry had |
 | `200 {"status":"already_installed"}` | nothing to change |
 | `400` | the digest is not a sha256 digest, a coordinate comes with none, the coordinate is not `<catalogue>/<app>`, or it names another app |
-| `403` | the caller may not install in this tenant, or asked to install for everyone and may not grant in it |
+| `403` | the caller may not install in this tenant, or named positions and may not grant in it |
 | `404` | the source does not serve this entry |
 | `422` | the coordinate's catalog is not a source this cluster declares, or a digest came with no coordinate: the build could not be verified. Or the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Or the bundle holds what a bundle may not: a kind that is not a companion, an object that is not this profile's, or any companion when the catalog is a tenant's own. Nothing was installed |
 | `502` | the source could not be read, or served bytes that do not hash to the digest. Nothing was installed |
@@ -610,12 +611,12 @@ person            App Store app                      store                      
   │                     │──────────────────────────────►│                          │
   │                     │  confirmed + confirmation     │                          │
   │                     │◄──────────────────────────────│                          │
-  │  "install", and for everyone or not                 │                          │
+  │  "install", and for which positions                 │                          │
   │────────────────────►│  declare the repository       (director)                 │
   │                     │─────────────────────────────────────────────────────────►│
   │                     │  set its credential           (custodian)                │
   │                     │─────────────────────────────────────────────────────────►│
-  │                     │  install {coordinate, digest, defaultGrant}  (director)  │
+  │                     │  install {coordinate, digest, positions}  (director)     │
   │                     │─────────────────────────────────────────────────────────►│
 ```
 
@@ -712,7 +713,7 @@ token:
    user name and the token to the vault. Both ask `can_write_credential` on
    the tenant. The app hands the credential over once and does not keep it.
 2. Installs at the director (§3) with exactly the confirmation's
-   `coordinate` and `digest`, and the `defaultGrant` the person chose.
+   `coordinate` and `digest`, and the `positions` the person chose.
 3. For the add-ons the confirmation lists: sets the app's add-ons at the
    director (§3), each as the item's `coordinate` and `digest`. Step 2 has
    pinned the app, which is what the director requires of a pinned add-on.
@@ -904,7 +905,7 @@ may open it are facts the cluster holds.
 
 ```
 director   GET /v1/tenants/{t}/apps                  installed profiles, their digests, their addons and each addon's pin
-director   GET /v1/tenants/{t}/apps/{p}/addons       one app's addons, addonPins: {name, digest, catalogue} for each that is pinned, and addonGrants: {name, defaultGrant} for each that is for everyone
+director   GET /v1/tenants/{t}/apps/{p}/addons       one app's addons, addonPins: {name, digest, catalogue} for each that is pinned, and addonGrants, which has no effect and is empty once the add-ons are set again
 usher      GET /v1/tenants/{t}/apps/status           what the cluster made of them
 usher      GET /v1/tenants/{t}/apps/retained         which uninstalled apps still hold data
 usher      GET /v1/tenants/{t}/resources             the plan, and what is used of it
@@ -1083,13 +1084,13 @@ A cluster that names no store, or does not report, has no App Store app.
 
 ```bash
 kubectl gentian apps list --tenant <t> --available
-kubectl gentian apps install <app> --tenant <t> [--from <source>] [--digest sha256:…] [--for-everyone]
+kubectl gentian apps install <app> --tenant <t> [--from <source>] [--digest sha256:…] [--positions <a,b>]
 ```
 
 through the director, on the same route and under the same question as §3.
 The command looks the entry up in what the director lists of the cluster's
 sources, takes the digest that listing states unless `--digest` names
-another, and sends `{coordinate, digest, defaultGrant}` like every other
+another, and sends `{coordinate, digest, positions}` like every other
 caller. When several sources serve the name it asks for `--from`; on a
 cluster that declares no source it installs nothing.
 The cluster renders no catalog of its own in any interface. A second,

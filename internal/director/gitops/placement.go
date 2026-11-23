@@ -48,12 +48,11 @@ func refusePlaced(lines []string, profile string) error {
 // Place puts a placeable app in a tenant's manifest, marked placed, or marks
 // the entry already there. digest and catalogue pin the build where the
 // placement fetched one; otherwise the entry names the profile alone and
-// runs the profile the cluster has. defaultGrant gives everyone access to
-// it, as an install for everyone does.
+// runs the profile the cluster has.
 //
 // The platform tenant takes placed apps: it is where the platform's own
 // components run.
-func (g *GitOps) Place(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant bool, meta Meta) (Result, error) {
+func (g *GitOps) Place(ctx context.Context, tenant, profile, digest, catalogue string, meta Meta) (Result, error) {
 	if !ValidName(profile) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
 	}
@@ -65,15 +64,15 @@ func (g *GitOps) Place(ctx context.Context, tenant, profile, digest, catalogue s
 	}
 	msg := fmt.Sprintf("feat(%s): place %s (via %s)", tenant, profile, meta.actor())
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
-		return placeEntry(text, profile, digest, catalogue, defaultGrant, meta)
+		return placeEntry(text, profile, digest, catalogue, meta)
 	})
 }
 
 // placeEntry is Place on a manifest's text.
-func placeEntry(text, profile, digest, catalogue string, defaultGrant bool, meta Meta) (string, string, bool, error) {
+func placeEntry(text, profile, digest, catalogue string, meta Meta) (string, string, bool, error) {
 	lines := strings.Split(text, "\n")
 	if _, _, _, present := appEntryExtent(lines, profile); !present {
-		out, ok := insertComponentProfile(text, profile, digest, catalogue, defaultGrant)
+		out, ok := insertComponentProfile(text, profile, digest, catalogue)
 		if !ok {
 			return "", "", false, errors.New("failed to update apps list")
 		}
@@ -90,10 +89,6 @@ func placeEntry(text, profile, digest, catalogue string, defaultGrant bool, meta
 		lines, _ = setAppEntryKey(lines, profile, "catalogue", catalogue, "digest")
 		lines, _ = setAppEntryKey(lines, profile, appMovedAtKey, meta.movedAt(), "catalogue")
 		lines, _ = setAppEntryKey(lines, profile, appMovedByKey, meta.mover(), appMovedAtKey)
-		changed = true
-	}
-	if defaultGrant && appEntryValue(lines, profile, appDefaultGrantKey) != "true" {
-		lines, _ = setAppEntryKey(lines, profile, appDefaultGrantKey, "true", appPlacedKey)
 		changed = true
 	}
 	if !changed {

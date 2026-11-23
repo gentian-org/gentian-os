@@ -29,7 +29,7 @@ func chatProfile() string {
 }
 
 // While the cluster serves models every tenant has the app the platform
-// places with them, for everyone, and nobody can uninstall it; when the
+// places with them, and nobody can uninstall it; when the
 // cluster stops serving models, no tenant has it. The app is not offered.
 func TestThePlatformPlacesTheAppsThatComeWithServingModels(t *testing.T) {
 	chat := chatProfile()
@@ -49,8 +49,8 @@ func TestThePlatformPlacesTheAppsThatComeWithServingModels(t *testing.T) {
 	g := gitops.NewGitOps(dt.Clone(t, h.remote), h.remote, dt.Cluster, gitops.Person{})
 	for _, tenant := range tenants {
 		app := appNamed(t, g, tenant, "chat")
-		if app.Digest != sha(chat) || !app.DefaultGrant {
-			t.Errorf("%s: %+v, want the listed build for everyone", tenant, app)
+		if app.Digest != sha(chat) || app.DefaultGrant {
+			t.Errorf("%s: %+v, want the listed build", tenant, app)
 		}
 	}
 	// Placed once: a second pass changes nothing.

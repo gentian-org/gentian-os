@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package api_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -27,7 +28,7 @@ func TestATenantsPositionIsDeclaredAsACommit(t *testing.T) {
 	if list, _ := body["positions"].([]any); code != http.StatusOK || len(list) != 0 {
 		t.Fatalf("before: %d %v", code, body)
 	}
-	if shipped, _ := body["shipped"].([]any); len(shipped) != 3 {
+	if shipped := fmt.Sprint(body["shipped"]); shipped != "[user all-apps app-administrator tenant-administrator]" {
 		t.Errorf("the positions every tenant has = %v", body["shipped"])
 	}
 
@@ -67,6 +68,7 @@ func TestATenantsPositionIsDeclaredAsACommit(t *testing.T) {
 		want               int
 	}{
 		"a position every tenant has":       {"PUT", base + "/user", `{}`, http.StatusUnprocessableEntity},
+		"all apps, which every tenant has":  {"PUT", base + "/all-apps", `{}`, http.StatusUnprocessableEntity},
 		"a name that is none":               {"PUT", base + "/Sales_Manager", `{}`, http.StatusUnprocessableEntity},
 		"including what the tenant has not": {"PUT", base + "/deputy", `{"includes":["ghost"]}`, http.StatusUnprocessableEntity},
 		"a circle":                          {"PUT", base + "/sales-manager", `{"includes":["executive"]}`, http.StatusUnprocessableEntity},

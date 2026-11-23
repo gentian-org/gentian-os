@@ -1875,8 +1875,8 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.admin` | object |  | `Admin` is how the tenant's administrator account is handed over. |
 | `spec.admin.requireMFA` | boolean |  | `RequireMFA` makes enrolling a second factor part of activating the account. |
 | `spec.apps` | []object |  | `Apps` lists the applications to install for this tenant. |
-| `spec.apps[].addonGrants` | []object |  | `AddonGrants` says which addons of this app every member of the tenant has access to by default. |
-| `spec.apps[].addonGrants[].defaultGrant` | boolean |  | `DefaultGrant` says every member of the tenant has access to this addon by default, as an app's defaultGrant does for the app. |
+| `spec.apps[].addonGrants` | []object |  | `AddonGrants` is accepted and has no effect, as defaultGrant has none. |
+| `spec.apps[].addonGrants[].defaultGrant` | boolean |  | `DefaultGrant` is accepted and has no effect. |
 | `spec.apps[].addonGrants[].name` | string | yes | `Name` is the addon's profile name, as addons lists it. |
 | `spec.apps[].addonPins` | []object |  | `AddonPins` pins addons of this app to the build each was installed from, like digest and catalog do for the app itself. |
 | `spec.apps[].addonPins[].catalogue` | string |  | `Catalogue` is the catalog the pinned build was fetched from: the first half of its coordinate, \<catalogue>/\<name>. |
@@ -1891,7 +1891,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.apps[].config.dropIns[].name` | string | yes | `Name` must match a ComponentProfile.spec.customization.dropIns[].name entry that sets tenantEditable: true. |
 | `spec.apps[].config.extraValues` | object (free-form) |  | `ExtraValues` deep-merges Helm values over the profile's defaults. |
 | `spec.apps[].config.replicas` | integer (int32) |  | `Replicas` overrides the default replica count. |
-| `spec.apps[].defaultGrant` | boolean |  | `DefaultGrant` says every member of the tenant has access to this app by default. |
+| `spec.apps[].defaultGrant` | boolean |  | `DefaultGrant` is accepted and has no effect. |
 | `spec.apps[].digest` | string |  | `Digest` pins the profile bundle this app was installed from: the build the install asked for. |
 | `spec.apps[].movedAt` | string |  | `MovedAt` is when the pin was last moved to another build, RFC 3339, and MovedBy who or what moved it: a person's id, or the policy that did ("policy:latest"). |
 | `spec.apps[].movedBy` | string |  |  |
@@ -1999,7 +1999,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.platformAccess.adminsEnter` | boolean |  | `AdminsEnter` says the members of the platform's administrators' group may sign in to this tenant, through the kernel realm, and hold its admins group for as… |
 | `spec.positionGivers` | []object |  | `PositionGivers` are the components, of this tenant or another, that may give this tenant's people some of its positions and take them again; see… |
 | `spec.positionGivers[].component` | string | yes | `Component` is the profile the component runs. |
-| `spec.positionGivers[].positions` | []string | yes | `Positions` are the positions of this tenant the component gives and takes: user or a name of spec.positions. |
+| `spec.positionGivers[].positions` | []string | yes | `Positions` are the positions of this tenant the component gives and takes: user, all-apps or a name of spec.positions. |
 | `spec.positionGivers[].tenant` | string | yes | `Tenant` is the tenant the component runs in. |
 | `spec.positions` | []object |  | `Positions` are the tenant's own positions, beside the three every tenant has; see TenantPosition. |
 | `spec.positions[].description` | string |  | `Description` says who the position is for. |
@@ -2047,13 +2047,13 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.security.session.rememberMe` | boolean |  | `RememberMe` offers the longer session the realm is configured for. |
 | `spec.signInFrom` | []object |  | `SignInFrom` are other tenants of this cluster whose people sign in here; see TenantSignInFrom. |
 | `spec.signInFrom[].holding` | []string |  | `Holding` narrows who is given Positions: a person who, in the other tenant, holds one of these positions of that tenant -- given to them directly, or held… |
-| `spec.signInFrom[].positions` | []string |  | `Positions` are the positions of this tenant its people are given when they arrive: user (a person of the tenant, who may enter it) or a name of spec.positions. |
+| `spec.signInFrom[].positions` | []string |  | `Positions` are the positions of this tenant its people are given when they arrive: user (a person of the tenant, who may enter it), all-apps (user, and every… |
 | `spec.signInFrom[].tenant` | string | yes | `Tenant` is the other tenant. |
 | `spec.signInTo` | []string |  | `SignInTo` are other tenants of this cluster this tenant's people may sign in to with their account here: this tenant's half of the other's spec.signInFrom. |
 | `spec.signUp` | object |  | `SignUp` is whether people make their own accounts in the realm. |
 | `spec.signUp.enabled` | boolean |  | `Enabled` opens the realm's registration page: anybody on the internet may make an account, with an e-mail address as the login, a message to that address to… |
 | `spec.signUp.home` | string |  | `Home` is where the people of such a tenant are sent instead of its desktop: the page of the app they made their account for, e.g. a website's account page. |
-| `spec.signUp.positions` | []string |  | `Positions` are the positions of this tenant an account is given when the person made it themself on the registration page: user or a name of spec.positions… |
+| `spec.signUp.positions` | []string |  | `Positions` are the positions of this tenant an account is given when the person made it themself on the registration page: user, all-apps or a name of… |
 | `spec.storeTerms` | object |  | `StoreTerms` records that the tenant accepted the App Store's terms: which version, and when. |
 | `spec.storeTerms.acceptedAt` | string (date-time) | yes | `AcceptedAt` is when they were accepted. |
 | `spec.storeTerms.version` | string | yes | `Version` is the version of the terms the store named when they were accepted. |

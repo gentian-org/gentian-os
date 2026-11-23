@@ -29,7 +29,7 @@ import (
 // beyond it.
 
 // installedAppsOf is what a tenant has installed, by profile name, each with
-// the add-ons activated inside it and whether it was given to everyone.
+// the add-ons activated inside it and the positions it was given to.
 //
 // From spec.apps, without the components the platform places: those are not
 // apps the tenant installed, and have no object in the store. An entry whose
@@ -50,12 +50,12 @@ func installedAppsOf(ctx context.Context, c client.Client, tenant *gentianov1alp
 			continue
 		}
 		entry := authz.InstalledApp{
-			Profile: profile, ForEveryone: app.DefaultGrant, Positions: app.Positions,
+			Profile: profile, Positions: app.Positions,
 			Roles: declaredRolesOf(ctx, c, profile),
 		}
 		for _, addon := range app.Addons {
 			entry.Addons = append(entry.Addons, authz.InstalledApp{
-				Profile: addon, ForEveryone: app.AddonDefaultGranted(addon), Roles: declaredRolesOf(ctx, c, addon),
+				Profile: addon, Roles: declaredRolesOf(ctx, c, addon),
 			})
 		}
 		out = append(out, entry)
@@ -101,11 +101,11 @@ func declaredRoles(roles *gentianov1alpha1.ProfileRoles) []authz.DeclaredRole {
 	return out
 }
 
-// positionsOf is the tenant's positions: the three every tenant has, for
+// positionsOf is the tenant's positions: the four every tenant has, for
 // its installed apps, and the ones its spec declares, each with the role
 // user of every app the tenant gave to it (spec.apps[].positions). A declared position
-// under one of the three names is left out; admission refuses it, and the
-// three are not a tenant's to redefine.
+// under one of the four names is left out; admission refuses it, and the
+// four are not a tenant's to redefine.
 func positionsOf(tenant *gentianov1alpha1.Tenant, apps []authz.InstalledApp) []authz.PositionSpec {
 	out := authz.ShippedPositions(apps)
 	for _, p := range tenant.Spec.Positions {

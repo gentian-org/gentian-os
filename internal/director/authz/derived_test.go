@@ -30,8 +30,9 @@ func derivedOf(s *writable) []string {
 }
 
 // What follows for the positions: Chief holds what Deputy holds through the
-// inclusion, App administrator administers the add-on of the shop it
-// administers. Nothing else follows, and asked again nothing is written.
+// inclusion, All apps enters the tenant through User, App administrator
+// administers the add-on of the shop it administers. Nothing else follows,
+// and asked again nothing is written.
 func TestTheProjectionWritesWhatFollowsForEachPosition(t *testing.T) {
 	ctx := context.Background()
 	s := tenantStore(t, "demo")
@@ -39,6 +40,7 @@ func TestTheProjectionWritesWhatFollowsForEachPosition(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
+		"position:demo/all-apps#holder|derived_user|tenant:demo",
 		"position:demo/app-administrator#holder|derived_admin|app:demo/shop-sales",
 		"position:demo/chief#holder|derived_admin|tenant:demo",
 	}
@@ -55,7 +57,8 @@ func TestTheProjectionWritesWhatFollowsForEachPosition(t *testing.T) {
 	if err := ReconcileDerived(ctx, s, []string{"demo"}); err != nil {
 		t.Fatal(err)
 	}
-	if got := derivedOf(s); len(got) != 1 || !strings.HasPrefix(got[0], "position:demo/app-administrator#holder") {
+	if got := derivedOf(s); len(got) != 2 || !strings.HasPrefix(got[0], "position:demo/all-apps#holder") ||
+		!strings.HasPrefix(got[1], "position:demo/app-administrator#holder") {
 		t.Fatalf("after the inclusion went: %v", got)
 	}
 }

@@ -43,11 +43,11 @@ func (w *writable) Write(_ context.Context, writes, deletes []Tuple) error {
 }
 
 // tenantStore is a tenant as the projections leave it: attached, with the
-// three positions every tenant has, a shop with a sales add-on that declares
+// four positions every tenant has, a shop with a sales add-on that declares
 // a role, and two positions of its own, one including the other.
 func tenantStore(t *testing.T, tenant string) *writable {
 	t.Helper()
-	apps := []InstalledApp{{Profile: "wiki", ForEveryone: true}, {Profile: "shop", Addons: []InstalledApp{
+	apps := []InstalledApp{{Profile: "wiki"}, {Profile: "shop", Addons: []InstalledApp{
 		{Profile: "shop-sales", Roles: []DeclaredRole{{Name: "manager"}}},
 	}}}
 	store := projection(t, "c1", tenant, apps)
@@ -165,7 +165,7 @@ func TestTakingRemovesWhatIsHeldAndNothingElse(t *testing.T) {
 		t.Errorf("taken again: %v, %v", changed, err)
 	}
 	// What the position holds is the position's, and stays.
-	if !s.memoryStore[Tuple{User: "position:demo/user#holder", Relation: "user", Object: "app:demo/wiki"}] {
+	if !s.memoryStore[Tuple{User: "position:demo/all-apps#holder", Relation: "user", Object: "app:demo/wiki"}] {
 		t.Error("taking a person's role removed the position's")
 	}
 	n, err := RemovePerson(ctx, s, "demo", "anna")
@@ -329,6 +329,7 @@ func TestAnAppsHoldersAreReadThroughPositions(t *testing.T) {
 	give("cleo", Assignment{App: "shop-sales", Role: RoleUser})
 	give("dan", Assignment{App: "shop", Role: RoleAdmin})
 	give("eve", Assignment{Position: PositionUser})
+	give("fay", Assignment{Position: PositionAllApps})
 
 	admins, users, err := AppHolders(ctx, s, "demo", "shop-sales")
 	if err != nil {
@@ -337,15 +338,15 @@ func TestAnAppsHoldersAreReadThroughPositions(t *testing.T) {
 	if strings.Join(admins, ",") != "anna,dan" {
 		t.Errorf("administrators of the add-on = %v, want the base's: anna through her position, dan directly", admins)
 	}
-	if strings.Join(users, ",") != "anna,ben,cleo,dan" {
+	if strings.Join(users, ",") != "anna,ben,cleo,dan,fay" {
 		t.Errorf("users of the add-on = %v", users)
 	}
 	_, users, err = AppHolders(ctx, s, "demo", "wiki")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(users, ",") != "anna,eve" {
-		t.Errorf("users of an app for everyone = %v, want its administrator and the holder of User", users)
+	if strings.Join(users, ",") != "anna,fay" {
+		t.Errorf("users of an app = %v, want its administrator and the holder of All apps, not the holder of User", users)
 	}
 	if _, _, err := AppHolders(ctx, s, "demo", "no/such"); !errors.Is(err, ErrInvalidID) {
 		t.Errorf("err = %v, want ErrInvalidID", err)
@@ -357,14 +358,14 @@ func TestAnAppsHoldersAreReadThroughPositions(t *testing.T) {
 func TestAPositionsHoldersIncludeThoseOfAPositionThatIncludesIt(t *testing.T) {
 	ctx := context.Background()
 	s := tenantStore(t, "demo")
-	for sub, position := range map[string]string{"anna": PositionUser, "ben": "chief", "cleo": "deputy"} {
+	for sub, position := range map[string]string{"anna": PositionUser, "ben": "chief", "cleo": "deputy", "dora": PositionAllApps} {
 		if _, err := Give(ctx, s, "demo", sub, Assignment{Position: position}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	people, err := PositionHolders(ctx, s, "demo", PositionUser)
-	if err != nil || strings.Join(people, ",") != "anna" {
-		t.Errorf("people = %v, err = %v", people, err)
+	if err != nil || strings.Join(people, ",") != "anna,dora" {
+		t.Errorf("people = %v, err = %v, want the holder of All apps too: it includes User", people, err)
 	}
 	deputies, err := PositionHolders(ctx, s, "demo", "deputy")
 	if err != nil || strings.Join(deputies, ",") != "ben,cleo" {

@@ -229,7 +229,7 @@ The platform's sign-in sidecar is neither: a profile declares
 2. **Bundle checks** by the director at fetch and by the operator at rollout
    (`internal/profilebundle`): digest, kinds, names, origin.
 3. **The director's question**: `can_install_app` for an install, `can_grant`
-   for one made for everyone; for what a profile requests, `can_expose`,
+   for one given to positions; for what a profile requests, `can_expose`,
    `can_approve_privilege` on the tenant, and the cluster's `can_approve` for a
    pod-security waiver.
 4. **Runtime policy**: Kyverno, pod security and network policy in the tenant's
@@ -266,7 +266,7 @@ spec:
     - profile: nextcloud-base-ce
       catalogue: gentian
       digest: sha256:…          # the bundle this install pinned
-      defaultGrant: true        # given to the position User: every person of the tenant
+      positions: [sales]        # its holders use the app, beside the position all-apps
     - profile: openproject-ce
       config:
         replicas: 2
