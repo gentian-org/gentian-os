@@ -76,7 +76,7 @@ metadata:
     app.kubernetes.io/managed-by: gentian-os
 spec:
   controllerName: {{ .Values.controllerName | quote }}
-  description: Gentian OS inside entries via Envoy Gateway, reachable from inside the cluster only
+  description: Gentian OS inside entries via Envoy Gateway
   parametersRef:
     group: gateway.envoyproxy.io
     kind: EnvoyProxy
