@@ -1226,6 +1226,31 @@ refused "--approve-egress by somebody who is not the perimeter approver installs
 is "... and asks the director for no write" "$(writes)" ""
 unset ASKS
 
+# A build that consumes from the tenant's other apps says so before it is
+# installed, and --grant-integrations sends the grant with the install.
+ASKS_GRANT='"egress":[],"integrations":[{"install":"notes","contract":"file-store","capabilities":["webdav:read","webdav:write"],"asPerson":true}]'
+ASKS="{${ASKS_GRANT},\"mayGrant\":true}"
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef"}'
+gentian apps install notes --tenant acme
+has "an install says what the build consumes" "${OUT}" "notes file-store  webdav:read, webdav:write  as the person"
+has "... and that it waits, with the way to grant" "${OUT}" "install with --grant-integrations"
+lacks "... and grants nothing unasked" "$(writes)" "grant"
+
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef","granted":[{"install":"notes","contract":"file-store"}]}'
+gentian apps install notes --tenant acme --grant-integrations
+is "--grant-integrations sends what was listed with the install" \
+    "$(writes | sed 's/^POST [^ ]* //' | jq -c '.grant')" '[{"install":"notes","contract":"file-store"}]'
+has "... and says it is granted" "${OUT}" "Its integrations are granted, by you."
+
+ASKS="{${ASKS_GRANT},\"mayGrant\":false}"
+fresh; apps_catalogue
+gentian apps install notes --tenant acme --grant-integrations
+refused "--grant-integrations by somebody who may not grant installs nothing"
+is "... and asks the director for no write" "$(writes)" ""
+unset ASKS
+
 # An entry the catalog leaves to the store (me or ee) is not in the
 # listing, only counted, so by name it is not installed from here: the store
 # is the route. Once a tenant has it, the update report moves it like any

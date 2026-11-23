@@ -459,6 +459,7 @@ kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when seve
 kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
 kubectl gentian apps install xwiki-ce --tenant demo --positions sales,support   # and gives it to these positions
 kubectl gentian apps install xwiki-ce --tenant demo --approve-egress # and approves the outbound access it asks for
+kubectl gentian apps install xwiki-ce --tenant demo --grant-integrations # and grants what it consumes of the tenant's other apps
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
 kubectl gentian apps outdated [--tenant demo]                     # which installs are behind their catalog, and why they stay
@@ -572,7 +573,13 @@ its hosts and the profile's reason. `--approve-egress` approves those requests
 with the install: each is recorded as a grant by you, as `apps approve` records
 one. It needs the perimeter approver's right in the tenant
 (`can_approve_privilege`); without that right nothing is installed. Without the
-flag the app is installed and waits for the approver, as before.
+flag the app is installed and waits for the approver.
+
+It also lists what the build consumes of the tenant's other apps: each
+contract with its capabilities. `--grant-integrations` grants those with the
+install, each with exactly what the build asks for. It needs the right to grant
+in the tenant (`can_grant`); without that right nothing is installed. Without
+the flag the integrations wait for a grant in the Admin Console.
 
 Inspect app reconciliation:
 

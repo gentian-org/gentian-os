@@ -62,6 +62,44 @@ type askedEgress struct {
 	answered bool
 }
 
+// askedIntegration is one contract a build about to be installed consumes
+// from another app of the tenant: what the app reaches once the tenant's
+// administrator grants it.
+type askedIntegration struct {
+	// Install is the app that consumes: the app itself, or one it comes with.
+	Install string `json:"install"`
+	// Contract is the contract consumed, as a grant names it.
+	Contract string `json:"contract"`
+	// Provider is the app the profile expects to provide it; empty where the
+	// tenant's binding chooses.
+	Provider string `json:"provider,omitempty"`
+	// Capabilities are what of the contract the build asks for, and what a
+	// grant with the install grants: no more, no less.
+	Capabilities []string `json:"capabilities"`
+	// AsPerson says the app calls the provider as the person it acts for.
+	AsPerson bool `json:"asPerson,omitempty"`
+	// CameWith names the app this one comes with, for a contract that is not
+	// the app's own.
+	CameWith string `json:"cameWith,omitempty"`
+
+	// answered says the contract waits for nobody: the app's grant names it
+	// already, or the platform pre-approves it among apps installed together.
+	answered bool
+}
+
+// grantedContract is one contract an install names as granted.
+type grantedContract struct {
+	Install  string `json:"install"`
+	Contract string `json:"contract"`
+}
+
+// buildAsks is everything a build about to be installed asks for that
+// somebody of the tenant answers.
+type buildAsks struct {
+	egress       []askedEgress
+	integrations []askedIntegration
+}
+
 // approvedRequest is one request an install names as approved.
 type approvedRequest struct {
 	Install   string `json:"install"`
@@ -71,7 +109,7 @@ type approvedRequest struct {
 // egressAnswers is what already answers egress requests in a tenant.
 type egressAnswers struct {
 	domains []string
-	grants   []gitops.PrivilegeGrant
+	grants  []gitops.PrivilegeGrant
 }
 
 // egressAnswersFor reads them: the cluster's policy, the tenant's own
@@ -135,45 +173,99 @@ func asksOf(install string, definition *gentianov1alpha1.ComponentProfile, origi
 	return out
 }
 
-// installAsks are the egress requests an install of profile at definition
-// would bring to tenant: the app's own, and those of the apps it comes with
-// that the tenant does not have. An app it comes with whose build cannot be
-// read is left out: its requests wait for the approver as they always did.
+// integrationsOf are the contracts one profile consumes, installed as
+// install, each with whether it waits for nobody. A contract that names no
+// capability is left out: there is nothing to grant of it with the install.
+func integrationsOf(install string, definition *gentianov1alpha1.ComponentProfile, cameWith string,
+	granted []gentianov1alpha1.TenantAppGrant, together map[string]bool,
+) []askedIntegration {
+	if definition == nil {
+		return nil
+	}
+	var out []askedIntegration
+	for _, in := range definition.Spec.Integrations {
+		if in.Contract == "" || len(in.Capabilities) == 0 || in.Provider == install {
+			continue
+		}
+		named := slices.ContainsFunc(granted, func(g gentianov1alpha1.TenantAppGrant) bool {
+			return g.App == install && slices.ContainsFunc(g.Consume, func(c gentianov1alpha1.ConsumeGrantSpec) bool {
+				return c.Contract == in.Contract
+			})
+		})
+		out = append(out, askedIntegration{
+			Install: install, Contract: in.Contract, Provider: in.Provider, Capabilities: in.Capabilities,
+			AsPerson: in.AsPerson, CameWith: cameWith,
+			answered: named || (in.Provider != "" && together[in.Provider]),
+		})
+	}
+	return out
+}
+
+// installAsks are the egress requests and the integrations an install of
+// profile at definition would bring to tenant: the app's own, and those of
+// the apps it comes with that the tenant does not have. An app it comes with
+// whose build cannot be read is left out: what it asks for waits for the
+// tenant as it always did.
 func (s *Server) installAsks(
 	ctx context.Context, tenant, profile string, definition *gentianov1alpha1.ComponentProfile, origin, preferred string,
-) ([]askedEgress, error) {
+) (buildAsks, error) {
 	if definition == nil {
-		return nil, nil
+		return buildAsks{}, nil
 	}
 	have, err := s.egressAnswersFor(ctx, tenant)
 	if err != nil {
-		return nil, err
+		return buildAsks{}, err
+	}
+	granted, err := s.cfg.Repo.TenantAppGrants(ctx, tenant)
+	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+		return buildAsks{}, err
 	}
 	if origin == "" {
 		origin = definition.Annotations[profilebundle.OriginAnnotation]
 	}
-	out := asksOf(profile, definition, origin, "", have)
-	if len(definition.Spec.ComesWith) == 0 {
-		return out, nil
+	// The apps this install brings, which the platform pre-approves each
+	// other's contracts among (approveAmong).
+	type brought struct {
+		name       string
+		definition *gentianov1alpha1.ComponentProfile
+		origin     string
 	}
-	apps, err := s.cfg.Repo.Apps(ctx, tenant)
-	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
-		return nil, err
+	bringing := []brought{{profile, definition, origin}}
+	if len(definition.Spec.ComesWith) > 0 {
+		apps, err := s.cfg.Repo.Apps(ctx, tenant)
+		if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+			return buildAsks{}, err
+		}
+		for _, name := range definition.Spec.ComesWith {
+			if name == profile || gitops.BroughtPlatformProfile(name) ||
+				slices.ContainsFunc(apps, func(a gitops.App) bool { return a.Profile == name }) {
+				continue
+			}
+			found, why, err := s.findCompanion(ctx, tenant, name, preferred)
+			if err != nil {
+				return buildAsks{}, err
+			}
+			if why != "" {
+				continue
+			}
+			with, from := s.companionDefinition(ctx, tenant, found)
+			bringing = append(bringing, brought{name, with, from})
+		}
 	}
-	for _, name := range definition.Spec.ComesWith {
-		if name == profile || gitops.BroughtPlatformProfile(name) ||
-			slices.ContainsFunc(apps, func(a gitops.App) bool { return a.Profile == name }) {
-			continue
+	together := map[string]bool{}
+	if len(bringing) > 1 {
+		for _, b := range bringing {
+			together[b.name] = true
 		}
-		found, why, err := s.findCompanion(ctx, tenant, name, preferred)
-		if err != nil {
-			return nil, err
+	}
+	var out buildAsks
+	for _, b := range bringing {
+		cameWith := ""
+		if b.name != profile {
+			cameWith = profile
 		}
-		if why != "" {
-			continue
-		}
-		with, from := s.companionDefinition(ctx, tenant, found)
-		out = append(out, asksOf(name, with, from, profile, have)...)
+		out.egress = append(out.egress, asksOf(b.name, b.definition, b.origin, cameWith, have)...)
+		out.integrations = append(out.integrations, integrationsOf(b.name, b.definition, cameWith, granted, together)...)
 	}
 	return out, nil
 }
@@ -210,7 +302,8 @@ func (s *Server) companionDefinition(ctx context.Context, tenant string, c compa
 
 // catalogueEntryAsks answers what one build of a catalog entry asks for,
 // before it is installed: the egress requests that would wait for the
-// tenant's perimeter approver, and whether the caller is one.
+// tenant's perimeter approver and the integrations that would wait for a
+// grant, and whether the caller may give each.
 //
 // Under can_view, like the listing the build was chosen from. The build is
 // fetched and held to its digest as an install holds it; nothing is written.
@@ -240,22 +333,33 @@ func (s *Server) catalogueEntryAsks(w http.ResponseWriter, r *http.Request, c ca
 		return
 	}
 	waiting := []askedEgress{}
-	for _, a := range asks {
+	for _, a := range asks.egress {
 		if !a.answered {
 			waiting = append(waiting, a)
 		}
 	}
-	may := false
-	if len(waiting) > 0 {
-		// Asked only where there is something to approve: a tenant that
-		// cannot be asked about leaves the button out, and the install works
-		// as it does without one.
-		if target, err := tenantObject(r); err == nil {
-			may, _ = s.can(ctx, c, "can_approve_privilege", target)
+	ungranted := []askedIntegration{}
+	for _, a := range asks.integrations {
+		if !a.answered {
+			ungranted = append(ungranted, a)
+		}
+	}
+	// Each asked only where there is something to answer: a tenant that
+	// cannot be asked about leaves the choice out, and the install works as
+	// it does without one.
+	mayApprove, mayGrant := false, false
+	if target, err := tenantObject(r); err == nil {
+		if len(waiting) > 0 {
+			mayApprove, _ = s.can(ctx, c, "can_approve_privilege", target)
+		}
+		if len(ungranted) > 0 {
+			mayGrant, _ = s.can(ctx, c, "can_grant", target)
 		}
 	}
 	s.json(w, http.StatusOK, map[string]any{
-		"tenant": tenant, "profile": profile, "digest": digest, "egress": waiting, "mayApprove": may,
+		"tenant": tenant, "profile": profile, "digest": digest,
+		"egress": waiting, "mayApprove": mayApprove,
+		"integrations": ungranted, "mayGrant": mayGrant,
 	})
 }
 
@@ -336,6 +440,83 @@ func (s *Server) grantWithInstall(ctx context.Context, c call, tenant, decision 
 		approved = append(approved, a)
 	}
 	return approved
+}
+
+// mayGrantWithInstall settles, before anything is fetched or written, that
+// the caller may grant the integrations an install names: can_grant on the
+// tenant, as on the Integrations screen. It writes the refusal itself and
+// reports false. The decision it returns is what the grants' commits record.
+func (s *Server) mayGrantWithInstall(w http.ResponseWriter, r *http.Request, c call, tenant string, grant []grantedContract) (string, bool) {
+	if len(grant) == 0 {
+		return "", true
+	}
+	for _, g := range grant {
+		if !gitops.ValidName(g.Install) || !gitops.ValidName(g.Contract) {
+			s.fail(w, r, http.StatusBadRequest, `grant names contracts: [{"install": "<app>", "contract": "<contract>"}]`)
+			return "", false
+		}
+	}
+	target := authz.Tenant(tenant)
+	ok, err := s.can(r.Context(), c, "can_grant", target)
+	if err != nil {
+		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+		return "", false
+	}
+	if !ok {
+		s.fail(w, r, http.StatusForbidden,
+			"granting what an app may consume needs can_grant on the tenant; install the app without grant, "+
+				"and its integrations wait for somebody who may grant. Nothing was installed")
+		return "", false
+	}
+	return "can_grant " + target, true
+}
+
+// notConsumed names the first contract an install grants that the build and
+// the apps it comes with do not consume, or "".
+func notConsumed(grant []grantedContract, asks []askedIntegration) string {
+	for _, g := range grant {
+		if !slices.ContainsFunc(asks, func(a askedIntegration) bool { return a.Install == g.Install && a.Contract == g.Contract }) {
+			return g.Install + " " + g.Contract
+		}
+	}
+	return ""
+}
+
+// grantIntegrationsWithInstall records the grants an install named, once the
+// install is written: each contract with exactly what the build asks of it,
+// by the caller. A contract the app's grant already names is left as it
+// stands, so a narrower grant is not widened. A grant that cannot be written
+// leaves its contract waiting, as if it had not been named; the answer lists
+// what was granted.
+func (s *Server) grantIntegrationsWithInstall(ctx context.Context, c call, tenant, decision string, grant []grantedContract, asks []askedIntegration) []grantedContract {
+	granted := []grantedContract{}
+	meta := c.meta
+	meta.Decision = decision
+	for _, g := range grant {
+		i := slices.IndexFunc(asks, func(a askedIntegration) bool {
+			return a.Install == g.Install && a.Contract == g.Contract && !a.answered
+		})
+		if i < 0 {
+			continue
+		}
+		_, err := s.cfg.Repo.GrantConsumeWithInstall(ctx, tenant, g.Install, g.Contract, asks[i].Capabilities, meta)
+		if err != nil {
+			s.cfg.Log.WarnContext(ctx, "a grant given with an install could not be written; the integration waits",
+				"tenant", tenant, "install", g.Install, "contract", g.Contract, "error", err.Error())
+			continue
+		}
+		granted = append(granted, g)
+	}
+	return granted
+}
+
+// grantSummary says an install's grants in a refusal.
+func grantSummary(grant []grantedContract) string {
+	parts := make([]string, 0, len(grant))
+	for _, g := range grant {
+		parts = append(parts, g.Install+" "+g.Contract)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // approveSummary says an install's approvals in a refusal.
