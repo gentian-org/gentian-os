@@ -133,8 +133,7 @@ What sign-up changes, and only in that tenant's realm:
   refuses to add an execution to its built-in one.
 - **An account made that way holds what `spec.signUp.positions` names, and
   nothing else.** The realm's listener says the account was made
-  (`user.registered`) and the operator gives those positions, never an
-  administrator's; an account made for a person who came in through an
+  (`user.registered`) and the operator gives those positions; an account made for a person who came in through an
   identity provider is not such an account. With none named it holds no
   position of the tenant, so it holds no relation on the platform: the
   bouncer refuses it the desktop and every app, the director and the usher
@@ -173,7 +172,9 @@ the sign-in names, `user` or positions the tenant declares, never an
 administrator's. An entry with `holding` gives them only to a person who
 holds one of the named positions in the source tenant, given or through a
 position that includes it; it is asked at every arrival, and what the entry
-gives is taken from a person who no longer holds one
+gives is taken from a person who no longer holds one, whoever gave it. A
+person who should keep it without the position at home is given a position
+of the tenant's own for it
 ([identity-brokering.md](../guides/identity-brokering.md)). A realm of another cluster is Keycloak's identity
 brokering: [identity-brokering.md](../guides/identity-brokering.md). The sign-in page shows
 every provider not set to *Hide on login page*; the platform's own (`kernel`,
@@ -355,7 +356,12 @@ without an administrator: an account made on the registration page
 (`spec.signInFrom`, §1.1c), and a component the tenant names in
 `spec.positionGivers`, which gives and takes exactly the positions named
 for it there, through the registrar with its own key
-([custom-catalogs.md](../guides/custom-catalogs.md)). A tenant's last administrator
+([custom-catalogs.md](../guides/custom-catalogs.md)); the tenant whose
+positions are given is the one that consents. None of the three gives or
+takes a position that holds `admin` on the tenant or on an app, itself or
+through a position it includes: the tenant's admission refuses one named
+there, and the operator and the registrar refuse it when it is given.
+Administering is given by an administrator. A tenant's last administrator
 cannot lose the position. The tenant's first administrator is given it by
 the operator, once.
 

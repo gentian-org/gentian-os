@@ -51,9 +51,10 @@ type TenantSignUp struct {
 	// Positions are the positions of this tenant an account is given when
 	// the person made it themself on the registration page: user or a name
 	// of spec.positions, e.g. customer. Only with Enabled. An account that
-	// came in through an identity provider is not given them. The positions
-	// of the tenant's and of its apps' administrators are never given this
-	// way.
+	// came in through an identity provider is not given them. A position
+	// that holds admin on the tenant or on an app, itself or through a
+	// position it includes, is never given this way, and a tenant that
+	// names one is refused.
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -257,8 +258,9 @@ type TenantSignInFrom struct {
 
 	// Positions are the positions of this tenant its people are given when
 	// they arrive: user (a person of the tenant, who may enter it) or a
-	// name of spec.positions. The positions of the tenant's and of its
-	// apps' administrators are never given this way.
+	// name of spec.positions. A position that holds admin on the tenant or
+	// on an app, itself or through a position it includes, is never given
+	// this way, and a tenant that names one is refused.
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -269,8 +271,10 @@ type TenantSignInFrom struct {
 	// tenant, holds one of these positions of that tenant -- given to them
 	// directly, or held through a position that includes it. Asked at every
 	// arrival: a person who holds none of them then is not given Positions,
-	// and what Positions names is taken from them. Unset, everybody who
-	// arrives from the other tenant is given Positions and nothing is taken.
+	// and what Positions names is taken from them, whoever gave it; a person
+	// who should hold it without the position at home is given a position
+	// of this tenant's own for it. Unset, everybody who arrives from the
+	// other tenant is given Positions and nothing is taken.
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -281,7 +285,8 @@ type TenantSignInFrom struct {
 // may give the people of this tenant some of its positions, and take them
 // again. The component presents its own key at the registrar, and is
 // admitted for exactly these positions of this tenant: nothing else of the
-// tenant is opened by it.
+// tenant is opened by it. This tenant, whose positions are given, is the one
+// that consents; the component's tenant is not asked.
 type TenantPositionGiver struct {
 	// Tenant is the tenant the component runs in.
 	// +kubebuilder:validation:Required
@@ -298,8 +303,9 @@ type TenantPositionGiver struct {
 	Component string `json:"component"`
 
 	// Positions are the positions of this tenant the component gives and
-	// takes: user or a name of spec.positions. The positions of the
-	// tenant's and of its apps' administrators are never given this way.
+	// takes: user or a name of spec.positions. A position that holds admin
+	// on the tenant or on an app, itself or through a position it includes,
+	// is never given this way, and a tenant that names one is refused.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`

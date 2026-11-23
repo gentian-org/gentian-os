@@ -216,6 +216,12 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		}
 	}
 
+	// A position given without an administrator never administers.
+	if what := tenant.AdministrationGivenUnasked(); what != "" {
+		return fmt.Errorf("tenant %q: %s, a position that holds admin on the tenant or on an app, itself or "+
+			"through a position it includes; a sign-up, a sign-in and a component never give such a position", tenant.Name, what)
+	}
+
 	if err := tenancy.EnforceSingle(v.TenancyMode, v.KernelRealm, tenant); err != nil {
 		return fmt.Errorf("tenant %q: %w", tenant.Name, err)
 	}

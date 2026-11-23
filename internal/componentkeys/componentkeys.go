@@ -80,9 +80,13 @@ type PositionGiver struct {
 }
 
 // PositionGrant is the positions of one tenant a position giver gives.
+// Administering are the ones the tenant names for it that administer the
+// tenant or an app, which it never gives: listed so that a refusal can say
+// why.
 type PositionGrant struct {
-	Tenant    string   `json:"tenant"`
-	Positions []string `json:"positions"`
+	Tenant        string   `json:"tenant"`
+	Positions     []string `json:"positions"`
+	Administering []string `json:"administering,omitempty"`
 }
 
 // PersonSecrets is an entry of the confidant's list: a component that keeps

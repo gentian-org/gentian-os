@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"sort"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,8 +43,10 @@ const (
 
 // positionGivers are the entries the registrar's list must hold: one per
 // component that holds a key and that a tenant names in
-// spec.positionGivers, with what each such tenant lets it give. Never an
-// administrator's position, whatever a tenant written past the schema says.
+// spec.positionGivers, with what each such tenant lets it give. Never a
+// position that administers the tenant or an app (PositionAdministers),
+// whatever a tenant written past the schema and the admission says: those
+// are listed apart, as administering, for the registrar to refuse by name.
 func positionGivers(ctx context.Context, c client.Reader) ([]componentkeys.PositionGiver, error) {
 	keys, err := componentKeys(ctx, c, rightsCheckKeys, holdsComponentKey)
 	if err != nil {
@@ -64,13 +67,21 @@ func positionGivers(ctx context.Context, c client.Reader) ([]componentkeys.Posit
 			continue
 		}
 		for _, g := range t.Spec.PositionGivers {
-			positions := notAdministrators(g.Positions)
-			if len(positions) == 0 {
-				continue
+			var positions, administering []string
+			for _, p := range g.Positions {
+				switch {
+				case t.PositionAdministers(p):
+					if !slices.Contains(administering, p) {
+						administering = append(administering, p)
+					}
+				case !slices.Contains(positions, p):
+					positions = append(positions, p)
+				}
 			}
 			sort.Strings(positions)
+			sort.Strings(administering)
 			ref := gentianov1alpha1.TenantComponentRef{Tenant: g.Tenant, Profile: g.Component}
-			granted[ref] = append(granted[ref], componentkeys.PositionGrant{Tenant: t.Name, Positions: positions})
+			granted[ref] = append(granted[ref], componentkeys.PositionGrant{Tenant: t.Name, Positions: positions, Administering: administering})
 		}
 	}
 	var out []componentkeys.PositionGiver

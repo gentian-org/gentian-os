@@ -172,3 +172,62 @@ func TestSignInFromHoldingGivesAndTakesByWhatIsHeldAtHome(t *testing.T) {
 		t.Error("an arrival through an entry without holding took a position")
 	}
 }
+
+// No arrival gives a position that administers the tenant or an app, itself
+// or through a position it includes, and none takes one: not at sign-up,
+// not by a plain sign-in, not by one that asks what is held at home.
+func TestNoArrivalGivesOrTakesAPositionThatAdministers(t *testing.T) {
+	ctx := context.Background()
+	shop := &gentianov1alpha1.Tenant{}
+	shop.Name = "shop"
+	shop.Spec.Positions = []gentianov1alpha1.TenantPosition{
+		{Name: "customer"},
+		{Name: "editor"},
+		{Name: "shopkeeper", Roles: []gentianov1alpha1.TenantPositionRole{{App: "shop", Role: "admin"}}},
+		{Name: "owner", Roles: []gentianov1alpha1.TenantPositionRole{{Role: "admin"}}},
+		{Name: "chief", Includes: []string{"shopkeeper"}},
+	}
+	// Written past the admission, which refuses each of these.
+	shop.Spec.SignUp = &gentianov1alpha1.TenantSignUp{Enabled: true, Positions: []string{"customer", "chief"}}
+	shop.Spec.SignInFrom = []gentianov1alpha1.TenantSignInFrom{
+		{Tenant: "team", Positions: []string{"editor", "owner"}, Holding: []string{"sales"}},
+		{Tenant: "partners", Positions: []string{"customer", "shopkeeper"}},
+	}
+	store := newFakeRights(append(declaredPositions("shop", "customer", "editor", "shopkeeper", "owner", "chief"),
+		declaredPositions("team", "sales")...)...)
+	a := arrivalsFor(t, store, shop)
+	holds := func(sub, position string) bool {
+		return store.has(userOf(t, sub), "holder", authz.Position("shop", position))
+	}
+
+	if err := a.PersonRegistered(ctx, "shop", "u-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !holds("u-1", "customer") || holds("u-1", "chief") {
+		t.Error("a sign-up gave a position that administers through an inclusion, or not customer")
+	}
+	if err := a.PersonEntered(ctx, "shop", "u-2", "tenant-partners", "p-2"); err != nil {
+		t.Fatal(err)
+	}
+	if !holds("u-2", "customer") || holds("u-2", "shopkeeper") {
+		t.Error("a plain sign-in gave a position that administers, or not customer")
+	}
+	store.tuples[authz.Tuple{User: userOf(t, "t-3"), Relation: "holder", Object: authz.Position("team", "sales")}] = true
+	if err := a.PersonEntered(ctx, "shop", "u-3", "tenant-team", "t-3"); err != nil {
+		t.Fatal(err)
+	}
+	if !holds("u-3", "editor") || holds("u-3", "owner") {
+		t.Error("a sign-in by what is held at home gave a position that administers, or not editor")
+	}
+	// u-4 holds owner, given by an administrator, and nothing at home: the
+	// arrival takes editor and leaves owner.
+	for _, p := range []string{"owner", "editor"} {
+		store.tuples[authz.Tuple{User: userOf(t, "u-4"), Relation: "holder", Object: authz.Position("shop", p)}] = true
+	}
+	if err := a.PersonEntered(ctx, "shop", "u-4", "tenant-team", "t-4"); err != nil {
+		t.Fatal(err)
+	}
+	if holds("u-4", "editor") || !holds("u-4", "owner") {
+		t.Error("an arrival took a position that administers, or left editor")
+	}
+}

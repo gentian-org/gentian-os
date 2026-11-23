@@ -45,8 +45,9 @@ func positionGiversList(t *testing.T, c client.Client) (string, []registrar.Posi
 
 // A component that holds a key is listed for the positions each tenant
 // that names it names, and for nothing else: a component no tenant names is
-// not listed, one that holds no key is not either, and an administrator's
-// position written past the schema is left out. The list carries the key's
+// not listed, one that holds no key is not either, and a position that
+// administers -- an administrator's, or one holding admin itself or through
+// an inclusion -- is listed apart as administering, never as given. The list carries the key's
 // hash, never the key, and is written empty when no tenant names anybody.
 func TestRegistrarListsAPositionGiverForWhatTheTenantsName(t *testing.T) {
 	ctx := context.Background()
@@ -56,8 +57,14 @@ func TestRegistrarListsAPositionGiverForWhatTheTenantsName(t *testing.T) {
 		"checkout": rightsProfile("checkout", true), "idle": rightsProfile("idle", true), "plain": rightsProfile("plain", false),
 	}
 	customers := rightsTenant("customers")
+	// deputy administers an app, and chief through deputy.
+	customers.Spec.Positions = []gentianov1alpha1.TenantPosition{
+		{Name: "customer"},
+		{Name: "deputy", Roles: []gentianov1alpha1.TenantPositionRole{{App: "shop", Role: "admin"}}},
+		{Name: "chief", Includes: []string{"deputy"}},
+	}
 	customers.Spec.PositionGivers = []gentianov1alpha1.TenantPositionGiver{
-		{Tenant: "shop", Component: "checkout", Positions: []string{"customer", "tenant-administrator"}},
+		{Tenant: "shop", Component: "checkout", Positions: []string{"customer", "tenant-administrator", "chief"}},
 		{Tenant: "shop", Component: "plain", Positions: []string{"customer"}},
 	}
 	students := rightsTenant("students")
@@ -84,7 +91,7 @@ func TestRegistrarListsAPositionGiverForWhatTheTenantsName(t *testing.T) {
 	if len(givers) != 1 || givers[0].Tenant != "shop" || givers[0].Component != "checkout" || givers[0].KeyHash != hex.EncodeToString(sum[:]) {
 		t.Fatalf("the list is %s", raw)
 	}
-	if got := fmt.Sprint(givers[0].Gives); got != "[{customers [customer]} {students [student user]}]" {
+	if got := fmt.Sprint(givers[0].Gives); got != "[{customers [customer] [chief tenant-administrator]} {students [student user] []}]" {
 		t.Fatalf("the checkout gives %s", got)
 	}
 	if strings.Contains(raw, string(secret.Data[rightsCheckKeyKey])) {

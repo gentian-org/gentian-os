@@ -149,7 +149,11 @@ The realm says, with each arrival, who the person is in the source realm,
 and the operator asks the rights store what they hold there. At every
 arrival it gives the entry's positions to a person who holds one of
 `holding`, and takes them from one who does not: who left sales loses
-`website-editor` the next time they sign in. An arrival that does not say
+`website-editor` the next time they sign in, whoever gave it to them; a
+person who should keep it without being in sales is given a position of the
+target's own for it. A position that holds `admin` on the tenant or an app,
+itself or through an inclusion, is never given or taken this way. An
+arrival that does not say
 who the person is in the source gives and takes nothing. An entry without
 `holding` gives its positions to everybody from the source and takes
 nothing.

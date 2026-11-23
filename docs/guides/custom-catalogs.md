@@ -593,9 +593,10 @@ catalog that makes a participant a student -- gives and takes them at the regist
 one any component that holds a key has in its Secret `rights-check-<profile>`, and the registrar's
 address is `spec.package.valueMapping.platform.registrarUrlKey`. The key alone opens nothing: the
 tenant `<t>` names the component, by its tenant and profile, and the positions in
-`spec.positionGivers`, which an administrator writes in git. The registrar admits it for exactly
-those positions of that tenant, never an administrator's and no role; the person is one of `<t>`'s,
-and the operator records the component as who acted.
+`spec.positionGivers`, which an administrator writes in git: the tenant whose positions are given is
+the one that consents. The registrar admits it for exactly those positions of that tenant, never one
+that holds `admin` on the tenant or an app (itself or through an inclusion) and no role; the person is
+one of `<t>`'s, and the operator records the component as who acted.
 
 **A component that calls apps of other clusters for the person**, or takes such calls, declares
 `spec.requires.services.partners` with `call` and `accept` (docs/guides/app-customization.md §1.1).

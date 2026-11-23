@@ -123,6 +123,22 @@ func TestAPositionGiverIsRefusedEverythingElse(t *testing.T) {
 		t.Fatalf("a refused call reached %v", seen)
 	}
 
+	// A position the tenant names that administers, as the operator lists it
+	// apart: refused by name, given and taken alike.
+	h.givers.Set([]registrar.PositionGiver{{
+		Key:   componentkeys.Key{Tenant: "shop", Component: "checkout", KeyHash: componentkeys.Hash(checkoutOfShop)},
+		Gives: []componentkeys.PositionGrant{{Tenant: "demo", Positions: []string{"user"}, Administering: []string{"chief"}}},
+	}})
+	for _, path := range []string{givePosition, takePosition} {
+		status, body := h.do(t, http.MethodPost, path, checkoutOfShop, `{"person":"u1","position":"chief"}`)
+		if msg, _ := body["error"].(string); status != http.StatusForbidden || !strings.Contains(msg, "chief holds admin on the tenant or on an app") {
+			t.Errorf("%s of a position that administers: %d %v", path, status, body)
+		}
+	}
+	if len(h.rights.asked) != 0 {
+		t.Fatalf("the operator was asked %v", h.rights.asked)
+	}
+
 	// The key opens nothing else: not the people's own routes for giving.
 	if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/give", checkoutOfShop, `{"person":"u1","position":"user"}`); status != http.StatusUnauthorized {
 		t.Errorf("the key at a person's route: %d, want 401", status)

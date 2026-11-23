@@ -33,7 +33,8 @@ import (
 // The component presents the key it holds for acting on the platform, on
 // two routes of their own, and is admitted there for exactly the positions
 // the tenant in the path names for it: no other tenant's, no other
-// position, never an administrator's, and no role. Nothing else is opened
+// position, never one that holds admin on the tenant or an app (the operator
+// lists those apart), and no role. Nothing else is opened
 // by the key here, and no person's token opens these routes. The act itself
 // is the one a person who manages the tenant's people asks for: the person
 // is looked up in the tenant's realm, and the operator gives or takes and
@@ -91,6 +92,15 @@ func (s *Server) positionGiving(pattern string, give bool) {
 		if !s.decode(w, r, &body) {
 			return
 		}
+		if administering(giver, tenant, body.Position) {
+			s.cfg.Log.WarnContext(ctx, "refused: a position giver asked for a position that administers",
+				"request_id", guard.ID(ctx), "route", pattern, "key_tenant", giver.Tenant, "key_component", giver.Component,
+				"tenant", tenant, "position", body.Position)
+			s.fail(w, r, http.StatusForbidden,
+				"forbidden: "+body.Position+" holds admin on the tenant or on an app, itself or through a position it includes, "+
+					"and a component never gives or takes such a position")
+			return
+		}
 		if !gives(giver, tenant, body.Position) {
 			s.cfg.Log.WarnContext(ctx, "refused: a position giver asked for a position the tenant does not let it give",
 				"request_id", guard.ID(ctx), "route", pattern, "key_tenant", giver.Tenant, "key_component", giver.Component,
@@ -105,6 +115,20 @@ func (s *Server) positionGiving(pattern string, give bool) {
 		}
 		s.assignTo(w, r, c, give, assignmentBody{Person: body.Person, Position: body.Position})
 	})
+}
+
+// administering reports whether position administers in tenant, as the
+// operator listed it beside the giver, or is an administrator's.
+func administering(giver *PositionGiver, tenant, position string) bool {
+	if position == authz.PositionTenantAdministrator || position == authz.PositionAppAdministrator {
+		return true
+	}
+	for _, g := range giver.Gives {
+		if g.Tenant == tenant && slices.Contains(g.Administering, position) {
+			return true
+		}
+	}
+	return false
 }
 
 // gives reports whether the giver may give position in tenant: the tenant

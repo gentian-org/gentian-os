@@ -194,3 +194,28 @@ func TestADryRunForAProfileOnItsWayIsAdmittedWithAWarning(t *testing.T) {
 		t.Fatal("a dry run with a profile named twice was admitted")
 	}
 }
+
+// A tenant that would give a position that administers -- at sign-up, at a
+// sign-in, or by a component -- is refused at admission.
+func TestATenantGivingAdministrationUnaskedIsRefused(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	v := &TenantValidator{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "shop"}}
+	tenant.Spec.Positions = []gentianov1alpha1.TenantPosition{
+		{Name: "customer"},
+		{Name: "shopkeeper", Roles: []gentianov1alpha1.TenantPositionRole{{App: "shop", Role: "admin"}}},
+		{Name: "chief", Includes: []string{"shopkeeper"}},
+	}
+	tenant.Spec.SignUp = &gentianov1alpha1.TenantSignUp{Enabled: true, Positions: []string{"customer"}}
+	if err := v.Validate(context.Background(), tenant); err != nil {
+		t.Fatalf("a sign-up that gives customer: %v", err)
+	}
+	tenant.Spec.PositionGivers = []gentianov1alpha1.TenantPositionGiver{{Tenant: "shop", Component: "checkout", Positions: []string{"chief"}}}
+	err := v.Validate(context.Background(), tenant)
+	if err == nil || !strings.Contains(err.Error(), "spec.positionGivers (shop/checkout) names chief") {
+		t.Fatalf("a component given a position that administers: %v", err)
+	}
+}

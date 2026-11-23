@@ -161,15 +161,12 @@ func (a *RealmArrivals) PersonEntered(ctx context.Context, realm, sub, provider,
 			return err
 		}
 		for _, position := range take {
-			if slices.Contains(positions, position) || slices.Contains(give, position) {
+			// Nor is it taken here: what administers is not an arrival's,
+			// and the tenant's last administrator is never reached from it.
+			if slices.Contains(positions, position) || slices.Contains(give, position) || tenant.PositionAdministers(position) {
 				continue
 			}
 			_, err := rights.Take(ctx, a.Rights, tenant.Name, sub, rights.Assignment{Position: position})
-			if errors.Is(err, rights.ErrLastAdministrator) {
-				log.FromContext(ctx).Info("a position is not taken from the tenant's last administrator",
-					"tenant", tenant.Name, "position", position, "account", sub)
-				continue
-			}
 			if err != nil {
 				return fmt.Errorf("take %s in %s: %w", position, tenant.Name, err)
 			}
@@ -225,6 +222,12 @@ func (a *RealmArrivals) byHolding(
 // have is said and passed over.
 func (a *RealmArrivals) give(ctx context.Context, tenant *gentianov1alpha1.Tenant, sub string, positions []string, how ...any) error {
 	for _, position := range positions {
+		if tenant.PositionAdministers(position) {
+			// Administering is given by an administrator, never on arrival.
+			log.FromContext(ctx).Info("a person is not given a position that administers",
+				append([]any{"tenant", tenant.Name, "position", position}, how...)...)
+			continue
+		}
 		_, err := rights.Give(ctx, a.Rights, tenant.Name, sub, rights.Assignment{Position: position})
 		if errors.Is(err, rights.ErrNoSuchThing) {
 			// A position the tenant no longer declares, or a tenant whose
