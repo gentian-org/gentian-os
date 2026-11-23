@@ -44,6 +44,8 @@ const (
 	memcachedServiceName    = "memcached"
 	memcachedDeploymentName = "memcached"
 	memcachedPort           = provisioner.MemcachedPort
+	// memcachedUser is the memcache user the official image runs as.
+	memcachedUser int64 = 11211
 )
 
 // ensureCache provisions per-app ACL users on the shared cache (via a Job) and per-tenant
@@ -229,10 +231,16 @@ func makeMemcachedDeployment(tenant *gentianov1alpha1.Tenant) *appsv1.Deployment
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: podLabels},
 				Spec: corev1.PodSpec{
+					// Tenant namespaces admit no pod without these (Kyverno's
+					// gentian-disallow-privilege-escalation and
+					// gentian-require-seccomp): the ReplicaSet is refused and
+					// the Deployment stays at zero pods.
+					SecurityContext: meta.NonRootPod(memcachedUser),
 					Containers: []corev1.Container{
 						{
-							Name:  "memcached",
-							Image: kernel.MemcachedImage(),
+							Name:            "memcached",
+							Image:           kernel.MemcachedImage(),
+							SecurityContext: meta.ReadOnlyContainer(),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "memcached",
