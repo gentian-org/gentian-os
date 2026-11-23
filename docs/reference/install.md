@@ -713,7 +713,7 @@ CD's diff refuses the object, and every later change to it waits. The image
 names what of a repository its schema no longer takes, file by file:
 
 ```bash
-docker run --rm -v "$PWD:/repo:ro" ghcr.io/gentian-org/gentian-os:<tag> /schema-check /repo
+docker run --rm --entrypoint /schema-check -v "$PWD:/repo:ro" ghcr.io/gentian-org/gentian-os:<tag> /repo
 ```
 
 It judges every object of the group, kustomize patches included, and exits
