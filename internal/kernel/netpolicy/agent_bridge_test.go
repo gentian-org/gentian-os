@@ -238,7 +238,7 @@ func TestAnAPIAgentBridgeIsReachedThroughTheChaperonesGrantedEgress(t *testing.T
 		t.Fatal("egress nobody granted reached the chaperone")
 	}
 
-	in.Privileges = []gentianov1alpha1.TenantPrivilegeGrant{{
+	in.BridgeGrants = []gentianov1alpha1.TenantPrivilegeGrant{{
 		Install: "web-tools", Privilege: "egress/tool-server", Approver: "perimeter-approver",
 		ApprovedAt: metav1.Now(), Reason: "the team uses this search service",
 	}}
@@ -246,6 +246,16 @@ func TestAnAPIAgentBridgeIsReachedThroughTheChaperonesGrantedEgress(t *testing.T
 	callers := got["agent-bridge-callers-chaperone"]
 	if callers == nil || len(callers.Spec.Egress) != 1 || callers.Spec.Egress[0].To[0].IPBlock.CIDR != "203.0.113.10/32" {
 		t.Fatalf("the chaperone must reach the granted tool server, got %+v", callers)
+	}
+	if _, ok := netpolicy.ManagedPolicyNames(in)["agent-bridge-callers-chaperone"]; !ok {
+		t.Error("agent-bridge-callers-chaperone is built and not kept: it would be deleted on the next pass")
+	}
+	// The grants reach the callers and nothing else: an installed app's own
+	// granted egress is its component policy's, not a second policy here.
+	for name := range got {
+		if strings.HasPrefix(name, "app-egress-") {
+			t.Errorf("%s was built from the bridges' grants", name)
+		}
 	}
 }
 
