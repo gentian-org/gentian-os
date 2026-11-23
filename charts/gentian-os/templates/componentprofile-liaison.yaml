@@ -60,18 +60,10 @@ spec:
     services:
       # What a service hands back for a person is kept by the confidant.
       personSecrets: {}
-    # The platform answers this request itself, as for every profile it
-    # ships. Which services are reached is the bridges' to say, and a bridge
-    # is told to the liaison only once its own request was answered.
-    privileges:
-      egress:
-        - name: outside-services
-          reason: >-
-            Reaches the authorization servers of the outside services the
-            tenant's bridges name, over https: to register, to trade a
-            person's sign-in for a credential, to renew it and to give it up.
-            The approver names those servers' hosts.
-          hostsAtApproval: true
+  # It asks for no egress of its own: it reaches the authorization servers
+  # the tenant's bridges name (signIn.oauth.issuer), each once the bridge's
+  # own requests were answered, and no other host outside
+  # (internal/controller/outgoing_sign_in_hosts.go).
   # What the consumer calls: it tells the liaison the outside services and
   # asks for a credential per call.
   provides:

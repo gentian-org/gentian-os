@@ -275,11 +275,11 @@ func TestAComponentListsTheHostsItWasGranted(t *testing.T) {
 		Hosts: []string{"login.microsoftonline.com", "graph.microsoft.com", "graph.microsoft.com:8443", "vault.kernel-secrets.svc"},
 	})
 	comp := &gentianov1alpha1.Component{}
-	if hosts, refusal := grantedOutgoingHosts(profile, comp, nil); len(hosts) != 0 || refusal != "" {
+	if hosts, refusal := grantedOutgoingHosts(profile, comp, nil, nil); len(hosts) != 0 || refusal != "" {
 		t.Errorf("without a grant: %v, %q", hosts, refusal)
 	}
 	comp.Spec.Privileges = []gentianov1alpha1.PrivilegeGrant{{Privilege: "egress/outside", Approver: "tom", ApprovedAt: metav1.Now(), Reason: "agreed"}}
-	hosts, refusal := grantedOutgoingHosts(profile, comp, nil)
+	hosts, refusal := grantedOutgoingHosts(profile, comp, nil, nil)
 	if strings.Join(hosts, " ") != "graph.microsoft.com graph.microsoft.com:8443 login.microsoftonline.com" {
 		t.Errorf("granted hosts: %v", hosts)
 	}
@@ -376,7 +376,7 @@ func TestTrustedDomainsOfTheClusterAndTheTenantAnswerARequestByHost(t *testing.T
 		t.Fatalf("one tenant's domains answered for another: %v", got)
 	}
 	// And the hosts are then the component's, as with a grant.
-	if hosts, _ := grantedOutgoingHosts(profile, &gentianov1alpha1.Component{}, got); strings.Join(hosts, " ") != "api.example.org graph.microsoft.com" {
+	if hosts, _ := grantedOutgoingHosts(profile, &gentianov1alpha1.Component{}, got, nil); strings.Join(hosts, " ") != "api.example.org graph.microsoft.com" {
 		t.Fatalf("hosts answered by trusted domains: %v", hosts)
 	}
 }

@@ -43,14 +43,15 @@ import (
 // host's real address, which its policy does not open.
 
 // grantedOutgoingHosts are the hosts outside the cluster a component was
-// granted, as they are written in its status: each once, in order. refusal
-// names a granted host that is not a host outside, which the schema cannot
-// tell and which is then carried nowhere.
-func grantedOutgoingHosts(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, preApproved map[string]struct{}) (hosts []string, refusal string) {
+// granted, as they are written in its status: each once, in order. signIn
+// are the hosts the liaison reaches for the tenant's bridges
+// (signInHosts). refusal names a granted host that is not a host outside,
+// which the schema cannot tell and which is then carried nowhere.
+func grantedOutgoingHosts(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, preApproved map[string]struct{}, signIn []string) (hosts []string, refusal string) {
 	seen := map[egress.Host]bool{}
 	var parsed []egress.Host
 	var refused []string
-	for _, s := range security.GrantedEgressHostsUnder(profile, comp, time.Now(), preApproved) {
+	for _, s := range append(security.GrantedEgressHostsUnder(profile, comp, time.Now(), preApproved), signIn...) {
 		h, err := egress.ParseHost(s)
 		if err != nil {
 			refused = append(refused, err.Error())

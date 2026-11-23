@@ -497,8 +497,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// The hosts outside it was granted, said before anything holds the
 	// install: the gateway for outgoing connections carries what is listed
 	// here, so a grant that went takes its host's listener with it at once.
+	bridgeSignIns, err := signInHosts(ctx, r.Client, profile, comp, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 	var hostRefusal string
-	comp.Status.OutgoingHosts, hostRefusal = grantedOutgoingHosts(profile, comp, preApproved)
+	comp.Status.OutgoingHosts, hostRefusal = grantedOutgoingHosts(profile, comp, preApproved, bridgeSignIns)
 	if len(comp.Status.PendingPrivileges) > 0 {
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
 			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
@@ -2220,6 +2224,7 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(release, componentOfRelease()).
 		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
 		Watches(&gentianov1alpha1.Component{}, bridgesOfApp(mgr.GetClient())).
+		Watches(&gentianov1alpha1.Component{}, liaisonOfBridge(mgr.GetClient())).
 		// A binding granted or withdrawn changes the home's scope its
 		// consumer is told (component_home_scope.go).
 		Watches(&gentianov1alpha1.IntegrationBinding{}, componentOfBinding(),

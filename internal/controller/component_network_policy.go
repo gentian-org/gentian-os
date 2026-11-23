@@ -224,7 +224,11 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	// The hosts outside it was granted: the pods of the gateway for outgoing
 	// connections, on the listeners of those hosts (outgoing_hosts.go). A
 	// host the gateway does not carry yet opens nothing.
-	hosts, _ := grantedOutgoingHosts(profile, comp, preApproved)
+	signIn, err := signInHosts(ctx, r.Client, profile, comp, tenant)
+	if err != nil {
+		return err
+	}
+	hosts, _ := grantedOutgoingHosts(profile, comp, preApproved, signIn)
 	ways, err := readOutgoingWays(ctx, r.Client, hosts)
 	if err != nil {
 		return fmt.Errorf("read where the granted hosts are carried: %w", err)
