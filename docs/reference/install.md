@@ -705,6 +705,21 @@ composition of `claims/deployments-repository.yaml`; without that claim every
 write answers 503. Argo CD accepts commits from the director's key and the
 break-glass key only, as listed in `clusters/<cluster>/kernel/signing/keys.env`.
 
+### Checking the repository against a release
+
+A release that takes a field or an enum value out of a `gentianos.io` kind
+leaves a deployments repository that still names it unable to apply: Argo
+CD's diff refuses the object, and every later change to it waits. The image
+names what of a repository its schema no longer takes, file by file:
+
+```bash
+docker run --rm -v "$PWD:/repo:ro" ghcr.io/gentian-org/gentian-os:<tag> /schema-check /repo
+```
+
+It judges every object of the group, kustomize patches included, and exits
+1 when it names anything. Run it in the repository's CI against the image
+the cluster is about to be installed with, before the install.
+
 ### Which credentials the installer handles
 
 `credentials.yaml` gives every requirement a `phase`, and the phase decides who

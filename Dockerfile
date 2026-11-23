@@ -72,6 +72,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o porter ./cmd/porte
 # liaison: keeps a person's sign-ins at services outside the cluster. One in
 # a tenant that has an app which comes with it.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o liaison ./cmd/liaison
+# What a deployments repository asks of this image before it is installed
+# with it: the files and fields its schema no longer takes.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o schema-check ./cmd/schema-check
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
@@ -96,6 +99,7 @@ COPY --from=builder /workspace/registrar /registrar
 COPY --from=builder /workspace/homesync /homesync
 COPY --from=builder /workspace/porter /porter
 COPY --from=builder /workspace/liaison /liaison
+COPY --from=builder /workspace/schema-check /schema-check
 COPY --from=builder /workspace/arbiter /arbiter
 COPY --from=builder /workspace/vault-migrator /vault-migrator
 
