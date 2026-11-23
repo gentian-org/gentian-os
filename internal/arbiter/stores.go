@@ -32,6 +32,8 @@ type StoreIDs struct {
 	Written []Tuple `json:"written,omitempty"`
 	// Mirrored says the store holds the realm's group memberships.
 	Mirrored bool `json:"mirrored,omitempty"`
+	// HandedRoles says the store holds its people's roles on the app.
+	HandedRoles bool `json:"handedRoles,omitempty"`
 }
 
 // Recorder keeps the ids the arbiter created, by the key of the store's
@@ -165,32 +167,46 @@ func (s *Stores) Resolve(ctx context.Context, e Entry) (StoreIDs, error) {
 // platformTuples makes the tuples the platform keeps in a store what the
 // entry says: the starting tuples it names, written, and those it no longer
 // names, taken away; and, for a store that stopped mirroring the realm's
-// groups, the memberships it held. Recorded once done, so that a store whose
-// tuples are as the entry says is asked nothing.
+// groups or being handed roles, the memberships or roles it held. Recorded
+// once done, so that a store whose tuples are as the entry says is asked
+// nothing.
 func (s *Stores) platformTuples(ctx context.Context, key string, e Entry, ids StoreIDs) (StoreIDs, error) {
 	writes, deletes := tupleDiff(ids.Written, e.Tuples)
 	unmirror := ids.Mirrored && !e.MirrorGroups
-	if len(writes) == 0 && len(deletes) == 0 && !unmirror && ids.Mirrored == e.MirrorGroups {
+	unhand := ids.HandedRoles && !e.HandRoles
+	if len(writes) == 0 && len(deletes) == 0 && ids.Mirrored == e.MirrorGroups && ids.HandedRoles == e.HandRoles {
 		return ids, nil
+	}
+	if unmirror {
+		if err := s.takeAll(ctx, ids, "member", groupType); err != nil {
+			return StoreIDs{}, fmt.Errorf("take the memberships out of %s: %w", e.StoreName(), err)
+		}
+	}
+	if unhand {
+		if err := s.takeAll(ctx, ids, RoleHolderRelation, roleType); err != nil {
+			return StoreIDs{}, fmt.Errorf("take the roles out of %s: %w", e.StoreName(), err)
+		}
 	}
 	if err := s.fga.writeTuples(ctx, ids.Store, ids.Model, writes, deletes); err != nil {
 		return StoreIDs{}, fmt.Errorf("write the starting tuples of %s: %w", e.StoreName(), err)
 	}
-	if unmirror {
-		members, err := s.fga.readAll(ctx, ids.Store, fgaTuple{Relation: "member", Object: groupType + ":"})
-		if err != nil {
-			return StoreIDs{}, fmt.Errorf("read the memberships of %s: %w", e.StoreName(), err)
-		}
-		if err := s.fga.writeTuples(ctx, ids.Store, ids.Model, nil, members); err != nil {
-			return StoreIDs{}, fmt.Errorf("take the memberships out of %s: %w", e.StoreName(), err)
-		}
-	}
-	ids.Written, ids.Mirrored = append([]Tuple(nil), e.Tuples...), e.MirrorGroups
+	ids.Written, ids.Mirrored, ids.HandedRoles = append([]Tuple(nil), e.Tuples...), e.MirrorGroups, e.HandRoles
 	if err := s.rec.Save(ctx, key, ids); err != nil {
 		return StoreIDs{}, fmt.Errorf("record the starting tuples of %s: %w", e.StoreName(), err)
 	}
 	s.set(key, ids)
 	return ids, nil
+}
+
+// takeAll deletes every tuple of a store whose relation is relation and
+// whose object is of objType. OpenFGA reads by an object's type only with a
+// user named, so the store is read whole and sorted here.
+func (s *Stores) takeAll(ctx context.Context, ids StoreIDs, relation, objType string) error {
+	found, err := s.fga.ofType(ctx, ids.Store, relation, objType)
+	if err != nil {
+		return err
+	}
+	return s.fga.writeTuples(ctx, ids.Store, ids.Model, nil, found)
 }
 
 // tupleDiff is what turns had into want.

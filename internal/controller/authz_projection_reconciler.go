@@ -86,6 +86,11 @@ type AuthzProjectionReconciler struct {
 	// effect, so each is one log line and not one every requeue.
 	notInEffectWarned map[string]bool
 
+	// Roles is the arbiter's platform path, which the apps that are handed
+	// their people's roles are told them through after each pass. Nil hands
+	// nothing, which is what a cluster without app authorization runs.
+	Roles RoleHandOver
+
 	// BootstrapAdministrator answers the realm and the id of the account the
 	// install made, "" when it is not there. Nil asks the kernel realm.
 	BootstrapAdministrator func(ctx context.Context) (realm, id string, err error)
@@ -146,6 +151,11 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 	if positionsErr != nil {
 		return ctrl.Result{}, fmt.Errorf("project positions: %w", positionsErr)
+	}
+	if r.Roles != nil {
+		if err := handOverRoles(ctx, r.Client, r.Graph, r.Roles); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	logger.V(1).Info("authorization structure projected",

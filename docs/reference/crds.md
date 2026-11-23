@@ -464,6 +464,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
 | `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `spec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
+| `spec.extensions[].kernelRequirements.authorization.roles` | string |  | `Roles` "handOver" has the platform keep, in the store, the roles each person holds on the app: one tuple user:\<realm>/\<subject> holder role:\<name> per role… |
 | `spec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `spec.extensions[].kernelRequirements.authorization.tuples[].object` | string | yes |  |
 | `spec.extensions[].kernelRequirements.authorization.tuples[].relation` | string | yes |  |
@@ -780,6 +781,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
 | `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `spec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
+| `spec.requires.services.authorization.roles` | string |  | `Roles` "handOver" has the platform keep, in the store, the roles each person holds on the app: one tuple user:\<realm>/\<subject> holder role:\<name> per role… |
 | `spec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `spec.requires.services.authorization.tuples[].object` | string | yes |  |
 | `spec.requires.services.authorization.tuples[].relation` | string | yes |  |
@@ -1379,6 +1381,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
+| `status.profileSpec.extensions[].kernelRequirements.authorization.roles` | string |  | `Roles` "handOver" has the platform keep, in the store, the roles each person holds on the app: one tuple user:\<realm>/\<subject> holder role:\<name> per role… |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples[].object` | string | yes |  |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples[].relation` | string | yes |  |
@@ -1695,6 +1698,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
 | `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
 | `status.profileSpec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
+| `status.profileSpec.requires.services.authorization.roles` | string |  | `Roles` "handOver" has the platform keep, in the store, the roles each person holds on the app: one tuple user:\<realm>/\<subject> holder role:\<name> per role… |
 | `status.profileSpec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
 | `status.profileSpec.requires.services.authorization.tuples[].object` | string | yes |  |
 | `status.profileSpec.requires.services.authorization.tuples[].relation` | string | yes |  |

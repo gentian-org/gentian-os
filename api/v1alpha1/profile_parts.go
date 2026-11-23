@@ -529,11 +529,25 @@ type AuthorizationRequirement struct {
 	// +kubebuilder:validation:Enum=mirror
 	Groups string `json:"groups,omitempty"`
 
+	// Roles "handOver" has the platform keep, in the store, the roles each
+	// person holds on the app: one tuple user:<realm>/<subject> holder
+	// role:<name> per role, for user, admin and every role the profile
+	// declares (spec.roles.declared), as the rights store answers them --
+	// through positions, included roles and the base's administrators. The
+	// positions they come through are not handed over. The model must
+	// declare a type role whose relation holder users are written with; the
+	// component's own key may not write a tuple about a role, and the
+	// starting tuples name no role as their object. A role given or taken
+	// in the console reaches the store within seconds.
+	// +optional
+	// +kubebuilder:validation:Enum=handOver
+	Roles string `json:"roles,omitempty"`
+
 	// Tuples are the store's starting tuples, written by the platform and
 	// held to the model when the profile is admitted. One the profile no
 	// longer names is taken out again; what the component wrote itself is
 	// never touched. A store that mirrors groups names no group as an
-	// object here.
+	// object here, and one that is handed roles no role.
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
 	Tuples []AuthorizationTuple `json:"tuples,omitempty"`
@@ -548,6 +562,15 @@ func (a *AuthorizationRequirement) MirrorsGroups() bool {
 // AuthorizationGroupsMirror is requires.services.authorization.groups'
 // one value.
 const AuthorizationGroupsMirror = "mirror"
+
+// HandsOverRoles reports whether the profile declares roles "handOver".
+func (a *AuthorizationRequirement) HandsOverRoles() bool {
+	return a != nil && a.Roles == AuthorizationRolesHandOver
+}
+
+// AuthorizationRolesHandOver is requires.services.authorization.roles' one
+// value.
+const AuthorizationRolesHandOver = "handOver"
 
 // AuthorizationTuple is one relation between a user and an object, as
 // OpenFGA writes it: user:acme/123 is viewer of project:42.

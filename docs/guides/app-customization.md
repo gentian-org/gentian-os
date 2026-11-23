@@ -353,6 +353,14 @@ A starting tuple the profile drops is taken out again; what the app
 wrote is never touched. The store is the tenant's data: exported, restored
 into a fresh store, kept on uninstall and deleted by a purge.
 
+An app that decides on its own roles adds `roles: handOver` beside the
+model, declares `type role` with `define holder: [user]`, and gives its
+objects to `role:<name>#holder`. The platform then keeps one tuple
+`user:<realm>/<subject> holder role:<name>` per role each person holds on
+the app (`user`, `admin` and those in `spec.roles.declared`); the app writes
+none of them (403) and never sees positions
+([app-authorization.md](../concepts/app-authorization.md) §2.6).
+
 **Never substitute an endpoint into `extraValues`.** A literal hostname comes with
 no credential — an app wired that way can only attempt unauthenticated access,
 and it hard-codes an assumption about where the service lives. `${SMTP_HOST}`,

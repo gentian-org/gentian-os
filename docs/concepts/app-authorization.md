@@ -47,7 +47,7 @@ gone is replaced by a new one.
 ### 2.1 What a profile declares
 
 `requires.services.authorization`: the model in the OpenFGA DSL, and
-optionally `tuples` (§2.6). The field, the Secret
+optionally `tuples` (§2.7) and `roles: handOver` (§2.6). The field, the Secret
 `authorization-<component>` the app receives (`AUTHORIZATION_URL`,
 `AUTHORIZATION_KEY`) and the network path to the arbiter's port alone are in
 [app-customization.md §1.1](../guides/app-customization.md).
@@ -55,8 +55,9 @@ optionally `tuples` (§2.6). The field, the Secret
 The operator compiles the model when the profile is admitted and refuses a
 profile whose model does not compile, so a broken model is a failed install
 and never a store without one. Every trust tier may declare it: a store
-holds only the declaring component's own relations, and nothing in it is
-read by the platform.
+holds the declaring component's own relations and, when it asks, its
+people's roles on the app; nothing in it decides anything for the
+platform.
 
 ### 2.2 The store
 
@@ -89,7 +90,8 @@ table does not name is `401`; nothing a caller sends can name another store,
 and a field the API does not have is `400`. Each key has a rate limit (100
 calls a second, burst 200), so no app can slow another's decisions. A key may
 not write or delete a tuple whose object is of type `group` (`403`): the
-type is the platform's (§2.5). A refusal is
+type is the platform's (§2.5); in a store handed roles, nor one whose object
+is of type `role` (§2.6). A refusal is
 `{code, message}`.
 
 The arbiter runs from the operator's image with its own command, and the
@@ -104,7 +106,7 @@ no other workload is handed the key
 ### 2.4 The platform's path
 
 What the platform writes into stores and reads out of them, no app's key
-can: the realm's memberships (§2.5), a store's export and restore, a purge.
+can: the people's roles (§2.6), a store's export and restore, a purge.
 The operator calls `/v1/platform/...` on the arbiter with a token of its
 ServiceAccount projected for the audience `gentian-arbiter`, and the arbiter
 asks the API server whose it is (TokenReview), as the operator's own listener
@@ -119,15 +121,36 @@ writes or deletes a tuple whose object is one, and the platform writes none.
 A store knows people by `user:<realm>/<subject>` and what the component
 itself wrote about them.
 
-### 2.6 Starting tuples
+### 2.6 Roles handed over
+
+A profile that declares `roles: handOver` is handed, in its store, the roles
+each person holds on the app: one tuple `user:<realm>/<subject> holder
+role:<name>` per role, for `user`, `admin` and every role the profile
+declares (`spec.roles.declared`). They are what the rights store answers --
+through positions and what they include, included roles, a base's
+administrators, and the app's administrator holding every role -- so the
+app's model builds on its own roles and never on the tenant's positions.
+The model declares `type role` with `define holder: [user]` and gives its
+objects to `role:<name>#holder`; a starting tuple names no role as its
+object.
+
+The operator hands each such store the full set after every projection
+pass (`internal/controller/role_handover.go`), and the arbiter writes and
+takes tuples until the store holds exactly that set. Giving or taking a role
+or a position patches the tenant, which brings the pass back, so a change
+reaches the store within seconds. A store whose profile stops declaring
+`roles: handOver` loses the roles it was handed.
+
+### 2.7 Starting tuples
 
 `tuples` are written by the platform when the store is first resolved and
 whenever the profile's list changes; one the profile no longer names is
 taken out again. The arbiter records which tuples it wrote, so a tuple the
 app wrote itself is never touched. They are held to the compiled model at
-admission, and name no group as an object.
+admission, and name no group as an object, nor a role in a store handed
+roles.
 
-### 2.7 Lifecycle
+### 2.8 Lifecycle
 
 | Event | The store |
 |---|---|
@@ -158,6 +181,6 @@ purges an engine and which engines are on every cluster is in
 |---|---|
 | that a component has a store | its profile |
 | the model of the store | its profile, compiled by the operator |
-| the tuples | the component, through the arbiter; starting tuples the profile |
+| the tuples | the component, through the arbiter; starting tuples the profile; the roles handed over the rights store |
 | which engines run | the profiles installed, and the claim |
 | that an engine is removed | a person, by purge |

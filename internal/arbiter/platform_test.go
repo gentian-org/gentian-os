@@ -192,7 +192,7 @@ func TestStartingTuplesAreHeldToTheModel(t *testing.T) {
 		{User: "group:acme/staff#member", Relation: "owner", Object: "project:1"},
 		{User: "user:acme/u1", Relation: "owner", Object: "project:1"},
 	}
-	if err := ValidateStartingTuples(model, good, true); err != nil {
+	if err := ValidateStartingTuples(model, good, true, false); err != nil {
 		t.Fatalf("good tuples: %v", err)
 	}
 	for _, bad := range []Tuple{
@@ -202,15 +202,15 @@ func TestStartingTuplesAreHeldToTheModel(t *testing.T) {
 		{User: "user:acme/u1", Relation: "member", Object: "group:acme/staff"},
 		{User: "group:acme/staff", Relation: "owner", Object: "project:1"},
 	} {
-		if err := ValidateStartingTuples(model, []Tuple{bad}, true); err == nil {
+		if err := ValidateStartingTuples(model, []Tuple{bad}, true, false); err == nil {
 			t.Errorf("%+v was admitted", bad)
 		}
 	}
-	if err := ValidateStartingTuples(model, []Tuple{good[0], good[0]}, false); err == nil {
+	if err := ValidateStartingTuples(model, []Tuple{good[0], good[0]}, false, false); err == nil {
 		t.Error("a tuple named twice was admitted")
 	}
 	noGroups, _ := Compile(docModel)
-	if err := ValidateStartingTuples(noGroups, nil, true); err == nil {
+	if err := ValidateStartingTuples(noGroups, nil, true, false); err == nil {
 		t.Error("a model with no group type was let mirror groups")
 	}
 }

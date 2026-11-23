@@ -16,9 +16,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/tokenreview"
 )
 
@@ -99,11 +101,108 @@ func (s *Server) PlatformHandler(auth *PlatformAuth) http.Handler {
 			_ = json.NewEncoder(w).Encode(out)
 		})
 	}
+	route("PUT /v1/platform/roles/{tenant}/{component}", s.platformRoles)
 	route("GET /v1/platform/stores/{tenant}/{component}", s.platformExport)
 	route("PUT /v1/platform/stores/{tenant}/{component}", s.platformRestore)
 	route("DELETE /v1/platform/stores/{tenant}/{component}", s.platformPurge)
 	route("DELETE /v1/platform/tenants/{tenant}", s.platformPurgeTenant)
 	return mux
+}
+
+// RolesRequest states, for one store handed roles, every person's roles on
+// the app: state, not deltas. A person it does not name holds none.
+type RolesRequest struct {
+	Holdings []authz.RoleHolding `json:"holdings"`
+}
+
+// MaxRoleHoldings bounds the people one hand-over names.
+const MaxRoleHoldings = 50000
+
+// handedTo is the entry of a tenant's component that is handed roles.
+func (s *Server) handedTo(tenant, component string) (Entry, bool) {
+	for _, e := range s.table.Load().byHash {
+		if e.Tenant == tenant && e.Component == component && e.HandRoles {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
+// platformRoles makes the roles a store holds what the platform says: the
+// holder tuples on role objects of the realm's people, written and taken
+// until they are exactly the request's. A store that is not handed roles
+// answers 404, and the platform hands it nothing.
+func (s *Server) platformRoles(r *http.Request) (any, error) {
+	tenant, component, err := storeRef(r)
+	if err != nil {
+		return nil, err
+	}
+	var req RolesRequest
+	if err := decode(r, &req); err != nil {
+		return nil, err
+	}
+	if len(req.Holdings) > MaxRoleHoldings {
+		return nil, badRequest("at most %d people in one hand-over", MaxRoleHoldings)
+	}
+	e, ok := s.handedTo(tenant, component)
+	if !ok {
+		return nil, &refusal{status: http.StatusNotFound, code: "not_found", message: tenant + "/" + component + " is not handed roles"}
+	}
+	want := map[Tuple]bool{}
+	for i, h := range req.Holdings {
+		user, err := UserObject(e.Realm, h.Subject)
+		if err != nil {
+			return nil, badRequest("holdings[%d]: %v", i, err)
+		}
+		for _, name := range h.Roles {
+			role, err := RoleObject(name)
+			if err != nil {
+				return nil, badRequest("holdings[%d]: %v", i, err)
+			}
+			want[Tuple{User: user, Relation: RoleHolderRelation, Object: role}] = true
+		}
+	}
+	ids, err := s.stores.Resolve(r.Context(), e)
+	if err != nil {
+		return nil, err
+	}
+	stored, err := s.fga.ofType(r.Context(), ids.Store, RoleHolderRelation, roleType)
+	if err != nil {
+		return nil, err
+	}
+	var writes, deletes []Tuple
+	have := map[Tuple]bool{}
+	for _, t := range stored {
+		have[t] = true
+		if !want[t] {
+			deletes = append(deletes, t)
+		}
+	}
+	for t := range want {
+		if !have[t] {
+			writes = append(writes, t)
+		}
+	}
+	if len(writes)+len(deletes) == 0 {
+		return nil, nil
+	}
+	sortTuples(writes)
+	sortTuples(deletes)
+	if err := s.fga.writeTuples(r.Context(), ids.Store, ids.Model, writes, deletes); err != nil {
+		return nil, err
+	}
+	s.log.InfoContext(r.Context(), "roles handed over", "store", e.StoreName(), "written", len(writes), "taken", len(deletes))
+	return nil, nil
+}
+
+func sortTuples(ts []Tuple) {
+	sort.Slice(ts, func(i, j int) bool {
+		a, b := ts[i], ts[j]
+		if a.Object != b.Object {
+			return a.Object < b.Object
+		}
+		return a.User < b.User
+	})
 }
 
 func storeRef(r *http.Request) (string, string, error) {
@@ -167,3 +266,7 @@ func (s *Server) platformPurgeTenant(r *http.Request) (any, error) {
 
 // errForbiddenGroupTuple is a component writing a tuple about a group.
 var errForbiddenGroupTuple = errors.New("tuples whose object is a group are the platform's")
+
+// errForbiddenRoleTuple is a component writing a tuple about a role in a
+// store it is handed roles.
+var errForbiddenRoleTuple = errors.New("tuples whose object is a role are the platform's in a store handed roles")
