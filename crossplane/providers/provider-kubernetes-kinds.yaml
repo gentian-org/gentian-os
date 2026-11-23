@@ -61,6 +61,12 @@ kinds:
       - resourcequotas   # ResourceQuota
       - secrets          # Secret
       - services         # Service
+  # Not from a Composition: the tenant's memcached, which the tenant operator
+  # hands the provider when an installed app asks for a memcached cache
+  # (buildDataPlaneObjects). TestDataPlaneObjectKindsAreGranted guards it.
+  - group: apps
+    resources:
+      - deployments      # Deployment
   - group: argoproj.io
     resources:
       - applications     # Application
@@ -81,6 +87,7 @@ kinds:
   # Not from a Composition: the tenant operator hands the provider an
   # IntegrationBinding for each consumer whose provider is installed
   # (tenant_data_plane_manifests.go), which no render fixture shows.
+  # TestDataPlaneObjectKindsAreGranted guards it.
   - group: gentianos.io
     resources:
       - integrationbindings  # IntegrationBinding
