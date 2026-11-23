@@ -48,7 +48,7 @@ apply() {
     fi
     ns_kernel_policies_sync || { error "the kernel namespaces' NetworkPolicies could not be applied"; return 1; }
     if ns_kernel_policies_wanted; then
-        success "kernel NetworkPolicies applied (ingress refused unless listed; anything but KERNEL_NETWORK_POLICIES=true removes them)"
+        success "kernel NetworkPolicies applied (ingress refused unless listed, no internet where none is needed; anything but KERNEL_NETWORK_POLICIES=true removes them)"
     else
         info "kernel NetworkPolicies are off (KERNEL_NETWORK_POLICIES=false; docs/reference/install.md)"
     fi

@@ -19,7 +19,9 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -55,9 +57,10 @@ func TestTheManifestIsTheInventorys(t *testing.T) {
 }
 
 // Every kernel namespace has one policy that selects every pod, which is
-// what refuses an ingress nothing lists. No policy says anything of egress,
-// none is in a namespace that is not a kernel one, and the mail namespaces
-// in particular carry none of these.
+// what refuses an ingress nothing lists. Every policy but kernel-egress is
+// ingress only, so that none of them gives a pod egress semantics; none is
+// in a namespace that is not a kernel one, and the mail namespaces in
+// particular carry none of these.
 func TestEveryKernelNamespaceRefusesByDefault(t *testing.T) {
 	inv := load(t)
 	policies := inv.Policies()
@@ -69,8 +72,11 @@ func TestEveryKernelNamespaceRefusesByDefault(t *testing.T) {
 		if _, ok := kernel[p.Namespace]; !ok {
 			t.Errorf("%s/%s: not a kernel namespace", p.Namespace, p.Name)
 		}
+		if p.Name == EgressPolicyName {
+			continue // TestClusterEgressStaysInTheCluster
+		}
 		if len(p.Spec.PolicyTypes) != 1 || p.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
-			t.Errorf("%s/%s: policyTypes %v; these rules are ingress only", p.Namespace, p.Name, p.Spec.PolicyTypes)
+			t.Errorf("%s/%s: policyTypes %v; only %s restricts egress", p.Namespace, p.Name, p.Spec.PolicyTypes, EgressPolicyName)
 		}
 		if len(p.Spec.Egress) != 0 {
 			t.Errorf("%s/%s restricts egress", p.Namespace, p.Name)
@@ -545,5 +551,118 @@ func TestTheEnvoyPeerIsTheBaselines(t *testing.T) {
 		if got.PodLabels[k] != v {
 			t.Fatalf("peer envoy is %v, the baseline's is %v", got.PodLabels, want)
 		}
+	}
+}
+
+// withAPIServer is the policies as the installer applies them on a cluster
+// whose API server is at cidr and port: the placeholders replaced.
+func withAPIServer(policies []*networkingv1.NetworkPolicy, cidr string, port int32) []*networkingv1.NetworkPolicy {
+	var out []*networkingv1.NetworkPolicy
+	for _, p := range policies {
+		p = p.DeepCopy()
+		for i, rule := range p.Spec.Egress {
+			for j, to := range rule.To {
+				if to.IPBlock != nil && to.IPBlock.CIDR == APIServerCIDR {
+					p.Spec.Egress[i].To[j].IPBlock.CIDR = cidr
+				}
+			}
+			for j, pp := range rule.Ports {
+				if pp.Port != nil && pp.Port.Type == intstr.String && pp.Port.StrVal == APIServerPort {
+					v := intstr.FromInt32(port)
+					p.Spec.Egress[i].Ports[j].Port = &v
+				}
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// A namespace whose egress is "cluster" reaches every pod of the cluster, the
+// private ranges, DNS and the API server, and nothing public; a namespace
+// whose egress is "open" has no egress policy and reaches everything.
+func TestClusterEgressStaysInTheCluster(t *testing.T) {
+	inv := load(t)
+	generated := inv.Policies()
+	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
+	cluster := 0
+	for _, ns := range inv.Namespaces {
+		var own []*networkingv1.NetworkPolicy
+		for _, p := range generated {
+			if p.Namespace == ns.Name && p.Name == EgressPolicyName {
+				own = append(own, p)
+			}
+		}
+		src := at(ns.Name, map[string]string{"app": "any"})
+		if ns.Egress == EgressOpen {
+			if len(own) != 0 {
+				t.Errorf("%s: egress open, and has %s", ns.Name, EgressPolicyName)
+			}
+			if !egressAdmitted(generated, src, address("1.1.1.1"), 443, tcp) {
+				t.Errorf("%s: egress open, and the internet is refused", ns.Name)
+			}
+			continue
+		}
+		cluster++
+		if len(own) != 1 {
+			t.Fatalf("%s: egress cluster, and %d %s policies", ns.Name, len(own), EgressPolicyName)
+		}
+		p := own[0]
+		if len(p.Spec.PodSelector.MatchLabels)+len(p.Spec.PodSelector.MatchExpressions) != 0 {
+			t.Errorf("%s/%s does not select every pod", ns.Name, p.Name)
+		}
+		if len(p.Spec.PolicyTypes) != 1 || p.Spec.PolicyTypes[0] != networkingv1.PolicyTypeEgress {
+			t.Errorf("%s/%s: policyTypes %v; it says nothing of ingress", ns.Name, p.Name, p.Spec.PolicyTypes)
+		}
+		placeholder := 0
+		for _, rule := range p.Spec.Egress {
+			for _, to := range rule.To {
+				if to.IPBlock != nil && to.IPBlock.CIDR == APIServerCIDR {
+					placeholder++
+				}
+			}
+		}
+		if placeholder != 1 {
+			t.Errorf("%s/%s: %d API server placeholders, not one", ns.Name, p.Name, placeholder)
+		}
+
+		// As applied on a cluster whose API server is a public address.
+		applied := withAPIServer(generated, "83.166.143.133/32", 31099)
+		for _, c := range []struct {
+			what  string
+			dst   destination
+			port  int32
+			proto corev1.Protocol
+			want  bool
+		}{
+			{"a pod of a tenant", toPod(at("tenant-acme", nil)), 8080, tcp, true},
+			{"a pod of another kernel namespace", toPod(at("kernel-control", nil)), 9443, tcp, true},
+			{"a pod of its own namespace", toPod(at(ns.Name, nil)), 5432, tcp, true},
+			{"a Service address", address("10.96.0.1"), 443, tcp, true},
+			{"a node's address", address("172.21.0.128"), 10250, tcp, true},
+			{"a home network's address", address("192.168.0.100"), 16443, tcp, true},
+			{"the shared address space", address("100.64.3.4"), 443, tcp, true},
+			{"a node-local DNS cache", address("169.254.20.10"), 53, udp, true},
+			{"a node-local DNS cache over TCP", address("169.254.20.10"), 53, tcp, true},
+			{"the API server", address("83.166.143.133"), 31099, tcp, true},
+			{"the API server's address on another port", address("83.166.143.133"), 22, tcp, false},
+			{"a public address on the API server's port", address("83.166.143.134"), 31099, tcp, false},
+			{"a public address", address("1.1.1.1"), 443, tcp, false},
+			{"a public resolver", address("8.8.8.8"), 53, udp, false},
+			{"the cloud's metadata service", address("169.254.169.254"), 80, tcp, false},
+			{"a public address over UDP", address("9.9.9.9"), 443, udp, false},
+		} {
+			if got := egressAdmitted(applied, src, c.dst, c.port, c.proto); got != c.want {
+				t.Errorf("%s to %s (%d/%s): admitted %v, want %v", ns.Name, c.what, c.port, c.proto, got, c.want)
+			}
+		}
+		// Before the installer fills it in, the API server's public address
+		// is refused like any other.
+		if egressAdmitted(generated, src, address("83.166.143.133"), 31099, tcp) {
+			t.Errorf("%s: the placeholder admits an address", ns.Name)
+		}
+	}
+	if cluster == 0 {
+		t.Error("no kernel namespace keeps its egress inside the cluster")
 	}
 }

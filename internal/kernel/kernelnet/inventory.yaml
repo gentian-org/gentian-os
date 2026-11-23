@@ -23,8 +23,17 @@
 # from the pod's node, and NetworkPolicy has no portable word for it: every
 # port the API server calls (admission and conversion webhooks) is `open`.
 #
-# Egress from the kernel namespaces is not restricted by these rules. Each
-# namespace says why under egress.
+# Where a kernel namespace's pods may connect to is one word per namespace,
+# egress, and egressWhy says why:
+#
+#   open:    not restricted; the namespace's pods reach the internet
+#   cluster: the pods reach every pod of the cluster, the private address
+#            ranges, DNS and the API server, and nothing outside. The policy
+#            kernel-egress says so; the installer fills in the API server's
+#            address, which differs per cluster and may be a public one.
+#
+# A namespace one of whose workloads needs the internet stays open, and a
+# namespace nobody is sure of stays open, so that nothing breaks.
 
 # Namespaces these rules do not cover, and who covers them.
 excluded:
@@ -291,11 +300,15 @@ namespaces:
   - name: kernel-secrets
     sameNamespace: true
     sameNamespaceWhy: External Secrets reads the vault; a pod of this namespace can mount the vault's own Secrets anyway.
-    egress: open
+    egress: cluster
     egressWhy: >-
       The vault calls its seal, the API server (token review) and the identity
-      provider's public address; External Secrets and Reloader call the API
-      server.
+      provider at its public name, which the cluster's DNS answers with the
+      edge's ClusterIP (internal/controller/coredns_hairpin.go); External
+      Secrets reads the vault alone (every secret store the platform writes is
+      a vault one) and calls the API server, as Reloader does; the daily
+      snapshot job reads the vault and writes to the platform's own object
+      store (kernel/services/infra-seaweedfs).
     workloads:
       - name: openbao
         installedBy: bootstrap-application:openbao
@@ -385,11 +398,11 @@ namespaces:
       The seal and its daily snapshot job, which reads the seal's API
       (charts/gentian-os/templates/openbao-snapshots.yaml); a pod of this
       namespace can mount the seal's own Secrets anyway.
-    egress: open
+    egress: cluster
     egressWhy: >-
-      Not restricted in this pass. The seal calls the API server (token review,
-      for its snapshot job's login); the snapshot job writes to the object
-      store's S3 port, which admits it by its label.
+      The seal calls the API server (token review, for its snapshot job's
+      login); the snapshot job reads the seal and writes to the platform's own
+      object store's S3 port, which admits it by its label.
     workloads:
       - name: openbao-transit
         installedBy: bootstrap-application:openbao-transit
@@ -417,8 +430,12 @@ namespaces:
     sameNamespaceWhy: >-
       CloudNativePG's operator and the cluster's replicas and join Jobs run beside the instances; the
       instance's own policy already admits this namespace.
-    egress: open
-    egressWhy: CloudNativePG's operator and every instance call the API server; the operator calls instances in the system namespaces.
+    egress: cluster
+    egressWhy: >-
+      CloudNativePG's operator and every instance call the API server; the
+      operator calls instances in the system namespaces. The kernel's
+      PostgreSQL keeps no backup outside the cluster
+      (kernel/data/kernel-postgres).
     workloads:
       - name: cloudnative-pg
         installedBy: bootstrap-application:cnpg
@@ -522,8 +539,12 @@ namespaces:
   - name: kernel-authorization
     sameNamespace: true
     sameNamespaceWhy: one workload; a pod of this namespace can mount OpenFGA's own Secrets anyway.
-    egress: open
-    egressWhy: not restricted in this pass; OpenFGA calls its database, whose address its values name, and DNS.
+    egress: cluster
+    egressWhy: >-
+      OpenFGA calls its database, the kernel's PostgreSQL
+      (kernel/services/openfga/manifests/values.yaml), and DNS; its tracing
+      and metrics exporters are off and its callers authenticate with a
+      preshared key, so it fetches no signing keys.
     workloads:
       - name: openfga
         installedBy: application:openfga
