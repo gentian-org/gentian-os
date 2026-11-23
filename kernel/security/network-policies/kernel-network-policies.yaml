@@ -7,6 +7,10 @@
 # (scripts/steps/A-01-namespaces.sh) when KERNEL_NETWORK_POLICIES=true;
 # otherwise that step removes every policy labelled
 # gentianos.io/kernel-network-policy.
+#
+# API-SERVER and api-server in a kernel-egress policy are
+# the API server's addresses and port, which the installer reads from
+# the Service kubernetes and writes in their place when it applies this file.
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -138,6 +142,47 @@ kind: NetworkPolicy
 metadata:
   labels:
     app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: secrets
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-egress
+  namespace: kernel-secrets
+spec:
+  egress:
+  - to:
+    - namespaceSelector: {}
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/8
+    - ipBlock:
+        cidr: 172.16.0.0/12
+    - ipBlock:
+        cidr: 192.168.0.0/16
+    - ipBlock:
+        cidr: 100.64.0.0/10
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 169.254.0.0/16
+  - ports:
+    - port: api-server
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: API-SERVER
+  podSelector: {}
+  policyTypes:
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
     gentianos.io/function: seal
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
@@ -182,6 +227,47 @@ kind: NetworkPolicy
 metadata:
   labels:
     app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: seal
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-egress
+  namespace: kernel-seal
+spec:
+  egress:
+  - to:
+    - namespaceSelector: {}
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/8
+    - ipBlock:
+        cidr: 172.16.0.0/12
+    - ipBlock:
+        cidr: 192.168.0.0/16
+    - ipBlock:
+        cidr: 100.64.0.0/10
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 169.254.0.0/16
+  - ports:
+    - port: api-server
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: API-SERVER
+  podSelector: {}
+  policyTypes:
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
     gentianos.io/function: data
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
@@ -197,6 +283,47 @@ spec:
   podSelector: {}
   policyTypes:
   - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: data
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-egress
+  namespace: kernel-data
+spec:
+  egress:
+  - to:
+    - namespaceSelector: {}
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/8
+    - ipBlock:
+        cidr: 172.16.0.0/12
+    - ipBlock:
+        cidr: 192.168.0.0/16
+    - ipBlock:
+        cidr: 100.64.0.0/10
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 169.254.0.0/16
+  - ports:
+    - port: api-server
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: API-SERVER
+  podSelector: {}
+  policyTypes:
+  - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -322,6 +449,47 @@ spec:
   podSelector: {}
   policyTypes:
   - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: authorization
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
+  name: kernel-egress
+  namespace: kernel-authorization
+spec:
+  egress:
+  - to:
+    - namespaceSelector: {}
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/8
+    - ipBlock:
+        cidr: 172.16.0.0/12
+    - ipBlock:
+        cidr: 192.168.0.0/16
+    - ipBlock:
+        cidr: 100.64.0.0/10
+  - ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: 169.254.0.0/16
+  - ports:
+    - port: api-server
+      protocol: TCP
+    to:
+    - ipBlock:
+        cidr: API-SERVER
+  podSelector: {}
+  policyTypes:
+  - Egress
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

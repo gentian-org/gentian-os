@@ -9,7 +9,8 @@ SPDX-License-Identifier: MPL-2.0
 */
 
 // Package kernelnet is who may open a connection to a pod of a kernel
-// namespace: the list (inventory.yaml), and the NetworkPolicies made from it.
+// namespace, and which kernel namespaces need no internet: the list
+// (inventory.yaml), and the NetworkPolicies made from it.
 //
 // The list comes first and the rules are derived, so that a rule cannot
 // exist without a line that says who it is for and where that was read. The
@@ -27,6 +28,14 @@ SPDX-License-Identifier: MPL-2.0
 // serve it, not on every pod of the namespace. Ports are the POD's ports: a
 // plugin matches a connection after the Service's address and port have
 // been replaced by a pod's.
+//
+// A namespace whose egress is "cluster" has one more policy, kernel-egress,
+// that selects every pod and admits connections to every pod of the
+// cluster, the private address ranges, DNS and the API server, and nothing
+// else. The API server's address and port differ per cluster, so the policy
+// carries placeholders (APIServerCIDR, APIServerPort) that the installer
+// replaces with the endpoints of the Service kubernetes when it applies the
+// file (scripts/lib/namespaces.sh).
 package kernelnet
 
 import (
@@ -55,6 +64,23 @@ const (
 	// NamespacePolicyName is the policy that selects every pod of a kernel
 	// namespace.
 	NamespacePolicyName = "kernel-ingress"
+	// EgressPolicyName is the policy that keeps every pod of a namespace
+	// whose egress is "cluster" inside the cluster.
+	EgressPolicyName = "kernel-egress"
+
+	// EgressOpen leaves a namespace's egress unrestricted.
+	EgressOpen = "open"
+	// EgressCluster admits a namespace's pods to the cluster and refuses
+	// everything outside it.
+	EgressCluster = "cluster"
+
+	// APIServerCIDR and APIServerPort stand in the generated file for the
+	// API server's endpoints, which the installer writes in their place:
+	// one address block per address, one port per port. Neither is valid as
+	// it stands, so the file applied without the installer is refused
+	// rather than admitting nothing.
+	APIServerCIDR = "API-SERVER"
+	APIServerPort = "api-server"
 
 	nameLabel = "kubernetes.io/metadata.name"
 )
@@ -96,11 +122,13 @@ type Namespace struct {
 	Name string `json:"name"`
 	// SameNamespace admits every pod of the namespace to every other, on
 	// every port.
-	SameNamespace    bool       `json:"sameNamespace"`
-	SameNamespaceWhy string     `json:"sameNamespaceWhy"`
-	Egress           string     `json:"egress"`
-	EgressWhy        string     `json:"egressWhy"`
-	Workloads        []Workload `json:"workloads"`
+	SameNamespace    bool   `json:"sameNamespace"`
+	SameNamespaceWhy string `json:"sameNamespaceWhy"`
+	// Egress is EgressOpen, or EgressCluster for a namespace none of whose
+	// pods needs to reach anything outside the cluster but the API server.
+	Egress    string     `json:"egress"`
+	EgressWhy string     `json:"egressWhy"`
+	Workloads []Workload `json:"workloads"`
 }
 
 // Workload is one set of pods.
@@ -158,8 +186,8 @@ func (inv *Inventory) validate() error {
 		if ns.SameNamespaceWhy == "" || ns.EgressWhy == "" {
 			return fmt.Errorf("%s: sameNamespaceWhy and egressWhy are required", ns.Name)
 		}
-		if ns.Egress != "open" {
-			return fmt.Errorf("%s: egress is %q; these rules restrict no egress", ns.Name, ns.Egress)
+		if ns.Egress != EgressOpen && ns.Egress != EgressCluster {
+			return fmt.Errorf("%s: egress is %q, and is %s or %s", ns.Name, ns.Egress, EgressOpen, EgressCluster)
 		}
 		// A port open to anybody is opened for the whole namespace, so a
 		// workload saying closed while another opens the same number would be
@@ -306,8 +334,60 @@ func (inv *Inventory) Policies() []*networkingv1.NetworkPolicy {
 			}
 		}
 		out = append(out, inv.namespacePolicy(ns))
+		if ns.Egress == EgressCluster {
+			out = append(out, egressPolicy(ns))
+		}
 	}
 	return out
+}
+
+// PrivateRanges are the address ranges a cluster's nodes, pods and Services
+// are numbered from: RFC 1918 and the shared address space of RFC 6598. They
+// are admitted whole, because a plugin may match a connection to a Service
+// before its address has been replaced by a pod's, and a node's address is
+// no pod.
+var PrivateRanges = []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10"}
+
+// linkLocal is where a node-local DNS cache listens.
+const linkLocal = "169.254.0.0/16"
+
+// egressPolicy selects every pod of a namespace whose egress is "cluster"
+// and admits what a pod of the kernel reaches inside the cluster: every pod,
+// the private ranges, DNS, and the API server, whose address the installer
+// fills in. Anything else outside is refused.
+func egressPolicy(ns Namespace) *networkingv1.NetworkPolicy {
+	var private []networkingv1.NetworkPolicyPeer
+	for _, cidr := range PrivateRanges {
+		private = append(private, networkingv1.NetworkPolicyPeer{IPBlock: &networkingv1.IPBlock{CIDR: cidr}})
+	}
+	udp, tcpProto := corev1.ProtocolUDP, corev1.ProtocolTCP
+	dns := intstr.FromInt32(53)
+	apiPort := intstr.FromString(APIServerPort)
+	return &networkingv1.NetworkPolicy{
+		TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: EgressPolicyName, Namespace: ns.Name, Labels: policyLabels(ns.Name),
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: &metav1.LabelSelector{}}}},
+				{To: private},
+				{
+					To: []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: linkLocal}}},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Protocol: &udp, Port: &dns},
+						{Protocol: &tcpProto, Port: &dns},
+					},
+				},
+				{
+					To:    []networkingv1.NetworkPolicyPeer{{IPBlock: &networkingv1.IPBlock{CIDR: APIServerCIDR}}},
+					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcpProto, Port: &apiPort}},
+				},
+			},
+		},
+	}
 }
 
 // workloadPolicy selects one workload's pods and admits the callers each of
@@ -439,6 +519,10 @@ func (inv *Inventory) Manifest() ([]byte, error) {
 	b.WriteString("# (scripts/steps/A-01-namespaces.sh) when KERNEL_NETWORK_POLICIES=true;\n")
 	b.WriteString("# otherwise that step removes every policy labelled\n")
 	b.WriteString("# " + PolicyLabel + ".\n")
+	b.WriteString("#\n")
+	b.WriteString("# " + APIServerCIDR + " and " + APIServerPort + " in a " + EgressPolicyName + " policy are\n")
+	b.WriteString("# the API server's addresses and port, which the installer reads from\n")
+	b.WriteString("# the Service kubernetes and writes in their place when it applies this file.\n")
 	for _, p := range inv.Policies() {
 		raw, err := yaml.Marshal(p)
 		if err != nil {

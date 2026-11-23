@@ -143,18 +143,26 @@ rule, which then admits the Envoy pods instead of the whole edge namespace,
 and the publishing proxy's ingress rule, which then admits the Envoy pods and
 nothing else.
 
-**Egress is open in the kernel and system namespaces.** Argo CD, Crossplane
-and its providers, cert-manager, external-dns, Keycloak, the Envoy proxies and
-the operator reach the internet and the API server in ways that differ per
-cluster. A pod there is stopped at another namespace's door by that
-namespace's rules and on the way out by nothing. The exceptions are the edges
-that face the internet: the mail proxy in `system-mail-dmz` and the TURN edge
-in `system-turn-dmz` (§7), whose egress is restricted to what they relay to.
+**The kernel namespaces that need no internet do not reach it.** The
+inventory says per namespace whether its pods need the internet (`egress`).
+The vault, its seal, the kernel's PostgreSQL and OpenFGA do not: their
+namespaces admit egress to every pod of the cluster, the private address
+ranges, DNS and the API server, and refuse the rest (`kernel-egress`). The
+API server's address differs per cluster and is often a public one, so the
+installer writes the endpoints of the Service `kubernetes` into that rule
+when it applies the file. Argo CD, Crossplane and its providers,
+cert-manager, external-dns, Keycloak, Kyverno, the Envoy proxies and the
+operator reach the internet in ways that differ per cluster, and their
+namespaces' egress is open, as the system namespaces' is. The exceptions
+there are the edges that face the internet: the mail proxy in
+`system-mail-dmz` and the TURN edge in `system-turn-dmz` (§7), whose egress
+is restricted to what they relay to.
 
-Plain `networking.k8s.io/v1` NetworkPolicy throughout, naming no address
-block, so the rules mean the same on every plugin that enforces them. What a
-NetworkPolicy cannot say -- the API server, the kubelet, the install host --
-and what stands in its place is in [security/design.md §2.13](../security/design.md).
+Plain `networking.k8s.io/v1` NetworkPolicy throughout, so the rules mean the
+same on every plugin that enforces them; the only address blocks are those of
+the egress rule. What a NetworkPolicy cannot say -- the API server's calls
+in, the kubelet, the install host -- and what stands in its place is in
+[security/design.md §2.13](../security/design.md).
 
 ## 4. The shared stores: one rule with two sides
 

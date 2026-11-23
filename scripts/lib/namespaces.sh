@@ -150,6 +150,13 @@ ns_declined() {
 # is how a policy a later file no longer has is found and removed, and how
 # check() tells that the cluster has this file's rules and not an earlier
 # one's.
+#
+# A namespace that needs no internet has a policy, kernel-egress, that keeps
+# its pods inside the cluster and admits the API server. The API server's
+# address is the cluster's (on a managed cluster often a public one), so the
+# file says API-SERVER and api-server where it goes, and these are replaced
+# with the endpoints of the Service kubernetes as the file is applied. The
+# endpoints are part of the digest: an API server that moved is a change.
 # -----------------------------------------------------------------------------
 KERNEL_NETWORK_POLICIES_FILE="${KERNEL_NETWORK_POLICIES_FILE:-${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}/kernel/security/network-policies/kernel-network-policies.yaml}"
 KERNEL_NETWORK_POLICY_LABEL="gentianos.io/kernel-network-policy"
@@ -213,15 +220,68 @@ EOF
     return "${rc}"
 }
 
-_ns_kernel_policies_digest() {
-    openssl dgst -sha256 < "${KERNEL_NETWORK_POLICIES_FILE}" | awk '{ print substr($NF, 1, 16) }'
+# _ns_kernel_policies_api_server -- "<address block> ...<TAB><port> ..." of
+# the API server, as the file's egress rules admit it; nothing when the file
+# has no such rule. Fails when the file has one and the cluster names no
+# endpoint: a rule that admitted nothing would cut the namespace's pods off
+# the API server.
+_ns_kernel_policies_api_server() {
+    grep -q '^ *cidr: API-SERVER$' "${KERNEL_NETWORK_POLICIES_FILE}" || return 0
+    local addrs ports a blocks=""
+    addrs="$(kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes \
+        -o jsonpath='{range .items[*].endpoints[*]}{.addresses[*]}{" "}{end}' 2>/dev/null)" || return 1
+    ports="$(kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes \
+        -o jsonpath='{.items[*].ports[*].port}' 2>/dev/null)" || return 1
+    for a in ${addrs}; do
+        case "${a}" in
+            *:*) blocks="${blocks}${a}/128"$'\n' ;;
+            *)   blocks="${blocks}${a}/32"$'\n' ;;
+        esac
+    done
+    blocks="$(printf '%s' "${blocks}" | sort -u | tr '\n' ' ')"
+    # shellcheck disable=SC2086 # one port per word
+    ports="$(printf '%s\n' ${ports} | sort -un | tr '\n' ' ')"
+    [[ -n "${blocks// /}" && -n "${ports// /}" ]] || return 1
+    printf '%s\t%s\n' "${blocks% }" "${ports% }"
 }
 
-# _ns_kernel_policies_stamped <digest> -- the file, with the digest as a label
-# beside the one every policy carries. awk rather than sed: a newline in a
+# _ns_kernel_policies_digest <api server> -- the file's digest, and the API
+# server's endpoints its egress rules are written with.
+_ns_kernel_policies_digest() {
+    { cat "${KERNEL_NETWORK_POLICIES_FILE}"; printf '%s\n' "${1:-}"; } |
+        openssl dgst -sha256 | awk '{ print substr($NF, 1, 16) }'
+}
+
+# _ns_kernel_policies_stamped <digest> <api server> -- the file, with the
+# digest as a label beside the one every policy carries, and the API
+# server's address blocks and ports in place of API-SERVER and api-server:
+# the first in the line that holds the placeholder, every further one as a
+# list item of its own above it. awk rather than sed: a newline in a
 # replacement is not something every sed writes.
 # shellcheck disable=SC2016 # awk's own variables, not the shell's
 _NS_POLICY_STAMP_AWK='
+    BEGIN {
+        split(api, parts, "\t")
+        nblocks = split(parts[1], blocks, " ")
+        nports = split(parts[2], ports, " ")
+    }
+    $1 == "cidr:" && $2 == "API-SERVER" {
+        match($0, /^ */)
+        for (i = 1; i <= nblocks; i++) {
+            if (i > 1) printf "%*s- ipBlock:\n", RLENGTH - 4, ""
+            printf "%*scidr: %s\n", RLENGTH, "", blocks[i]
+        }
+        next
+    }
+    $1 == "-" && $2 == "port:" && $3 == "api-server" {
+        match($0, /^ */)
+        for (i = 1; i < nports; i++) {
+            printf "%*s- port: %s\n", RLENGTH, "", ports[i]
+            printf "%*s  protocol: TCP\n", RLENGTH, ""
+        }
+        printf "%*s- port: %s\n", RLENGTH, "", ports[nports]
+        next
+    }
     { print }
     $1 == label ":" && $2 == "\"true\"" {
         match($0, /^ */)
@@ -230,7 +290,7 @@ _NS_POLICY_STAMP_AWK='
 '
 
 _ns_kernel_policies_stamped() {
-    awk -v label="${KERNEL_NETWORK_POLICY_LABEL}" -v digest="${1:?digest}" \
+    awk -v label="${KERNEL_NETWORK_POLICY_LABEL}" -v digest="${1:?digest}" -v api="${2:-}" \
         "${_NS_POLICY_STAMP_AWK}" "${KERNEL_NETWORK_POLICIES_FILE}"
 }
 
@@ -247,8 +307,9 @@ ns_kernel_policies_ok() {
         [[ -z "$(_ns_kernel_policies_live)" ]]
         return
     fi
-    local digest want have
-    digest="$(_ns_kernel_policies_digest)" || return 1
+    local api digest want have
+    api="$(_ns_kernel_policies_api_server)" || return 1
+    digest="$(_ns_kernel_policies_digest "${api}")" || return 1
     want="$(grep -c '^kind: NetworkPolicy$' "${KERNEL_NETWORK_POLICIES_FILE}")"
     have="$(_ns_kernel_policies_live "${KERNEL_NETWORK_POLICY_LABEL}-digest=${digest}" | grep -c .)"
     [[ "${have}" == "${want}" ]] &&
@@ -269,11 +330,15 @@ ns_kernel_policies_sync() {
         _ns_kernel_policies_remove
         return 0
     fi
-    local digest
-    digest="$(_ns_kernel_policies_digest)" || return 1
+    local api digest
+    api="$(_ns_kernel_policies_api_server)" || {
+        error "the Service kubernetes in default names no endpoint, and the kernel's egress rules admit the API server by its address"
+        return 1
+    }
+    digest="$(_ns_kernel_policies_digest "${api}")" || return 1
     # The digest goes in beside the label every policy carries. One apply of
     # one file: a namespace's rules arrive together.
-    _ns_kernel_policies_stamped "${digest}" | kubectl apply -f - >/dev/null || return 1
+    _ns_kernel_policies_stamped "${digest}" "${api}" | kubectl apply -f - >/dev/null || return 1
     # What an earlier file had and this one has not.
     _ns_kernel_policies_remove "${KERNEL_NETWORK_POLICY_LABEL}-digest!=${digest}"
 }
