@@ -228,7 +228,12 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if err != nil {
 		return err
 	}
-	hosts, _ := grantedOutgoingHosts(profile, comp, preApproved, signIn)
+	granted, _ := grantedOutgoingHosts(profile, comp, preApproved, signIn)
+	served, err := ownServedHosts(ctx, r.Client, granted)
+	if err != nil {
+		return fmt.Errorf("read the hosts the cluster serves itself: %w", err)
+	}
+	hosts, inside := splitOwnHosts(granted, served)
 	ways, err := readOutgoingWays(ctx, r.Client, hosts)
 	if err != nil {
 		return fmt.Errorf("read where the granted hosts are carried: %w", err)
@@ -236,6 +241,13 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if ways.rule != nil {
 		rules = append(rules, *ways.rule)
 	}
+	// The granted hosts the cluster serves itself: its edge's pods
+	// (own_served_hosts.go).
+	ownRules, err := r.ownHostsRules(ctx, inside)
+	if err != nil {
+		return fmt.Errorf("read the edge for the hosts the cluster serves itself: %w", err)
+	}
+	rules = append(rules, ownRules...)
 	// The cluster's own public address, where a rule to public addresses
 	// admits it -- the store's way out, or a granted one: from inside it is
 	// the edge's pods, which those rules do not name (own_public_address.go).
