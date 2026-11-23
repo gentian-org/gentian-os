@@ -2563,6 +2563,7 @@ cmd_exposures_requests() {
                     "expired": "expired", "unmatched": "unmatched"}[.state] // .state;
         def kind: .kindLabel // (if (.kind // "") == "" then "Public address" else .kind end);
         def signin: if (.authMode // "") == "" then "-"
+            elif .insideOnly then "none: the app checks the credential"
             elif .publicAddress == false then "required"
             elif .anyoneWithoutSignIn then "none: anyone"
             else "none: the app checks the credential" end;
@@ -2629,7 +2630,7 @@ cmd_exposures_approve() {
         [[ -t 0 ]] || die "not a terminal: confirm with --yes"
     fi
     need jq
-    local answer asked state host public kind
+    local answer asked state host public inside kind
     answer="$(_call GET "/v1/tenants/${t}/exposures")" || exit 1
     printf '%s' "${answer}" | jq -e 'has("entries")' >/dev/null ||
         die "this director does not say what an entry would put on the internet: it is older than this command. Nothing was sent"
@@ -2641,6 +2642,7 @@ cmd_exposures_approve() {
     host="$(printf '%s' "${asked}" | jq -r '.host // ""')"
     # An older director names no kinds: everything it lists is a public address.
     public="$(printf '%s' "${asked}" | jq -r 'if .publicAddress == false then "" else "yes" end')"
+    inside="$(printf '%s' "${asked}" | jq -r 'if .insideOnly then "yes" else "" end')"
     kind="$(printf '%s' "${asked}" | jq -r '.kind // ""')"
 
     if [[ "$(printf '%s' "${asked}" | jq -r '.authMode // ""')" == "" ]]; then
@@ -2648,6 +2650,21 @@ cmd_exposures_approve() {
         # page, which the installer published. Only its review is asked.
         echo "Reviewing ${inst}/${entry} of tenant ${t}. The director cannot show what it publishes:"
         printf '%s' "${asked}" | jq -r '"  " + (.note // "no reason given")'
+    elif [[ -n "${inside}" ]]; then
+        [[ -n "${host}" ]] ||
+            die "${inst}/${entry} would be published nowhere: $(printf '%s' "${asked}" | jq -r '.note // "the director gives no address for it"'). Nothing was sent"
+        if [[ "${state}" == "requested" ]]; then
+            echo "Approving ${inst}/${entry} for tenant ${t} puts NOTHING on the internet. It publishes this inside the cluster only:"
+        else
+            echo "${inst}/${entry} of tenant ${t} is approved already; approving it again is a review. Nothing of it is on the internet. Inside the cluster, it has this:"
+        fi
+        printf '%s' "${asked}" | jq -r '
+            "  address:  https://" + .host + "   (known to the cluster'"'"'s own DNS only)",
+            "  paths:    " + (.paths | join("  ")),
+            (if ((.denyPaths // []) | length) > 0 then "  refused:  " + (.denyPaths | join("  ")) else empty end),
+            "  kind:     " + (.kindLabel // .kind),
+            "  access:   " + .access,
+            (if (.rateLimit // "") == "" then empty else "  limit:    " + .rateLimit end)'
     elif [[ -z "${public}" ]]; then
         if [[ "${state}" == "requested" ]]; then
             echo "Approving ${inst}/${entry} for tenant ${t} puts NOTHING on the internet. It changes this, behind sign-in:"

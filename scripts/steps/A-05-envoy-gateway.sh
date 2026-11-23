@@ -27,6 +27,9 @@ check() {
         # The class for outgoing connections and the EnvoyProxy it points at.
         kubectl get envoyproxy gentian-outgoing -n "$(ns_kernel edge)" >/dev/null 2>&1 &&
         [[ "$(kubectl get gatewayclass gentian-envoy-out -o jsonpath='{.spec.parametersRef.name}' 2>/dev/null)" == "gentian-outgoing" ]] &&
+        # The class for inside entries and the EnvoyProxy it points at.
+        kubectl get envoyproxy gentian-inside -n "$(ns_kernel edge)" >/dev/null 2>&1 &&
+        [[ "$(kubectl get gatewayclass gentian-envoy-inside -o jsonpath='{.spec.parametersRef.name}' 2>/dev/null)" == "gentian-inside" ]] &&
         # The session filter ahead of the bouncer, which is what the operator's
         # policies and the bouncer assume.
         edge_filter_order_ok &&

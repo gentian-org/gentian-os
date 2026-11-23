@@ -1089,13 +1089,14 @@ main-address setting that is not the entry's, is refused (`422`) and nothing
 is committed (§5). The read is from git: it says where an entry will answer,
 not whether it answers yet.
 
-**Four kinds of entry take an approval**, and the registry records which
+**Five kinds of entry take an approval**, and the registry records which
 one was approved (`kind`):
 
 | Kind | Declared as | Once approved |
 | --- | --- | --- |
 | `public` | `surface: perimeter`, `authMode: none` | The declared paths are published for anyone. No credential reaches the app |
 | `publicAppCredential` | `surface: perimeter`, `authMode: app` | The declared paths are published for anyone, and the caller's `Authorization` header is passed to the app as sent. The app alone checks it; the platform does not know who calls |
+| `insideAppCredential` | `surface: inside`, `authMode: app` | Nothing is published on the internet. The declared paths answer pods of this cluster alone, as on `publicAppCredential` otherwise (below) |
 | `signInAppAuthorization` | `surface: gateway`, `authMode: oidc`, `clientAuthorization: app` | Nothing is published. Behind sign-in, the `Authorization` header is left as the app's own page sent it (§4.1) |
 | `tokenEntry` | `surface: gateway`, `authMode: bearer` | Nothing is published. On a host of its own, a program reaches the component as a person, with a token of the tenant's realm made out to that host (§4.1). The approval covers the addresses a program may be sent back to after sign-in |
 
@@ -1130,6 +1131,22 @@ itself revokes it. A client that needs the app's cookies on a public address
 does not work: cookies pass in neither direction. `jwt`, `bearer`, `basic`
 and `signature` name a check at the edge that nothing makes; the schema
 refuses them on a perimeter entry.
+
+**An entry inside the cluster.** An inside entry (`surface: inside`,
+`authMode: app`, a `subDomain` of its own) is a perimeter entry the internet
+cannot reach. It is
+declared, approved per install with an expiry, and served by the same
+publishing proxy in the tenant's DMZ, forwarding only the declared paths;
+the app checks the caller's `Authorization` header. Its route attaches to
+the `inside` Gateway in the edge namespace, of a class of its own
+(`gentian-envoy-inside`) whose Envoy Service is `ClusterIP`: it has no
+public address. No public DNS record names its host: the route tells
+external-dns to leave it out, and only the cluster's DNS answers it, with
+that Service's address (§10). A component reaches the host only once it was
+granted the host as egress: its network rule then opens that fleet's pods,
+and the DMZ proxy admits that fleet and not the edge. An inside entry is
+never on a bare name and has no alias. The approval read marks it
+`insideOnly`, with `publicAddress` false.
 
 **An alias: a second address directly under the cluster's domain.** A
 published entry answers at `<label>.<the tenant's domain>`. The cluster's
@@ -1233,6 +1250,12 @@ reconciles a CoreDNS `hosts` override block (`# BEGIN gentian-hairpin`) so those
 names resolve to the ClusterIP of the edge's Envoy Service, which is found by
 the GatewayClass it serves and not by a namespace's name.
 
+The hosts of inside entries (§7) are in the block too, at the ClusterIP of
+the inside Gateway's Envoy Service (class `gentian-envoy-inside`). Until that
+Service has one they are left out, and nothing resolves them. A host the edge
+serves stays at the edge's address even where an inside entry answers at the
+same name.
+
 A `mail.<kernelDomain>` line already in the block is left as it is. Nothing
 in this repository writes one: the cluster's mail names are published as DNS
 records for the mail edge's load balancer (see [mail.md](mail.md)).
@@ -1288,6 +1311,8 @@ fleet has no limit per client address and would open a path from the edge
 namespace to those servers. Tunnel mode changes nothing above for HTTP:
 cloudflared publishes hostnames to the same Envoy Service. It carries no TCP
 and no UDP, so a cluster behind a tunnel has no inbound mail and no TURN.
+The `inside` Gateway of inside entries (§7) is on neither: it is of a class
+and a fleet of its own, with a cluster-internal address only.
 
 ### 11.1 Route classes
 

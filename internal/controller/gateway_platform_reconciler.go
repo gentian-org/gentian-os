@@ -140,15 +140,15 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	gatewayPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			gw, ok := e.Object.(*gatewayv1.Gateway)
-			return ok && isEdgeGateway(gw)
+			return ok && (isEdgeGateway(gw) || isInsideGateway(gw))
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			gw, ok := e.ObjectNew.(*gatewayv1.Gateway)
-			return ok && isEdgeGateway(gw)
+			return ok && (isEdgeGateway(gw) || isInsideGateway(gw))
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			gw, ok := e.Object.(*gatewayv1.Gateway)
-			return ok && isEdgeGateway(gw)
+			return ok && (isEdgeGateway(gw) || isInsideGateway(gw))
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
@@ -158,7 +158,11 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return ok && cm.GetNamespace() == operatorNamespace && cm.GetName() == operatorConfigMapName
 	})
 
-	envoyKernelServicePredicate := predicate.NewPredicateFuncs(isKernelEdgeService)
+	// The edge's Service and the inside Gateway's: the hairpin maps hosts to
+	// their addresses.
+	envoyKernelServicePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		return isKernelEdgeService(obj) || isInsideService(obj)
+	})
 	// The kernel zone's client secret: the kernel UIs are routed only once
 	// it exists, so its arrival is what routes them.
 	zoneSecretPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
@@ -226,8 +230,9 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return obj.GetLabels()[bouncerRouteLabel] == "true"
 			})),
 		).
-		// A route on the edge appearing, going or changing its hostnames:
-		// the CoreDNS hairpin names every host the edge serves.
+		// A route on the edge or the inside Gateway appearing, going or
+		// changing its hostnames: the CoreDNS hairpin names every host either
+		// serves.
 		Watches(
 			&gatewayv1.HTTPRoute{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
@@ -235,7 +240,7 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				predicate.GenerationChangedPredicate{},
 				predicate.NewPredicateFuncs(func(obj client.Object) bool {
 					route, ok := obj.(*gatewayv1.HTTPRoute)
-					return ok && routeOnEdge(route)
+					return ok && (routeOnEdge(route) || routeOnInside(route))
 				}),
 			),
 		).
@@ -283,6 +288,12 @@ func isEdgeGateway(gw *gatewayv1.Gateway) bool {
 		(gw.GetName() == AuthenticatedGatewayName || gw.GetName() == PerimeterGatewayName)
 }
 
+// isInsideGateway reports the Gateway of the inside entries. It is not an
+// edge: nothing outside the cluster reaches it.
+func isInsideGateway(gw *gatewayv1.Gateway) bool {
+	return gw.GetNamespace() == servicesNamespace && gw.GetName() == InsideGatewayName
+}
+
 // ensureEdgeGateways reconciles the two Gateways of the edge from the
 // cluster's state: the authenticated one with the kernel wildcard and a
 // listener per tenant zone, the perimeter one with the identity provider's
@@ -321,7 +332,98 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 			return fmt.Errorf("ensure Gateway %s: %w", desired.Name, err)
 		}
 	}
+	// The inside Gateway carries none of the annotations above: they tell
+	// external-dns where the public edge answers, and nothing of the inside
+	// one is published.
+	inside := buildInsideGateway(r.KernelDomain, r.TenancyMode, r.kernelRealm(), tenantList.Items, profiles)
+	if inside == nil {
+		// A Gateway needs a listener, and the fleet behind it is started by
+		// its first Gateway: with no inside entry approved there is neither.
+		gone := &gatewayv1.Gateway{ObjectMeta: metav1.ObjectMeta{Name: InsideGatewayName, Namespace: servicesNamespace}}
+		if err := r.Delete(ctx, gone); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete Gateway %s: %w", InsideGatewayName, err)
+		}
+		return nil
+	}
+	if err := ensureGatewayResource(ctx, r.Client, inside); err != nil {
+		return fmt.Errorf("ensure Gateway %s: %w", inside.Name, err)
+	}
 	return nil
+}
+
+// buildInsideGateway is the Gateway of the inside entries, or nil while no
+// tenant has one approved: one listener per inside host, each with the
+// certificate a perimeter listener for that host would have.
+//
+// It is of a class of its own (InsideGatewayClassName), served by a fleet of
+// its own whose Service has a cluster-internal address and no other. Under
+// the edge's class it would be merged into the edge's fleet and answer on
+// the edge's public address; here nothing outside the cluster has a way to
+// it. What resolves its hosts is the cluster's DNS alone (coredns_hairpin.go):
+// its routes tell external-dns to leave them out (insideRouteAnnotations).
+func buildInsideGateway(kernelDomain, tenancyMode, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) *gatewayv1.Gateway {
+	listeners := insideTenantListeners(kernelDomain, tenancyMode, kernelRealm, tenants, profiles)
+	if len(listeners) == 0 {
+		return nil
+	}
+	return &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      InsideGatewayName,
+			Namespace: servicesNamespace,
+			Labels: map[string]string{
+				managedByLabel:       managedByValue,
+				"gentianos.io/scope": "kernel",
+				"gentianos.io/edge":  "inside",
+			},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(InsideGatewayClassName),
+			Listeners:        listeners,
+		},
+	}
+}
+
+// insideTenantListeners is one listener per host an inside entry answers
+// at, by the rule its route is written with (insideHost). No alias, no bare
+// name, and no :80: an inside entry has none of them.
+func insideTenantListeners(kernelDomain, tenancyMode, kernelRealm string, tenants []gentianov1alpha1.Tenant, profiles map[string]*gentianov1alpha1.ComponentProfile) []gatewayv1.Listener {
+	var out []gatewayv1.Listener
+	seen := map[string]struct{}{}
+	for i := range tenants {
+		tenant := &tenants[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		zone := zoneNamesOf(tenant, kernelDomain, tenancyMode, kernelRealm)
+		for j := range tenant.Spec.Exposures {
+			host := insideHost(&tenant.Spec.Exposures[j], profiles, zone, kernelDomain)
+			if host == "" {
+				continue
+			}
+			if _, dup := seen[host]; dup {
+				continue
+			}
+			seen[host] = struct{}{}
+			secret, secretNamespace := entryListenerSecret(tenant, host, kernelDomain)
+			out = append(out, withAllowedRoutes(tlsListener(
+				insideListenerName(host), gatewayv1.Hostname(host), secret, secretNamespace,
+			), true))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// entryListenerSecret is the certificate that names a host a tenant's entry
+// answers at. One directly under the cluster's domain, or that domain
+// itself, is on the cluster's own: the bare domain the platform tenant
+// publishes, and every host of the user tenant of a single-tenancy cluster.
+// Anything deeper is on the tenant's wildcard.
+func entryListenerSecret(tenant *gentianov1alpha1.Tenant, host, kernelDomain string) (secret, namespace string) {
+	if directlyUnder(host, kernelDomain) {
+		return kernelWildcardTLSSecretName, servicesNamespace
+	}
+	return tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant)
 }
 
 // buildPerimeterGateway is the edge with no session: the identity provider's
@@ -388,15 +490,7 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kern
 			if host == "" {
 				continue
 			}
-			// The certificate that names the host. One directly under the
-			// cluster's domain, or that domain itself, is on the cluster's
-			// own: the bare domain the platform tenant publishes, and every
-			// host of the user tenant of a single-tenancy cluster. Anything
-			// deeper is on the tenant's wildcard.
-			secret, secretNamespace := tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant)
-			if directlyUnder(host, kernelDomain) {
-				secret, secretNamespace = kernelWildcardTLSSecretName, servicesNamespace
-			}
+			secret, secretNamespace := entryListenerSecret(tenant, host, kernelDomain)
 			if _, dup := seen[host]; dup {
 				continue
 			}
@@ -517,6 +611,18 @@ func perimeterTenantListeners(kernelDomain, tenancyMode, mainAddressTenant, kern
 // zone's wildcard, so one for desktop.<tenant> here would take the desktop's
 // host off the authenticated Gateway although nothing is routed behind it.
 func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, zone zoneNames, kernelDomain string) string {
+	return enabledEntryHost(e, profiles, zone, kernelDomain, gentianov1alpha1.SurfacePerimeter)
+}
+
+// insideHost is publishedHost for an inside entry: where it answers on the
+// inside Gateway, by the same rule, or "".
+func insideHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, zone zoneNames, kernelDomain string) string {
+	return enabledEntryHost(e, profiles, zone, kernelDomain, gentianov1alpha1.SurfaceInside)
+}
+
+// enabledEntryHost is where one enablement of an entry on surface answers,
+// or "" for one that names no such entry or is approved as another kind.
+func enabledEntryHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gentianov1alpha1.ComponentProfile, zone zoneNames, kernelDomain string, surface gentianov1alpha1.SurfaceKind) string {
 	profile := profiles[e.Install]
 	if profile == nil {
 		return ""
@@ -526,7 +632,7 @@ func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gent
 	}
 	for i := range profile.Spec.Expose {
 		entry := &profile.Spec.Expose[i]
-		if entry.Name == e.ExposureName && entry.Surface == gentianov1alpha1.SurfacePerimeter && entry.ApprovedAs(e.Kind) {
+		if entry.Name == e.ExposureName && entry.Surface == surface && entry.ApprovedAs(e.Kind) {
 			return exposureHostIn(zone, e.Install, entry)
 		}
 	}
@@ -536,12 +642,21 @@ func publishedHost(e *gentianov1alpha1.TenantExposure, profiles map[string]*gent
 // perimeterListenerName is a Gateway listener name derived from the host:
 // a DNS label, unique, and within the 253 the API allows.
 func perimeterListenerName(host string) string {
-	name := "perimeter-" + strings.ReplaceAll(host, ".", "-")
+	return hostListenerName("perimeter-", host)
+}
+
+// insideListenerName is perimeterListenerName on the inside Gateway.
+func insideListenerName(host string) string {
+	return hostListenerName("inside-", host)
+}
+
+func hostListenerName(prefix, host string) string {
+	name := prefix + strings.ReplaceAll(host, ".", "-")
 	if len(name) <= 63 {
 		return name
 	}
 	sum := sha256.Sum256([]byte(host))
-	return "perimeter-" + hex.EncodeToString(sum[:])[:16]
+	return prefix + hex.EncodeToString(sum[:])[:16]
 }
 
 // buildAuthenticatedGateway is the edge behind a session: the catch-all

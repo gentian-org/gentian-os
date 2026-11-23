@@ -133,6 +133,20 @@ const EdgeGatewayClassName = "gentian-envoy"
 // connections, served by a fleet of their own in the edge namespace.
 const OutgoingGatewayClassName = "gentian-envoy-out"
 
+// InsideGatewayClassName is the GatewayClass of the Gateway only the
+// cluster's own pods reach: the inside entries' fleet, in the edge namespace,
+// whose Service has no address outside the cluster.
+const InsideGatewayClassName = "gentian-envoy-inside"
+
+// InsideProxyPodLabels select the Envoy proxy pods of the fleet for inside
+// entries in the edge namespace, and of no other fleet.
+func InsideProxyPodLabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":                    "envoy",
+		"gateway.envoyproxy.io/owning-gatewayclass": InsideGatewayClassName,
+	}
+}
+
 // OutgoingProxyPodLabels select the Envoy proxy pods of the fleet for
 // outgoing connections in the edge namespace.
 func OutgoingProxyPodLabels() map[string]string {

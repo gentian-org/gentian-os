@@ -60,24 +60,48 @@ func kernelMailHairpinHost(kernelDomain string) string {
 	return "mail." + kernelDomain
 }
 
-// patchHairpinCorefile updates the gentian-hairpin block so kernel HTTPS hosts
-// and optional tenant app hostnames resolve to edgeIP. The mail.<kernelDomain>
+// hairpinAddresses is every host the hairpin block names, with the address
+// it answers at: the kernel's hosts and edgeHosts at the edge's ClusterIP,
+// and insideHosts at the inside Gateway's.
+//
+// A host the edge serves stays the edge's even where an inside entry answers
+// at the same name: the edge's hosts are what the cluster's own pages and
+// consoles are fetched at, and an inside entry is not given the way to take
+// one of them over. An inside host with no address -- the inside Gateway's
+// Service has no ClusterIP yet -- is left out, and with it every way to it.
+func hairpinAddresses(edgeIP, kernelDomain string, edgeHosts map[string]struct{}, insideIP string, insideHosts map[string]struct{}) map[string]string {
+	out := map[string]string{}
+	if insideIP != "" {
+		for host := range insideHosts {
+			out[host] = insideIP
+		}
+	}
+	if edgeIP == "" {
+		return out
+	}
+	for host := range kernelHTTPSHairpinHosts(kernelDomain) {
+		out[host] = edgeIP
+	}
+	for host := range edgeHosts {
+		out[host] = edgeIP
+	}
+	return out
+}
+
+// patchHairpinCorefile updates the gentian-hairpin block so each host of
+// hosts resolves to its address (hairpinAddresses). The mail.<kernelDomain>
 // entry is preserved (Dovecot).
-func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map[string]struct{}) (string, bool) {
-	if edgeIP == "" || kernelDomain == "" {
+func patchHairpinCorefile(corefile, kernelDomain string, hosts map[string]string) (string, bool) {
+	if kernelDomain == "" || len(hosts) == 0 {
 		return corefile, false
 	}
 
-	httpsHosts := kernelHTTPSHairpinHosts(kernelDomain)
-	for host := range tenantHosts {
-		httpsHosts[host] = struct{}{}
-	}
 	mailHost := kernelMailHairpinHost(kernelDomain)
 
 	beginIdx := strings.Index(corefile, hairpinBeginMarker)
 	endIdx := strings.Index(corefile, hairpinEndMarker)
 	if beginIdx == -1 || endIdx == -1 || endIdx < beginIdx {
-		block := buildHairpinBlock(edgeIP, httpsHosts, "")
+		block := buildHairpinBlock(hosts, "")
 		if idx := strings.Index(corefile, "hosts {"); idx != -1 {
 			insertAt := idx + len("hosts {")
 			patched := corefile[:insertAt] + "\n" + block + corefile[insertAt:]
@@ -118,12 +142,12 @@ func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map
 			continue
 		}
 
-		if _, ok := httpsHosts[host]; ok {
+		if want, ok := hosts[host]; ok && !present[host] {
 			present[host] = true
-			if ip != edgeIP {
+			if ip != want {
 				changed = true
 			}
-			outLines = append(outLines, fmt.Sprintf("          %s %s", edgeIP, host))
+			outLines = append(outLines, fmt.Sprintf("          %s %s", want, host))
 			continue
 		}
 
@@ -136,11 +160,16 @@ func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map
 		changed = true
 	}
 
-	for host := range httpsHosts {
+	ordered := make([]string, 0, len(hosts))
+	for host := range hosts {
+		ordered = append(ordered, host)
+	}
+	sort.Strings(ordered)
+	for _, host := range ordered {
 		if present[host] {
 			continue
 		}
-		outLines = insertBeforeMarker(outLines, hairpinEndMarker, fmt.Sprintf("          %s %s", edgeIP, host))
+		outLines = insertBeforeMarker(outLines, hairpinEndMarker, fmt.Sprintf("          %s %s", hosts[host], host))
 		changed = true
 	}
 
@@ -153,11 +182,11 @@ func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map
 }
 
 // buildHairpinBlock renders the marker-delimited host lines for every host in
-// hosts. It takes the resolved set rather than deriving the kernel hosts itself:
-// a block created from scratch must carry the tenant app hostnames as well, or
-// the very hosts the hairpin exists for are missing until some later reconcile
-// happens to add them.
-func buildHairpinBlock(edgeIP string, hosts map[string]struct{}, existingMailLine string) string {
+// hosts, each at its own address. It takes the resolved set rather than
+// deriving the kernel hosts itself: a block created from scratch must carry
+// the tenant app hostnames as well, or the very hosts the hairpin exists for
+// are missing until some later reconcile happens to add them.
+func buildHairpinBlock(hosts map[string]string, existingMailLine string) string {
 	ordered := make([]string, 0, len(hosts))
 	for host := range hosts {
 		ordered = append(ordered, host)
@@ -169,7 +198,7 @@ func buildHairpinBlock(edgeIP string, hosts map[string]struct{}, existingMailLin
 	b.WriteString(hairpinBeginMarker)
 	b.WriteByte('\n')
 	for _, host := range ordered {
-		fmt.Fprintf(&b, "          %s %s\n", edgeIP, host)
+		fmt.Fprintf(&b, "          %s %s\n", hosts[host], host)
 	}
 	if existingMailLine != "" {
 		b.WriteString(existingMailLine)
@@ -233,6 +262,21 @@ func kernelEdgeClusterIP(ctx context.Context, c client.Client) (string, error) {
 	return ip, nil
 }
 
+// insideClusterIP is the ClusterIP of the inside Gateway's Service, or ""
+// while it has none: no Gateway, no fleet yet, or no address assigned.
+func insideClusterIP(ctx context.Context, c client.Client) (string, error) {
+	list := &corev1.ServiceList{}
+	if err := c.List(ctx, list, insideServiceLabels()); err != nil {
+		return "", fmt.Errorf("list the inside Gateway's service: %w", err)
+	}
+	for i := range list.Items {
+		if ip := list.Items[i].Spec.ClusterIP; ip != "" && ip != corev1.ClusterIPNone {
+			return ip, nil
+		}
+	}
+	return "", nil
+}
+
 func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, tenancyMode, kernelRealm string) error {
 	edgeIP, err := kernelEdgeClusterIP(ctx, c)
 	if err != nil {
@@ -243,12 +287,16 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, te
 	if err != nil {
 		return err
 	}
-	routeHosts, err := collectEdgeRouteHairpinHosts(ctx, c)
+	routeHosts, insideHosts, err := collectRouteHairpinHosts(ctx, c)
 	if err != nil {
 		return err
 	}
 	for host := range routeHosts {
 		tenantHosts[host] = struct{}{}
+	}
+	insideIP, err := insideClusterIP(ctx, c)
+	if err != nil {
+		return err
 	}
 
 	cmName, err := resolveCoreDNSConfigMapName(ctx, c)
@@ -264,7 +312,8 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, te
 	}
 
 	corefile := cm.Data["Corefile"]
-	patched, changed := patchHairpinCorefile(corefile, edgeIP, kernelDomain, tenantHosts)
+	patched, changed := patchHairpinCorefile(corefile, kernelDomain,
+		hairpinAddresses(edgeIP, kernelDomain, tenantHosts, insideIP, insideHosts))
 	if !changed {
 		// Distinguish "already correct" from "could not be placed". The latter
 		// used to return nil, so a Corefile the hairpin never landed in looked
@@ -375,35 +424,53 @@ func collectTenantAppHairpinHosts(ctx context.Context, c client.Client, kernelDo
 	return out, nil
 }
 
-// collectEdgeRouteHairpinHosts returns every hostname a route on the edge
-// Gateways serves. The hosts the operator derives itself cover the kernel and
+// collectRouteHairpinHosts returns every hostname a route on the edge
+// Gateways serves, and apart from them every hostname a route on the inside
+// Gateway serves. The hosts the operator derives itself cover the kernel and
 // the catalog's apps, but not the consoles a tenant's install routes: their
 // names left the cluster for the public address, and a server-side fetch to
 // one -- the desktop asking whether the Admin Console may be framed -- timed
 // out there. What the edge serves is the list.
-func collectEdgeRouteHairpinHosts(ctx context.Context, c client.Client) (map[string]struct{}, error) {
+func collectRouteHairpinHosts(ctx context.Context, c client.Client) (edge, inside map[string]struct{}, err error) {
 	routes := &gatewayv1.HTTPRouteList{}
 	if err := c.List(ctx, routes); err != nil {
-		return nil, fmt.Errorf("list HTTPRoutes for CoreDNS hairpin: %w", err)
+		return nil, nil, fmt.Errorf("list HTTPRoutes for CoreDNS hairpin: %w", err)
 	}
-	out := map[string]struct{}{}
+	edge, inside = map[string]struct{}{}, map[string]struct{}{}
 	for i := range routes.Items {
 		route := &routes.Items[i]
-		if !routeOnEdge(route) {
+		into := edge
+		switch {
+		case routeOnEdge(route):
+		case routeOnInside(route):
+			into = inside
+		default:
 			continue
 		}
 		for _, h := range route.Spec.Hostnames {
 			// A hosts entry names one host; a wildcard is not one.
 			if host := string(h); host != "" && !strings.HasPrefix(host, "*") {
-				out[host] = struct{}{}
+				into[host] = struct{}{}
 			}
 		}
 	}
-	return out, nil
+	return edge, inside, nil
 }
 
 // routeOnEdge reports whether route attaches to one of the edge Gateways.
 func routeOnEdge(route *gatewayv1.HTTPRoute) bool {
+	return routeOnGateway(route, AuthenticatedGatewayName, PerimeterGatewayName)
+}
+
+// routeOnInside reports whether route attaches to the inside Gateway, and so
+// answers only inside the cluster.
+func routeOnInside(route *gatewayv1.HTTPRoute) bool {
+	return routeOnGateway(route, InsideGatewayName)
+}
+
+// routeOnGateway reports whether route attaches to one of the named Gateways
+// in the edge namespace.
+func routeOnGateway(route *gatewayv1.HTTPRoute, names ...string) bool {
 	for _, ref := range route.Spec.ParentRefs {
 		if ref.Group != nil && *ref.Group != "" && *ref.Group != gatewayv1.GroupName {
 			continue
@@ -415,8 +482,13 @@ func routeOnEdge(route *gatewayv1.HTTPRoute) bool {
 		if ref.Namespace != nil {
 			ns = string(*ref.Namespace)
 		}
-		if ns == servicesNamespace && (ref.Name == AuthenticatedGatewayName || ref.Name == PerimeterGatewayName) {
-			return true
+		if ns != servicesNamespace {
+			continue
+		}
+		for _, name := range names {
+			if string(ref.Name) == name {
+				return true
+			}
 		}
 	}
 	return false

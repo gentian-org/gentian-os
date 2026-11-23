@@ -59,7 +59,7 @@ func TestCollectEdgeRouteHairpinHosts(t *testing.T) {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
 
-	got, err := collectEdgeRouteHairpinHosts(context.Background(), c)
+	got, _, err := collectRouteHairpinHosts(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -38,7 +38,7 @@ func TestPatchHairpinCorefile_UpdatesKernelHostsPreservesMail(t *testing.T) {
     }
 }`
 
-	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
+	patched, changed := patchHairpinCorefile(corefile, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", nil, "", nil))
 	if !changed {
 		t.Fatal("expected hairpin patch to change Corefile")
 	}
@@ -71,7 +71,7 @@ func TestPatchHairpinCorefile_Idempotent(t *testing.T) {
 	b.WriteString("          " + hairpinEndMarker)
 	corefile := b.String()
 
-	_, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
+	_, changed := patchHairpinCorefile(corefile, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", nil, "", nil))
 	if changed {
 		t.Fatal("expected no change when hairpin already correct for managed hosts")
 	}
@@ -84,7 +84,7 @@ func TestPatchHairpinCorefile_InsertsMissingHosts(t *testing.T) {
           192.0.2.197 desktop.platform.example.test
           # END gentian-hairpin`
 
-	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
+	patched, changed := patchHairpinCorefile(corefile, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", nil, "", nil))
 	if !changed {
 		t.Fatal("expected missing kernel hosts to be inserted")
 	}
@@ -104,7 +104,7 @@ func TestPatchHairpinCorefile_AddsTenantAppHosts(t *testing.T) {
 		"cloud.demo.platform.example.test":     {},
 		"collabora.demo.platform.example.test": {},
 	}
-	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", tenantHosts)
+	patched, changed := patchHairpinCorefile(corefile, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", tenantHosts, "", nil))
 	if !changed {
 		t.Fatal("expected tenant app hosts to be inserted")
 	}
@@ -145,7 +145,7 @@ func TestPatchHairpinCorefile_CreatesHostsBlockWhenAbsent(t *testing.T) {
 	tenantHosts := map[string]struct{}{
 		"cloud.demo.platform.example.test": {},
 	}
-	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", tenantHosts)
+	patched, changed := patchHairpinCorefile(corefile, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", tenantHosts, "", nil))
 	if !changed {
 		t.Fatalf("expected a hosts block to be created, got:\n%s", patched)
 	}
@@ -180,11 +180,11 @@ func TestPatchHairpinCorefile_CreatedBlockIsIdempotent(t *testing.T) {
 	corefile := ".:53 {\n    kubernetes cluster.local\n    forward . /etc/resolv.conf\n}"
 	tenantHosts := map[string]struct{}{"cloud.demo.platform.example.test": {}}
 
-	first, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", tenantHosts)
+	first, changed := patchHairpinCorefile(corefile, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", tenantHosts, "", nil))
 	if !changed {
 		t.Fatal("expected the first pass to create the block")
 	}
-	second, changed := patchHairpinCorefile(first, "192.0.2.36", "platform.example.test", tenantHosts)
+	second, changed := patchHairpinCorefile(first, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", tenantHosts, "", nil))
 	if changed {
 		t.Fatalf("expected the second pass to be a no-op, got:\n%s", second)
 	}
@@ -194,7 +194,7 @@ func TestPatchHairpinCorefile_CreatedBlockIsIdempotent(t *testing.T) {
 func TestPatchHairpinCorefile_ReportsUnplaceableCorefile(t *testing.T) {
 	t.Parallel()
 
-	if _, changed := patchHairpinCorefile("# nothing here", "192.0.2.36", "platform.example.test", nil); changed {
+	if _, changed := patchHairpinCorefile("# nothing here", "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", nil, "", nil)); changed {
 		t.Fatal("expected no change when there is no kubernetes directive to anchor the hosts block to")
 	}
 }
@@ -217,7 +217,7 @@ func TestPatchHairpinCorefile_RetiresHostsNothingWants(t *testing.T) {
           198.51.100.7 mail.previous.test
           # END gentian-hairpin`
 
-	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
+	patched, changed := patchHairpinCorefile(corefile, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", nil, "", nil))
 	if !changed {
 		t.Fatal("expected the stale hosts to be retired")
 	}
@@ -239,7 +239,7 @@ func TestPatchHairpinCorefile_RetiresHostsNothingWants(t *testing.T) {
 		}
 	}
 	// And a second pass changes nothing.
-	if _, changed := patchHairpinCorefile(patched, "192.0.2.36", "platform.example.test", nil); changed {
+	if _, changed := patchHairpinCorefile(patched, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", nil, "", nil)); changed {
 		t.Error("retiring stale hosts is not idempotent")
 	}
 }
@@ -255,7 +255,7 @@ func TestPatchHairpinCorefile_RetiresTenantHostsWithTheTenant(t *testing.T) {
           192.0.2.36 chat.demo.platform.example.test
           # END gentian-hairpin`
 
-	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
+	patched, changed := patchHairpinCorefile(corefile, "platform.example.test", hairpinAddresses("192.0.2.36", "platform.example.test", nil, "", nil))
 	if !changed || strings.Contains(patched, "chat.demo.platform.example.test") {
 		t.Fatalf("the deleted tenant's host survived:\n%s", patched)
 	}

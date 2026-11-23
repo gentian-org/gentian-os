@@ -1084,7 +1084,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// The perimeter: a surface the profile declared and a perimeter approver
 	// enabled, published from the tenant's DMZ with no session in front of it
 	// (AD-6). Declaring one publishes nothing; this only acts on enablements.
-	published, err := r.ensurePerimeter(ctx, comp, profile, tenant, zone)
+	published, inside, err := r.ensurePerimeterSurfaces(ctx, comp, profile, tenant, zone)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("perimeter: %w", err)
 	}
@@ -1100,6 +1100,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		// Said out loud, because a public surface is the one thing about a
 		// component that somebody should never discover by accident.
 		message += fmt.Sprintf("; %d published on the perimeter", published)
+	}
+	if inside > 0 {
+		message += fmt.Sprintf("; %d answering inside the cluster only", inside)
 	}
 	// A placed component that declares the gateway is looked at again without
 	// an event: the claim switching the gateway on or off changes what it is

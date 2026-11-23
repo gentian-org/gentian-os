@@ -19,6 +19,7 @@ import (
 
 const (
 	GentianGatewayClassName      = netpolicy.EdgeGatewayClassName
+	InsideGatewayClassName       = netpolicy.InsideGatewayClassName
 	GentianGatewayControllerName = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
 	// The two edges (networking.md §1): one Envoy fleet, two policy domains,
 	// both Gateways in the edge namespace under mergeGateways. The
@@ -26,8 +27,13 @@ const (
 	// perimeter Gateway serves surfaces on their own hostname with no
 	// session -- for the kernel, exactly two: the identity provider's realm
 	// endpoints on id.<kernel>, and the ACME challenge on :80.
-	AuthenticatedGatewayName    = "authenticated"
-	PerimeterGatewayName        = "perimeter"
+	AuthenticatedGatewayName = "authenticated"
+	PerimeterGatewayName     = "perimeter"
+	// InsideGatewayName is the Gateway of the inside entries, of a class and
+	// a fleet of its own (InsideGatewayClassName): its Service has a
+	// cluster-internal address and no other, so the internet has no way to
+	// it, and its hosts are known to the cluster's DNS alone.
+	InsideGatewayName           = "inside"
 	kernelWildcardTLSSecretName = "wildcard-tls"
 	gatewayPlatformReconcileKey = "gateway-platform"
 	conditionGatewayReady       = "GatewayReady"

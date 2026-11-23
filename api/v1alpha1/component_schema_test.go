@@ -242,12 +242,19 @@ func TestComponentProfileRules(t *testing.T) {
 
 		{"forwardToken below platform tier", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, forwardToken: true, backend: {service: x, port: 80}}\n", "forwardToken requires trustTier platform"},
 		{"forwardToken at platform tier", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, forwardToken: true, backend: {service: x, port: 80}}\n", ""},
-		{"forwardToken on the perimeter", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: none, forwardToken: true, backend: {service: x, port: 80}}\n", "meaningless on a perimeter entry"},
+		{"forwardToken on the perimeter", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: none, forwardToken: true, backend: {service: x, port: 80}}\n", "meaningless on a perimeter or inside entry"},
 
 		// The two entry types an approver decides beside a plain public
 		// address, and the modes that promised a check nothing makes.
 		{"a public entry whose callers the app checks", app + "\n  expose:\n  - {name: dav, surface: perimeter, authMode: app, paths: [/dav/], backend: {service: x, port: 80}}\n", ""},
-		{"authMode app behind sign-in", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: app, backend: {service: x, port: 80}}\n", "authMode app is for a perimeter entry"},
+		{"authMode app behind sign-in", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: app, backend: {service: x, port: 80}}\n", "authMode app is for a perimeter or inside entry"},
+		{"an entry only the cluster's pods reach", app + "\n  expose:\n  - {name: api, surface: inside, subDomain: api, authMode: app, paths: [/api/], backend: {service: x, port: 80}}\n", ""},
+		{"an inside entry for anyone", app + "\n  expose:\n  - {name: api, surface: inside, subDomain: api, authMode: none, paths: [/api/], backend: {service: x, port: 80}}\n", "an inside entry is authMode app"},
+		{"an inside entry behind a session", app + "\n  expose:\n  - {name: api, surface: inside, subDomain: api, authMode: oidc, paths: [/api/], backend: {service: x, port: 80}}\n", "an inside entry is authMode app"},
+		{"an inside entry on a bare name", app + "\n  expose:\n  - {name: api, surface: inside, authMode: app, apex: true, paths: [/], backend: {service: x, port: 80}}\n", "apex is for a perimeter entry"},
+		{"forwardToken on an inside entry", app + "\n  expose:\n  - {name: api, surface: inside, subDomain: api, authMode: app, forwardToken: true, paths: [/api/], backend: {service: x, port: 80}}\n", "meaningless on a perimeter or inside entry"},
+		{"an inside entry on the component's own host", app + "\n  expose:\n  - {name: api, surface: inside, authMode: app, paths: [/api/], backend: {service: x, port: 80}}\n", "an inside entry names a subDomain"},
+		{"a service inside", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: api, surface: inside, subDomain: api, authMode: app, backend: {service: x, port: 80}}\n", "a service exposes on the gateway only"},
 		{"a password the proxy would have to check", app + "\n  expose:\n  - {name: dav, surface: perimeter, authMode: basic, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},
 		{"a token the edge would have to verify", app + "\n  expose:\n  - {name: api, surface: perimeter, authMode: jwt, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},
 		{"a bearer the edge would have to verify", app + "\n  expose:\n  - {name: api, surface: perimeter, authMode: bearer, backend: {service: x, port: 80}}\n", "not available on a perimeter entry yet"},

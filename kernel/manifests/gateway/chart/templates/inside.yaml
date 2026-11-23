@@ -1,0 +1,84 @@
+{{- /*
+The fleet for inside entries: a GatewayClass of its own and the EnvoyProxy it
+points at. No Gateway is declared here. The operator writes the one Gateway of
+this class, named inside, while a tenant has an inside entry approved, and
+Envoy Gateway starts the fleet with it.
+
+A class of its own, because under the edge's class the Gateway would be merged
+into the edge's fleet and answer on the edge's public address. This fleet's
+Service has a cluster-internal address and no other: the internet has no way
+to it, and only the cluster's own DNS answers its hosts. The rules that admit
+"the edge" name the edge's class (gateway.envoyproxy.io/owning-gatewayclass),
+so these pods are admitted only where a rule names this class.
+*/ -}}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: gentian-inside
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  # Merged, every Gateway of the class is served by the one fleet, and its
+  # pods and Service carry the class in gateway.envoyproxy.io/owning-gatewayclass,
+  # which is what the rules for this fleet and the operator select by.
+  mergeGateways: true
+  # The access log as JSON, one line per request on stdout, as the edge's:
+  # without the query string, cookies or the Authorization header.
+  telemetry:
+    accessLog:
+      settings:
+        - format:
+            type: JSON
+            json:
+              time: "%START_TIME%"
+              request_id: "%REQ(X-REQUEST-ID)%"
+              method: "%REQ(:METHOD)%"
+              host: "%REQ(:AUTHORITY)%"
+              path: "%REQ_WITHOUT_QUERY(:PATH)%"
+              status: "%RESPONSE_CODE%"
+              flags: "%RESPONSE_FLAGS%"
+              duration_ms: "%DURATION%"
+              bytes_sent: "%BYTES_SENT%"
+              upstream: "%UPSTREAM_CLUSTER%"
+              client: "%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"
+              user_agent: "%REQ(USER-AGENT)%"
+          sinks:
+            - type: File
+              file:
+                path: /dev/stdout
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: {{ .Values.envoy.replicas }}
+        container:
+          image: {{ .Values.envoy.image | quote }}
+        pod:
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: envoy
+                  gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-inside
+      # Reached from inside the cluster only: no load balancer, no address
+      # outside it.
+      envoyService:
+        type: ClusterIP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: gentian-envoy-inside
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  controllerName: {{ .Values.controllerName | quote }}
+  description: Gentian OS inside entries via Envoy Gateway, reachable from inside the cluster only
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: gentian-inside
+    namespace: {{ .Values.namespace }}
