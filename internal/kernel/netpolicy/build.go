@@ -14,7 +14,6 @@ import (
 	"maps"
 	"time"
 
-	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -71,13 +70,15 @@ type BuildInput struct {
 	// an app's policy opens no path to the gateway.
 	ModelAccessWithheld map[string]bool
 	Config              Config
-	KubeAPIEndpts       *discoveryv1.EndpointSlice
+	// Cluster are the cluster's DNS and API server, which every pod of the
+	// tenant reaches (BaselineEgress).
+	Cluster ClusterServices
 }
 
 // BuildDesired returns all operator-managed NetworkPolicies for a tenant.
 func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 	out := []*networkingv1.NetworkPolicy{
-		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts, in.agentBridgeExclusion()...),
+		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.Cluster, in.agentBridgeExclusion()...),
 		ExportJobNetworkPolicy(in.TenantName, in.Namespace, in.Config),
 	}
 	out = append(out, AgentBridgeNetworkPolicies(in)...)

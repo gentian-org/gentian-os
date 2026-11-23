@@ -26,8 +26,11 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -285,6 +288,42 @@ func aliasHostFor(in mainAddressInputs, tenant *gentianov1alpha1.Tenant, comp *g
 	return addresses.AliasHost(in, tenant.Name, comp.Name, p.on.ExposureName)
 }
 
+// componentsWithPerimeter maps to every component that has a perimeter proxy,
+// found by the proxies' own egress policies in the tenants' DMZ namespaces:
+// those admit the cluster's DNS (ensurePerimeterPolicies), and a change of it
+// is a change of them.
+func componentsWithPerimeter(c client.Client) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []reconcile.Request {
+		tenants := &gentianov1alpha1.TenantList{}
+		if err := c.List(ctx, tenants); err != nil {
+			return nil
+		}
+		home := map[string]string{}
+		for i := range tenants.Items {
+			home[layout.TenantDMZ(tenants.Items[i].Name)] = tenants.Items[i].NamespaceName()
+		}
+		policies := &networkingv1.NetworkPolicyList{}
+		if err := c.List(ctx, policies, client.MatchingLabels{"app.kubernetes.io/name": perimeterProxyAppName}); err != nil {
+			return nil
+		}
+		seen := map[types.NamespacedName]bool{}
+		var out []reconcile.Request
+		for i := range policies.Items {
+			ns, ok := home[policies.Items[i].Namespace]
+			comp := policies.Items[i].Labels["gentianos.io/component"]
+			if !ok || comp == "" {
+				continue
+			}
+			key := types.NamespacedName{Name: comp, Namespace: ns}
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, reconcile.Request{NamespacedName: key})
+			}
+		}
+		return out
+	})
+}
+
 // ensureDMZNamespace makes the tenant's perimeter namespace, labeled by tier
 // so the policies that select on tier apply to it (AD-7).
 func (r *ComponentReconciler) ensureDMZNamespace(ctx context.Context, tenant *gentianov1alpha1.Tenant, dmz string) error {
@@ -461,7 +500,7 @@ func perimeterDeployment(name, dmz string, labels map[string]string, configHash 
 // reach the proxy.
 //
 // Out: the proxy may reach exactly one Service in the tenant's namespace, and
-// DNS. Not the tenant's database, not its other applications, not the kernel.
+// the cluster's DNS (netpolicy.DNSEgress). Not the tenant's database, not its other applications, not the kernel.
 // A proxy that is taken can make the requests its URLs already allow and
 // nothing else.
 //
@@ -474,8 +513,6 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 	name, dmz string, labels map[string]string, p *perimeterEnablement,
 ) error {
 	tcp := corev1.ProtocolTCP
-	udp := corev1.ProtocolUDP
-	dns := intstr.FromInt32(53)
 	port := intstr.FromInt32(p.spec.Backend.Port)
 	proxyPort := intstr.FromInt32(perimeterProxyPort)
 
@@ -484,7 +521,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: labels},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
+			Egress: append([]networkingv1.NetworkPolicyEgressRule{
 				{
 					To: []networkingv1.NetworkPolicyPeer{{
 						NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
@@ -496,10 +533,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 					}},
 					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
 				},
-				{Ports: []networkingv1.NetworkPolicyPort{
-					{Protocol: &udp, Port: &dns}, {Protocol: &tcp, Port: &dns},
-				}},
-			},
+			}, netpolicy.DNSEgress(loadClusterDNS(ctx, r.Client))...),
 		},
 	}
 	if err := ensureObject(ctx, r.Client, egress, func(existing *networkingv1.NetworkPolicy) bool {

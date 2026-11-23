@@ -335,7 +335,7 @@ connection of the gateway leaves the cluster. The mock model server reaches
 nothing, and neither does the cache; the budget Job reaches the gateway
 alone. The gateway's PostgreSQL reaches DNS, the Kubernetes API and its own
 instances on 5432; that policy, `llm-database-egress`, is the operator's,
-which knows the API server's addresses
+which knows the addresses of the cluster's DNS and the API server
 (`internal/controller/model_gateway_database_egress.go`).
 
 ### Operator access

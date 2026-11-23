@@ -88,6 +88,21 @@ A component that starts runs (`requires.services.runs`) has two more:
 `runs-<app>` admits that component's own runs, from the tenant's namespace
 for runs, on the port its callback Service sends to (§2.1).
 
+The cluster's DNS and the API server are named by address, not by range. The
+DNS is every Service in `kube-system` that serves port 53: its pods, by the
+Service's own selector, on the port it sends 53 to, and its cluster address on
+53. The API server is each address of the `kubernetes` EndpointSlice on its
+port, and the `kubernetes` Service's cluster address on its port. Both forms
+are there because a network plugin matches a policy either before the Service
+address is translated or after it (Calico). A change of those Services or of
+the EndpointSlice rewrites the policies that admit them
+(`internal/kernel/netpolicy/cluster.go`). Where nothing can be read, two
+fallbacks keep the tenants running, and the operator logs each: with no DNS
+Service found, port 53 is open to every address; with no address of the API
+server, `KUBE_APISERVER_CIDR` (default `10.0.0.0/8`) is admitted on 443. A
+run (§2.1), a publishing proxy and the model gateway's PostgreSQL ask the
+cluster's DNS by the same rule.
+
 Network rules only ever add: a pod the baseline selects cannot be closed again
 by another policy, which is why a bridge's pods are left out of the baseline
 instead of being narrowed afterwards.

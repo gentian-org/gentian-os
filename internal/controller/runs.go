@@ -36,6 +36,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/dispatcher"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/security"
@@ -549,6 +550,8 @@ func (r *RunsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&gentianov1alpha1.Tenant{}, toTable).
 		Watches(&corev1.Secret{}, toTable, builder.WithPredicates(callers)).
 		Watches(&corev1.Namespace{}, toTable, builder.WithPredicates(runNamespaces)).
+		// The cluster's DNS, which every run may ask.
+		Watches(&corev1.Service{}, toTable, builder.WithPredicates(clusterDNSChanged())).
 		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.Component{}, r))
 }
 
@@ -629,7 +632,7 @@ func (r *RunsReconciler) ensureRunNamespace(ctx context.Context, runs *tenantRun
 	}
 
 	// The rules of the namespace itself, and what is no longer one of them.
-	desired := runNamespacePolicies(runs, namespace, tenantNamespace, labels, r.now())
+	desired := runNamespacePolicies(runs, namespace, tenantNamespace, labels, loadClusterDNS(ctx, r.Client), r.now())
 	if err := r.applyPolicies(ctx, namespace, desired, client.MatchingLabels{managedByLabel: managedByValue}); err != nil {
 		return err
 	}
@@ -834,18 +837,16 @@ func runPolicy(name, namespace string, labels map[string]string, pods map[string
 }
 
 // runNamespacePolicies are the rules of a namespace for runs. Nothing is
-// let in. Every pod may ask the cluster's DNS and nothing else; a run of an
+// let in. Every pod may ask the cluster's DNS (netpolicy.DNSEgress) and
+// nothing else; a run of an
 // installed action is given the egress granted to that action; and a run is
 // let through to the component that started it, on the port it calls back
 // to. No rule reaches an agent bridge, an engine or the kernel.
-func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, labels map[string]string, now time.Time) []*networkingv1.NetworkPolicy {
-	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
-	dns := intstr.FromInt32(53)
+func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, labels map[string]string, dns []corev1.Service, now time.Time) []*networkingv1.NetworkPolicy {
+	tcp := corev1.ProtocolTCP
 	deny := runPolicy(runsDefaultDeny, namespace, labels, nil)
 	deny.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress}
-	deny.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
-		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &udp, Port: &dns}, {Protocol: &tcp, Port: &dns}},
-	}}
+	deny.Spec.Egress = netpolicy.DNSEgress(dns)
 	out := []*networkingv1.NetworkPolicy{deny}
 
 	for _, action := range runs.actions {

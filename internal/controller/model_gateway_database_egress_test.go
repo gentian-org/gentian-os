@@ -25,6 +25,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 )
 
 func modelGatewayDatabaseEgressClient(t *testing.T, llm string, objs ...client.Object) client.Client {
@@ -104,7 +106,9 @@ func ipBlock(cidr string) func(networkingv1.NetworkPolicyPeer) bool {
 
 // The policy selects the database's instances and restricts their egress
 // alone; it admits DNS, the API server and the cluster's own pods on the data
-// port, and nothing else. Argo CD's tracking annotation is not on it.
+// port, and nothing else. Argo CD's tracking annotation is not on it. On a
+// cluster whose DNS and API server cannot be read, DNS is open on 53 and the
+// API server is KUBE_APISERVER_CIDR on 443.
 func TestTheGatewayDatabaseEgressPolicyAdmitsDNSTheAPIServerAndItsPeers(t *testing.T) {
 	c := modelGatewayDatabaseEgressClient(t, "true")
 	policy := reconcileModelGatewayDatabaseEgress(t, c, true)
@@ -129,7 +133,7 @@ func TestTheGatewayDatabaseEgressPolicyAdmitsDNSTheAPIServerAndItsPeers(t *testi
 		t.Fatal("DNS is not admitted")
 	}
 	if !egressAdmits(policy, corev1.ProtocolTCP, 443, ipBlock("10.0.0.0/8")) {
-		t.Fatal("KUBE_APISERVER_CIDR on 443 is not admitted")
+		t.Fatal("KUBE_APISERVER_CIDR on 443 is not admitted with no address of the API server read")
 	}
 	peers := func(p networkingv1.NetworkPolicyPeer) bool {
 		return p.NamespaceSelector == nil && p.IPBlock == nil && p.PodSelector != nil &&
@@ -138,8 +142,8 @@ func TestTheGatewayDatabaseEgressPolicyAdmitsDNSTheAPIServerAndItsPeers(t *testi
 	if !egressAdmits(policy, corev1.ProtocolTCP, 5432, peers) {
 		t.Fatal("the cluster's own pods are not admitted on 5432")
 	}
-	// DNS, the API server's range, the peers: nothing else without an
-	// EndpointSlice.
+	// DNS, the API server's range, the peers: nothing else without the
+	// cluster's Services.
 	if len(policy.Spec.Egress) != 3 {
 		t.Fatalf("egress = %+v, want DNS, the API server and the peers only", policy.Spec.Egress)
 	}
@@ -173,6 +177,9 @@ func TestTheGatewayDatabaseEgressPolicyFollowsTheAPIServersEndpointSlice(t *test
 		t.Fatal(err)
 	}
 	policy = reconcileModelGatewayDatabaseEgress(t, c, true)
+	if egressAdmits(policy, corev1.ProtocolTCP, 443, ipBlock("10.0.0.0/8")) {
+		t.Fatal("KUBE_APISERVER_CIDR is admitted although the API server's addresses are read")
+	}
 	if !egressAdmits(policy, corev1.ProtocolTCP, 6443, ipBlock("198.51.100.7/32")) {
 		t.Fatalf("the new address is not admitted: %+v", policy.Spec.Egress)
 	}
@@ -197,7 +204,7 @@ func TestTheGatewayDatabaseEgressPolicyIsRemovedWhenOff(t *testing.T) {
 	}
 
 	c = modelGatewayDatabaseEgressClient(t, "false")
-	if err := c.Create(context.Background(), modelGatewayDatabaseEgressPolicy("10.0.0.0/8", nil)); err != nil {
+	if err := c.Create(context.Background(), modelGatewayDatabaseEgressPolicy("10.0.0.0/8", netpolicy.ClusterServices{})); err != nil {
 		t.Fatal(err)
 	}
 	if reconcileModelGatewayDatabaseEgress(t, c, true) != nil {

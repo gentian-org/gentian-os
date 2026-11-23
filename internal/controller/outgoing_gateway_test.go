@@ -328,7 +328,7 @@ func TestAnActionsHostsAreForItsRuns(t *testing.T) {
 		{comp: action, profile: &gentianov1alpha1.ComponentProfile{}, runnable: dispatcher.Runnable{Name: "plain"}},
 	}}
 	var found *networkingv1.NetworkPolicy
-	for _, p := range runNamespacePolicies(runs, layout.TenantRuns("acme"), tenantNamespaceName(tenant), nil, time.Now()) {
+	for _, p := range runNamespacePolicies(runs, layout.TenantRuns("acme"), tenantNamespaceName(tenant), nil, nil, time.Now()) {
 		switch p.Name {
 		case "action-ocr":
 			found = p

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/time/rate"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -171,11 +172,10 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 //
-// EndpointSlices back loadKubeAPIEndpointSlice (tenant_network_policy.go): the
-// baseline tenant NetworkPolicy allows egress to KUBE_APISERVER_CIDR and then
-// adds a /32 per real kube-apiserver endpoint. When the apiserver sits OUTSIDE
-// that CIDR — any cluster reached through a public IP — those /32 rules are the
-// only thing letting tenant workloads reach the API at all.
+// EndpointSlices back loadClusterServices (tenant_network_policy.go): the
+// baseline tenant NetworkPolicy admits a /32 per real kube-apiserver
+// endpoint, which on a cluster reached through a public IP is the only thing
+// letting tenant workloads reach the API at all.
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 //
 // cert-manager Certificates for tenant edge TLS (tenant_edge_tls.go).
@@ -578,6 +578,14 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 		builder.WithPredicates(envoyKernelServicePredicate),
 	)
+	// The cluster's DNS and the API server, which every tenant's baseline
+	// admits (loadClusterServices): a change of either reaches every
+	// tenant's policies when it happens.
+	ctrlBuilder = ctrlBuilder.
+		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(clusterServiceChanged())).
+		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(clusterServiceChanged()))
 
 	// Entering a tenant (kernel_enter.go): a tenant that opens itself to the
 	// platform's administrators, changes realm, or goes, is the kernel

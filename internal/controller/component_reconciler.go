@@ -2279,7 +2279,11 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// The hosts the cluster serves itself, which leave the gateway for
 		// outgoing connections (own_served_hosts.go).
 		Watches(&corev1.ConfigMap{}, componentsAskingForEgressOnHairpin(mgr.GetClient()),
-			builder.WithPredicates(hairpinChanged()))
+			builder.WithPredicates(hairpinChanged())).
+		// The cluster's DNS, which a perimeter proxy may ask
+		// (ensurePerimeterPolicies).
+		Watches(&corev1.Service{}, componentsWithPerimeter(mgr.GetClient()),
+			builder.WithPredicates(clusterDNSChanged()))
 	// The catalogs whose egress the cluster answers are the policy's: a change
 	// there is a change to what each asking component may do.
 	b = b.Watches(&gentianov1alpha1.PlatformSecurityPolicy{}, componentsAskingForEgressPrivileges(mgr.GetClient()))
