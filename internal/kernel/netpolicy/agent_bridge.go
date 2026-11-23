@@ -262,3 +262,16 @@ func AgentBridgeNetworkPolicies(in BuildInput) []*networkingv1.NetworkPolicy {
 	}
 	return out
 }
+
+// IsAgentBridge is isAgentBridge for the readers outside this package.
+func IsAgentBridge(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile != nil && isAgentBridge(profile)
+}
+
+// SpeaksAsPerson is speaksAsPerson for the readers outside this package: a
+// component of this kind is a caller of the tenant's agent bridges.
+func SpeaksAsPerson(profile *gentianov1alpha1.ComponentProfile) bool { return speaksAsPerson(profile) }
+
+// DeploysPods is deploysPods for the readers outside this package: a bridge
+// that deploys none is reached where it is, by its callers.
+func DeploysPods(profile *gentianov1alpha1.ComponentProfile) bool { return deploysPods(profile) }

@@ -497,7 +497,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// The hosts outside it was granted, said before anything holds the
 	// install: the gateway for outgoing connections carries what is listed
 	// here, so a grant that went takes its host's listener with it at once.
-	bridgeSignIns, err := signInHosts(ctx, r.Client, profile, comp, tenant)
+	bridgeSignIns, err := bridgeHosts(ctx, r.Client, profile, comp, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}

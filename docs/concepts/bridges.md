@@ -213,7 +213,9 @@ spec:
   the token the bridge is handed is for it (scope `app-<app>`).
 - **Callee `outside`.** The bridge may be packaged as `api` with a `baseUrl`:
   a tool server outside the cluster, reached where it is. It runs nothing in
-  the tenant; the egress granted to it is given to its callers.
+  the tenant; the egress granted to it is given to its callers: a granted
+  host through the outgoing gateway ([edge.md §3.3](edge.md)), a rule by
+  address in their policy.
   The platform does not ask such a server what its tools are. The way says
   it, under `outside`, and the callers are told of the bridge only when it
   does and the address is `https`:

@@ -224,7 +224,7 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	// The hosts outside it was granted: the pods of the gateway for outgoing
 	// connections, on the listeners of those hosts (outgoing_hosts.go). A
 	// host the gateway does not carry yet opens nothing.
-	signIn, err := signInHosts(ctx, r.Client, profile, comp, tenant)
+	signIn, err := bridgeHosts(ctx, r.Client, profile, comp, tenant)
 	if err != nil {
 		return err
 	}
