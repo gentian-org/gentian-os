@@ -577,8 +577,8 @@ func TestTheProxyConfigurationOfAnEntryThatPassesTheCredential(t *testing.T) {
 	clearEdgeLimitEnv(t)
 	e := &davProfile(gentianov1alpha1.AuthModeApp).Spec.Expose[len(davProfile(gentianov1alpha1.AuthModeApp).Spec.Expose)-1]
 	limits := perimeterLimitsFromEnv("")
-	passing := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, true, limits)
-	plain := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, limits)
+	passing := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, true, nil, limits)
+	plain := perimeterProxyConfig(e, "nextcloud.tenant-acme.svc.cluster.local", 8080, false, false, nil, limits)
 
 	must := []string{
 		"proxy_set_header Authorization $http_authorization;",
@@ -671,6 +671,7 @@ func TestWhatAnEntryAsksForAndWhatAnApprovalCovers(t *testing.T) {
 	}{
 		{entry(pm, gentianov1alpha1.AuthModeNone, ""), gentianov1alpha1.ExposureKindPublic},
 		{entry(pm, gentianov1alpha1.AuthModeApp, ""), gentianov1alpha1.ExposureKindPublicAppCredential},
+		{withSignInCookies(entry(pm, gentianov1alpha1.AuthModeApp, "")), gentianov1alpha1.ExposureKindPublicAppSignIn},
 		{entry(pm, gentianov1alpha1.AuthModeBasic, ""), ""},
 		{entry(pm, gentianov1alpha1.AuthModeJWT, ""), ""},
 		{entry(pm, gentianov1alpha1.AuthModeBearer, ""), ""},
@@ -690,12 +691,91 @@ func TestWhatAnEntryAsksForAndWhatAnApprovalCovers(t *testing.T) {
 			t.Errorf("%+v asks for %q, want %q", tc.e, got, tc.want)
 		}
 		for _, approved := range []gentianov1alpha1.ExposureKind{"", gentianov1alpha1.ExposureKindPublic,
-			gentianov1alpha1.ExposureKindPublicAppCredential, gentianov1alpha1.ExposureKindInsideAppCredential,
-			gentianov1alpha1.ExposureKindSignInAppAuthorization} {
+			gentianov1alpha1.ExposureKindPublicAppCredential, gentianov1alpha1.ExposureKindPublicAppSignIn,
+			gentianov1alpha1.ExposureKindInsideAppCredential, gentianov1alpha1.ExposureKindSignInAppAuthorization} {
 			want := tc.want != "" && approved.Normalized() == tc.want
 			if got := tc.e.ApprovedAs(approved); got != want {
 				t.Errorf("%+v approved as %q: covered = %v, want %v", tc.e, approved, got, want)
 			}
+		}
+	}
+}
+
+func withSignInCookies(e *gentianov1alpha1.ExposureSpec) *gentianov1alpha1.ExposureSpec {
+	e.SignInCookies = &gentianov1alpha1.SignInCookies{Names: []string{"oidc_session"}, Paths: []string{"/_synapse/client/oidc"}}
+	return e
+}
+
+// The cookies of an app's own sign-in pass only where the profile names them
+// now and the approval named them: a profile narrows them on its own and
+// never widens them, and without an approval of the kind none pass at all.
+func TestOnlyApprovedSignInCookiesPass(t *testing.T) {
+	scheme := perimeterScheme()
+	tenant := acmeTenantFixture()
+	ctx := context.Background()
+	cookies := func(names, paths []string) *gentianov1alpha1.SignInCookies {
+		return &gentianov1alpha1.SignInCookies{Names: names, Paths: paths}
+	}
+	cb, sso := "/remote.php/dav/oidc", "/remote.php/dav/sso"
+	cases := []struct {
+		what      string
+		declared  *gentianov1alpha1.SignInCookies
+		kind      gentianov1alpha1.ExposureKind
+		approved  *gentianov1alpha1.SignInCookies
+		published bool
+		cookies   []string
+		paths     []string
+	}{
+		{"as approved", cookies([]string{"a", "b"}, []string{cb, sso}), gentianov1alpha1.ExposureKindPublicAppSignIn, cookies([]string{"a", "b"}, []string{cb, sso}), true, []string{"a", "b"}, []string{cb, sso}},
+		{"narrowed by the profile", cookies([]string{"a"}, []string{cb}), gentianov1alpha1.ExposureKindPublicAppSignIn, cookies([]string{"a", "b"}, []string{cb, sso}), true, []string{"a"}, []string{cb}},
+		{"widened by the profile", cookies([]string{"a", "c"}, []string{cb, "/remote.php/dav/x"}), gentianov1alpha1.ExposureKindPublicAppSignIn, cookies([]string{"a"}, []string{cb}), true, []string{"a"}, []string{cb}},
+		{"nothing in common", cookies([]string{"c"}, []string{cb}), gentianov1alpha1.ExposureKindPublicAppSignIn, cookies([]string{"a"}, []string{cb}), true, nil, nil},
+		{"approved without its cookies recorded", cookies([]string{"a"}, []string{cb}), gentianov1alpha1.ExposureKindPublicAppSignIn, nil, true, nil, nil},
+		{"approved before it named cookies", cookies([]string{"a"}, []string{cb}), gentianov1alpha1.ExposureKindPublicAppCredential, nil, false, nil, nil},
+	}
+	for _, tc := range cases {
+		profile := davProfile(gentianov1alpha1.AuthModeApp)
+		profile.Spec.Expose[len(profile.Spec.Expose)-1].SignInCookies = tc.declared
+		comp := componentFor("nextcloud-base-ce", tenantNamespaceName(tenant))
+		comp.Spec.Exposures = davApproval(tc.kind)
+		comp.Spec.Exposures[0].SignInCookies = tc.approved
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant.DeepCopy(), profile, comp).Build()
+		r := &ComponentReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example"}
+		n, err := r.ensurePerimeter(ctx, comp, profile, tenant, r.zoneOf(tenant))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.what, err)
+		}
+		if (n == 1) != tc.published {
+			t.Fatalf("%s: published %d", tc.what, n)
+		}
+		if !tc.published {
+			continue
+		}
+		cm := &corev1.ConfigMap{}
+		if err := c.Get(ctx, types.NamespacedName{Name: perimeterName(comp, "dav"), Namespace: layout.TenantDMZ(tenant.Name)}, cm); err != nil {
+			t.Fatalf("%s: %v", tc.what, err)
+		}
+		conf := cm.Data["nginx.conf"]
+		for _, name := range []string{"a", "b", "c"} {
+			want := false
+			for _, c := range tc.cookies {
+				want = want || c == name
+			}
+			if got := strings.Contains(conf, "map $cookie_"+name+" "); got != want {
+				t.Errorf("%s: cookie %s passed = %v, want %v", tc.what, name, got, want)
+			}
+		}
+		for _, path := range []string{cb, sso, "/remote.php/dav/x"} {
+			want := false
+			for _, p := range tc.paths {
+				want = want || p == path
+			}
+			if got := strings.Contains(conf, "# The app's own sign-in, under "+path+".\n"); got != want {
+				t.Errorf("%s: sign-in location %s = %v, want %v", tc.what, path, got, want)
+			}
+		}
+		if hidden := strings.Count(conf, "proxy_hide_header Set-Cookie;"); hidden != 1 {
+			t.Errorf("%s: Set-Cookie hidden in %d locations, want only the entry's own", tc.what, hidden)
 		}
 	}
 }

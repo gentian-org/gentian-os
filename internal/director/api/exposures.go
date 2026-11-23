@@ -244,6 +244,20 @@ func (s *Server) publishExposure(w http.ResponseWriter, r *http.Request, c call)
 		// What the profile's entry declares, never the body's word for it.
 		Kind: kind,
 	}
+	if kind == kindPublicAppSignIn {
+		// So are the cookies: what the approver was shown with the kind.
+		cookies, err := s.declaredSignInCookies(r.Context(), r.PathValue("t"), install, exposure)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		if cookies == nil {
+			s.fail(w, r, http.StatusConflict, fmt.Sprintf(
+				"entry %s of %s names no sign-in cookies that could be recorded. Nothing was changed", exposure, install))
+			return
+		}
+		e.SignInCookies = cookies
+	}
 	if body.Apex {
 		// Who acknowledged is the caller, from the token like the owner.
 		e.ApexAcknowledgedBy = c.meta.Subject
@@ -361,6 +375,26 @@ func (s *Server) nothingToPublish(ctx context.Context, tenant, install, exposure
 	}
 	entry, _, _ := approvableEntry(view.profiles[install], exposure)
 	return string(entry.RequestKind()), "", nil
+}
+
+// declaredSignInCookies are the cookies of the app's own sign-in an entry
+// declares, or, for a component the platform ships whose profile the
+// repository does not hold, the ones its approval already records.
+func (s *Server) declaredSignInCookies(ctx context.Context, tenant, install, exposure string) (*gentianov1alpha1.SignInCookies, error) {
+	view, err := s.readExposureView(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	if entry, _, _ := approvableEntry(view.profiles[install], exposure); entry != nil {
+		return entry.SignInCookies.DeepCopy(), nil
+	}
+	want := gitops.Exposure{Install: install, ExposureName: exposure}.Key()
+	for _, have := range view.published {
+		if have.Key() == want {
+			return have.SignInCookies.DeepCopy(), nil
+		}
+	}
+	return nil, nil
 }
 
 // withdrawExposure takes one down.

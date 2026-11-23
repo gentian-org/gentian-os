@@ -360,7 +360,15 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	// this entry through only because the two agree.
 	passCredential := p.spec.AuthMode == gentianov1alpha1.AuthModeApp &&
 		(p.on.Kind == gentianov1alpha1.ExposureKindPublicAppCredential ||
+			p.on.Kind == gentianov1alpha1.ExposureKindPublicAppSignIn ||
 			p.on.Kind == gentianov1alpha1.ExposureKindInsideAppCredential)
+	// The cookies of the app's own sign-in pass only where the profile
+	// names them now and the approver approved them: a profile may narrow
+	// them on its own, and widening them needs another approval.
+	var signIn *gentianov1alpha1.SignInCookies
+	if p.on.Kind == gentianov1alpha1.ExposureKindPublicAppSignIn && !p.inside {
+		signIn = p.spec.SignInCookies.Intersect(p.on.SignInCookies)
+	}
 	// Behind the inside Gateway every caller is a pod of this cluster, and
 	// that Gateway sees its connection: no tunnel or load balancer names the
 	// caller in a header there, and a header of that name is the caller's
@@ -369,7 +377,7 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	if !p.inside {
 		clientAddressHeader = edgeClientAddressHeader(ctx, r.Client)
 	}
-	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website, passCredential, perimeterLimitsFromEnv(clientAddressHeader))
+	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website, passCredential, signIn, perimeterLimitsFromEnv(clientAddressHeader))
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},

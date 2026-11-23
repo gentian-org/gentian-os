@@ -255,6 +255,9 @@ Component is an installed instance of a ComponentProfile.
 | `spec.exposures[].kind` | string |  | `Kind` is what was approved, copied from the Tenant's entry; empty is a public address. |
 | `spec.exposures[].owner` | string | yes | `Owner` is the Keycloak subject that enabled the surface, set by the director from the caller's token. |
 | `spec.exposures[].reviewAt` | string (date-time) | yes | `ReviewAt` is when the owner and the perimeter approver look at it again, and it is always set: what is public is known and revisited, whether or not it ends. |
+| `spec.exposures[].signInCookies` | object |  | `SignInCookies` are the cookies and paths of the app's own sign-in that were approved with the entry, copied from the Tenant's entry. |
+| `spec.exposures[].signInCookies.names` | []string | yes | `Names` are the cookies passed to the app, by exact name. |
+| `spec.exposures[].signInCookies.paths` | []string | yes | `Paths` are the path prefixes, by whole segments, where the cookies pass: the app's sign-in and its return from the identity provider. |
 | `spec.fulfilment` | string |  | `Fulfilment` pins how a tenant install is backed. |
 | `spec.movedAt` | string |  | `MovedAt` and MovedBy are the request behind the current pin, as the tenant's manifest records them (TenantApp.MovedAt, MovedBy): when the pin was last moved… |
 | `spec.movedBy` | string |  |  |
@@ -439,6 +442,9 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.expose[].forwardToken` | boolean |  | `ForwardToken` asks the gateway to pass the edge access token to this backend. |
 | `spec.expose[].name` | string | yes |  |
 | `spec.expose[].paths` | []string |  | `Paths` this entry serves. |
+| `spec.expose[].signInCookies` | object |  | `SignInCookies` are, on a perimeter entry of authMode app, the cookies of the app's own browser sign-in and the paths it runs on: an app whose callers present… |
+| `spec.expose[].signInCookies.names` | []string | yes | `Names` are the cookies passed to the app, by exact name. |
+| `spec.expose[].signInCookies.paths` | []string | yes | `Paths` are the path prefixes, by whole segments, where the cookies pass: the app's sign-in and its return from the identity provider. |
 | `spec.expose[].subDomain` | string |  | `SubDomain` is the host label of this entry in the tenant's zone. |
 | `spec.expose[].surface` | string | yes | `Surface` selects where this entry is published. |
 | `spec.expose[].tile` | object |  | `Tile` is how this entry appears on the portal, for an entry a person is meant to open. |
@@ -1356,6 +1362,9 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.expose[].forwardToken` | boolean |  | `ForwardToken` asks the gateway to pass the edge access token to this backend. |
 | `status.profileSpec.expose[].name` | string | yes |  |
 | `status.profileSpec.expose[].paths` | []string |  | `Paths` this entry serves. |
+| `status.profileSpec.expose[].signInCookies` | object |  | `SignInCookies` are, on a perimeter entry of authMode app, the cookies of the app's own browser sign-in and the paths it runs on: an app whose callers present… |
+| `status.profileSpec.expose[].signInCookies.names` | []string | yes | `Names` are the cookies passed to the app, by exact name. |
+| `status.profileSpec.expose[].signInCookies.paths` | []string | yes | `Paths` are the path prefixes, by whole segments, where the cookies pass: the app's sign-in and its return from the identity provider. |
 | `status.profileSpec.expose[].subDomain` | string |  | `SubDomain` is the host label of this entry in the tenant's zone. |
 | `status.profileSpec.expose[].surface` | string | yes | `Surface` selects where this entry is published. |
 | `status.profileSpec.expose[].tile` | object |  | `Tile` is how this entry appears on the portal, for an entry a person is meant to open. |
@@ -1937,6 +1946,9 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.exposures[].publishedAt` | string (date-time) |  | `PublishedAt` is when it was first published. |
 | `spec.exposures[].reason` | string |  | `Reason` is why this is public, in the approver's words. |
 | `spec.exposures[].reviewAt` | string (date-time) | yes | `ReviewAt` is when the owner and the approver look at it again. |
+| `spec.exposures[].signInCookies` | object |  | `SignInCookies` are, for an approval of kind publicAppSignIn, the cookies and paths of the app's own sign-in the approver approved, set by the director from… |
+| `spec.exposures[].signInCookies.names` | []string | yes | `Names` are the cookies passed to the app, by exact name. |
+| `spec.exposures[].signInCookies.paths` | []string | yes | `Paths` are the path prefixes, by whole segments, where the cookies pass: the app's sign-in and its return from the identity provider. |
 | `spec.grants` | []object |  | `Grants` are what each app of the tenant may consume from the others, and which of them may consume from it, as the tenant's administrators granted it… |
 | `spec.grants[].allowConsumers` | []object |  | `AllowConsumers` controls which other installed apps may invoke this app's provides contracts. |
 | `spec.grants[].allowConsumers[].app` | string | yes | `App` is the consumer ComponentProfile name. |

@@ -803,7 +803,7 @@ const (
 // ExposureKind is what approving one entry of a profile allows. The registry
 // records it with the approval, and an approval is in force only for an entry
 // that still declares the kind it was approved as.
-// +kubebuilder:validation:Enum=public;publicAppCredential;insideAppCredential;signInAppAuthorization;tokenEntry
+// +kubebuilder:validation:Enum=public;publicAppCredential;publicAppSignIn;insideAppCredential;signInAppAuthorization;tokenEntry
 type ExposureKind string
 
 const (
@@ -814,6 +814,11 @@ const (
 	// ExposureKindPublicAppCredential is a public address that passes the
 	// caller's Authorization header to the app (authMode app).
 	ExposureKindPublicAppCredential ExposureKind = "publicAppCredential"
+	// ExposureKindPublicAppSignIn is a public address that passes the
+	// caller's Authorization header to the app and, on the paths of the
+	// app's own sign-in, the cookies the entry names (authMode app with
+	// signInCookies).
+	ExposureKindPublicAppSignIn ExposureKind = "publicAppSignIn"
 	// ExposureKindInsideAppCredential is no public address. It is an address
 	// only this cluster's pods reach, and only those granted its host as
 	// egress, that passes the caller's Authorization header to the app (an
@@ -853,6 +858,9 @@ func (e *ExposureSpec) RequestKind() ExposureKind {
 		case AuthModeNone:
 			return ExposureKindPublic
 		case AuthModeApp:
+			if e.SignInCookies != nil {
+				return ExposureKindPublicAppSignIn
+			}
 			return ExposureKindPublicAppCredential
 		}
 	case SurfaceInside:
@@ -895,6 +903,7 @@ func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
 // +kubebuilder:validation:XValidation:rule="self.surface != 'gateway' || self.authMode != 'bearer' || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken) && !has(self.tile))",message="a token entry (authMode bearer) declares no forwardToken, exchangeToken or tile: there is no session whose token could be passed on, and nobody opens it in a browser"
 // +kubebuilder:validation:XValidation:rule="!has(self.clientRedirectURIs) || (self.surface == 'gateway' && self.authMode == 'bearer')",message="clientRedirectURIs is for a token entry (a gateway entry with authMode bearer): no other entry has a client of its own"
 // +kubebuilder:validation:XValidation:rule="!has(self.exchangedBy) || (self.surface == 'gateway' && self.authMode == 'bearer')",message="exchangedBy is for a token entry (a gateway entry with authMode bearer): no other entry's tokens are made out by a client of its own"
+// +kubebuilder:validation:XValidation:rule="!has(self.signInCookies) || (self.surface == 'perimeter' && self.authMode == 'app')",message="signInCookies is for a perimeter entry with authMode app: it names the cookies of the app's own sign-in that pass on a public address where no cookie passes otherwise"
 type ExposureSpec struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
@@ -1033,8 +1042,43 @@ type ExposureSpec struct {
 	// +optional
 	Tile *ExposureTile `json:"tile,omitempty"`
 
+	// SignInCookies are, on a perimeter entry of authMode app, the cookies
+	// of the app's own browser sign-in and the paths it runs on: an app
+	// whose callers present its own token in the Authorization header, but
+	// which signs a person in with a redirect to the identity provider and
+	// keeps the state of that redirect in a cookie of its own. On these
+	// paths alone the publishing proxy passes the named cookies to the app
+	// and the cookies the app sets back to the browser; everywhere else on
+	// the entry no cookie passes, as on any perimeter entry. The tenant's
+	// perimeter approver approves the entry with them.
+	// +optional
+	SignInCookies *SignInCookies `json:"signInCookies,omitempty"`
+
 	// Backend is the Service the entry routes to.
 	Backend BackendRef `json:"backend"`
+}
+
+// SignInCookies are the cookies an app's own sign-in keeps on a public
+// address, and the paths where they pass.
+type SignInCookies struct {
+	// Names are the cookies passed to the app, by exact name. Every other
+	// cookie the browser holds for the domain is removed, the session of
+	// the tenant's own sign-in among them.
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:Pattern=`^[A-Za-z0-9_]{1,64}$`
+	Names []string `json:"names"`
+
+	// Paths are the path prefixes, by whole segments, where the cookies
+	// pass: the app's sign-in and its return from the identity provider.
+	// A path outside the entry's own paths publishes nothing.
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=512
+	// +kubebuilder:validation:items:Pattern=`^/[A-Za-z0-9._~/-]*$`
+	Paths []string `json:"paths"`
 }
 
 // ExposureTile is what a component says about itself on the portal.

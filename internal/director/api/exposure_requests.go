@@ -118,6 +118,9 @@ type exposureEntry struct {
 	// be sent back to after the person signed in: approving the entry
 	// registers them at the tenant's sign-in service.
 	ClientRedirectURIs []string `json:"clientRedirectURIs,omitempty"`
+	// SignInCookies are, for publicAppSignIn, the cookies of the app's own
+	// sign-in and the paths they pass on, as the profile declares them.
+	SignInCookies *gentianov1alpha1.SignInCookies `json:"signInCookies,omitempty"`
 	// AuthMode is the profile's own word for who the app expects to call.
 	AuthMode string `json:"authMode,omitempty"`
 	// AnyoneWithoutSignIn says the profile declares that nobody signs in
@@ -144,6 +147,7 @@ type exposureEntry struct {
 const (
 	kindPublic                 = gitops.KindPublic
 	kindPublicAppCredential    = gitops.KindPublicAppCredential
+	kindPublicAppSignIn        = gitops.KindPublicAppSignIn
 	kindInsideAppCredential    = gitops.KindInsideAppCredential
 	kindSignInAppAuthorization = gitops.KindSignInAppAuthorization
 	kindTokenEntry             = gitops.KindTokenEntry
@@ -153,6 +157,7 @@ const (
 var kindLabels = map[string]string{
 	kindPublic:                 "Public address",
 	kindPublicAppCredential:    "Public address that passes the caller's credential to the app",
+	kindPublicAppSignIn:        "Public address that passes the caller's credential, and the app's own sign-in cookies, to the app",
 	kindInsideAppCredential:    "Inside the cluster only: passes the caller's credential to the app",
 	kindSignInAppAuthorization: "Behind sign-in: keeps the app's own Authorization header",
 	kindTokenEntry:             "Token entry: programs reach it as a person, with a token of the tenant's realm",
@@ -174,6 +179,8 @@ func normalKind(k string) string {
 //   - public: the publishing proxy forwards the declared paths and drops
 //     every credential on the way in (component_perimeter_config.go).
 //   - publicAppCredential: the same proxy, passing the one header on.
+//   - publicAppSignIn: the same, and on the sign-in paths the named cookies
+//     in and the app's Set-Cookie out (signInAccessOf).
 //   - insideAppCredential: the same proxy and header, behind the inside
 //     Gateway (component_perimeter.go, coredns_hairpin.go,
 //     own_served_hosts.go).
@@ -193,6 +200,8 @@ func accessOf(kind string) string {
 			"The platform does not know or check who calls. " +
 			"An app password or token of a person who was removed from the tenant keeps working until the app itself revokes it. " +
 			"Cookies are not passed to the app and the app cannot set any, so a client that needs cookies does not work on this address."
+	case kindPublicAppSignIn:
+		return signInAccessOf(nil)
 	case kindInsideAppCredential:
 		return "This is not a public address: nothing on the internet can reach it, and no public DNS record names it. " +
 			"Only programs running in this cluster reach these paths, at a name only the cluster's own DNS answers, " +
@@ -221,6 +230,23 @@ func accessOf(kind string) string {
 	return ""
 }
 
+// signInAccessOf is accessOf's sentence for publicAppSignIn, naming the
+// cookies and paths where the entry declares them.
+func signInAccessOf(c *gentianov1alpha1.SignInCookies) string {
+	cookies, paths := "the cookies the app's catalog entry names", "the paths of the app's own sign-in"
+	if c != nil {
+		cookies = "the cookies " + strings.Join(c.Names, ", ")
+		paths = strings.Join(c.Paths, ", ")
+	}
+	return "Nobody signs in at the platform's edge: anyone on the internet can send requests to these paths. " +
+		"The caller's credential (the Authorization header) is passed to the app as the caller sent it, and the app alone checks it. " +
+		"The platform does not know or check who calls. " +
+		"An app password or token of a person who was removed from the tenant keeps working until the app itself revokes it. " +
+		fmt.Sprintf("On %s alone, where the app signs a person in through the tenant's sign-in service, %s are passed to the app, and the cookies the app sets there reach the browser. ", paths, cookies) +
+		"No other cookie the browser holds is passed, the tenant's own sign-in session among them. " +
+		"Everywhere else on this address no cookie is passed and the app cannot set any."
+}
+
 // bridgeAccessOf says what approving a way of a bridge allows: a token entry
 // as accessOf's, except that the bouncer asks for the right to use the app
 // the bridge connects and hands the app an exchanged token, never the one the
@@ -247,7 +273,7 @@ func rateLimitOf(kind string) string {
 	switch kind {
 	case kindPublic:
 		rate = addresses.PerimeterRateFor(false)
-	case kindPublicAppCredential:
+	case kindPublicAppCredential, kindPublicAppSignIn:
 		rate = addresses.PerimeterRateFor(true)
 		why = " The limit is lower than on other public addresses, because every request may be a guess at a password."
 	case kindInsideAppCredential:
@@ -372,7 +398,7 @@ func (s *Server) readExposureView(ctx context.Context, tenant string) (*exposure
 func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 	out := gentianov1alpha1.TenantExposure{
 		Install: e.Install, ExposureName: e.ExposureName, Owner: e.Owner, Reason: e.Reason, Apex: e.Apex,
-		Kind: gentianov1alpha1.ExposureKind(e.Kind), Alias: e.Alias,
+		Kind: gentianov1alpha1.ExposureKind(e.Kind), SignInCookies: e.SignInCookies, Alias: e.Alias,
 	}
 	if at, err := time.Parse(time.RFC3339, e.ReviewAt); err == nil {
 		out.ReviewAt = metav1.NewTime(at)
@@ -455,7 +481,7 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 	out.Kind, out.KindLabel = kind, kindLabels[kind]
 	out.PublicAddress = entry.Surface == gentianov1alpha1.SurfacePerimeter
 	out.InsideOnly = entry.Surface == gentianov1alpha1.SurfaceInside
-	out.PassesCredential = kind == kindPublicAppCredential || kind == kindInsideAppCredential ||
+	out.PassesCredential = kind == kindPublicAppCredential || kind == kindPublicAppSignIn || kind == kindInsideAppCredential ||
 		kind == kindSignInAppAuthorization || kind == kindTokenEntry
 	out.AuthMode = string(entry.AuthMode)
 	if kind == kindTokenEntry {
@@ -463,6 +489,10 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 	}
 	out.AnyoneWithoutSignIn = kind == kindPublic
 	out.Access, out.RateLimit = accessOf(kind), rateLimitOf(kind)
+	if kind == kindPublicAppSignIn {
+		out.Access = signInAccessOf(entry.SignInCookies)
+		out.SignInCookies = entry.SignInCookies.DeepCopy()
+	}
 	for _, p := range entry.DenyPaths {
 		if p = strings.TrimSpace(p); p != "" {
 			out.DenyPaths = append(out.DenyPaths, p)
@@ -501,6 +531,12 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 // the entry declares now, or "".
 func approvedAsAnother(entry *gentianov1alpha1.ExposureSpec, approval *gitops.Exposure) string {
 	was, now := normalKind(approval.Kind), string(entry.RequestKind())
+	if was == now && now == kindPublicAppSignIn && !entry.SignInCookies.Within(approval.SignInCookies) {
+		return fmt.Sprintf(
+			"This entry was approved by %s with the sign-in cookies %s on %s, and the app's catalog entry now names more. "+
+				"Only what was approved passes until it is approved again as it is now",
+			approval.Owner, strings.Join(approval.SignInCookies.Names, ", "), strings.Join(approval.SignInCookies.Paths, ", "))
+	}
 	if was == now {
 		return ""
 	}
