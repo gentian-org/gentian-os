@@ -202,7 +202,7 @@ func AgentBridgeNetworkPolicies(in BuildInput) []*networkingv1.NetworkPolicy {
 		if !deploysPods(profile) {
 			// Reached where it is. The way there is its granted egress, and
 			// it is the callers' to take.
-			outside = append(outside, in.grantedEgress(bridge, profile)...)
+			outside = append(outside, in.bridgeEgress(bridge, profile)...)
 			continue
 		}
 		pods := in.podsOf(bridge)

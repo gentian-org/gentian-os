@@ -28,11 +28,21 @@ import (
 // callers below must agree on that or the policy would be built and then not
 // listed, or listed and not built.
 func (in BuildInput) grantedEgress(install string, profile *gentianov1alpha1.ComponentProfile) []networkingv1.NetworkPolicyEgressRule {
+	return egressGrantedBy(in.Privileges, install, profile)
+}
+
+// bridgeEgress are the egress rules the tenant's grants answer for an agent
+// bridge that runs nothing in the tenant: its callers' way out to it.
+func (in BuildInput) bridgeEgress(bridge string, profile *gentianov1alpha1.ComponentProfile) []networkingv1.NetworkPolicyEgressRule {
+	return egressGrantedBy(in.BridgeGrants, bridge, profile)
+}
+
+func egressGrantedBy(grants []gentianov1alpha1.TenantPrivilegeGrant, install string, profile *gentianov1alpha1.ComponentProfile) []networkingv1.NetworkPolicyEgressRule {
 	if profile == nil {
 		return nil
 	}
 	granted := security.GrantedSet(security.TenantGrants(
-		&gentianov1alpha1.Tenant{Spec: gentianov1alpha1.TenantSpec{Privileges: in.Privileges}},
+		&gentianov1alpha1.Tenant{Spec: gentianov1alpha1.TenantSpec{Privileges: grants}},
 		install), time.Now())
 	return security.EgressRulesFor(profile, granted)
 }
@@ -59,8 +69,14 @@ type BuildInput struct {
 	// is where the answer is: an app installed through Tenant.spec.apps has
 	// no Component to hang a grant on.
 	Privileges []gentianov1alpha1.TenantPrivilegeGrant
-	Bindings   []*gentianov1alpha1.IntegrationBinding
-	Grants     map[string]*gentianov1alpha1.AppGrant
+	// BridgeGrants are the grants the Tenant carries, read for the agent
+	// bridges that run nothing in the tenant and nothing else: such a
+	// bridge's granted egress is its callers' way out to it
+	// (AgentBridgeNetworkPolicies). An installed app's own grants reach it
+	// through its component policy, not through these.
+	BridgeGrants []gentianov1alpha1.TenantPrivilegeGrant
+	Bindings     []*gentianov1alpha1.IntegrationBinding
+	Grants       map[string]*gentianov1alpha1.AppGrant
 	// PodSelectors are the labels each app's pods carry, for an app whose
 	// delivery does not put the app label on them. A contract's two sides,
 	// and the app's own policies (forPods), are selected by these.

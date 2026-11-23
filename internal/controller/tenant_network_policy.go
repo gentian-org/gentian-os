@@ -276,6 +276,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		Placed:              placed,
 		Profiles:            profiles,
 		Bindings:            bindings,
+		BridgeGrants:        tenant.Spec.Privileges,
 		Grants:              grants,
 		PodSelectors:        selectors,
 		ModelAccessWithheld: withheld,
