@@ -59,9 +59,9 @@ var errComesWithRefused = errors.New("an app it comes with cannot be installed")
 // nothing.
 func (s *Server) installComesWith(
 	w http.ResponseWriter, r *http.Request, c call, tenant, profile string,
-	definition *gentianov1alpha1.ComponentProfile, preferred string, defaultGrant *bool,
+	definition *gentianov1alpha1.ComponentProfile, preferred string,
 ) ([]string, bool) {
-	came, refusal, err := s.bringComesWith(r.Context(), c, tenant, profile, definition, preferred, defaultGrant)
+	came, refusal, err := s.bringComesWith(r.Context(), c, tenant, profile, definition, preferred)
 	if err != nil {
 		s.repoError(w, r, err)
 		return nil, false
@@ -78,7 +78,7 @@ func (s *Server) installComesWith(
 // nothing was.
 func (s *Server) bringComesWith(
 	ctx context.Context, c call, tenant, profile string,
-	definition *gentianov1alpha1.ComponentProfile, preferred string, defaultGrant *bool,
+	definition *gentianov1alpha1.ComponentProfile, preferred string,
 ) (came []string, refusal string, err error) {
 	if definition == nil || len(definition.Spec.ComesWith) == 0 {
 		return nil, "", nil
@@ -113,7 +113,7 @@ func (s *Server) bringComesWith(
 	if len(with) == 0 {
 		return nil, "", nil
 	}
-	_, came, err = s.cfg.Repo.InstallWith(ctx, tenant, profile, with, defaultGrant, c.meta)
+	_, came, err = s.cfg.Repo.InstallWith(ctx, tenant, profile, with, c.meta)
 	return came, "", err
 }
 
@@ -300,8 +300,7 @@ func (s *Server) bringToTenant(ctx context.Context, c call, tenant string) (inst
 		if definition == nil || !slices.ContainsFunc(definition.Spec.ComesWith, func(name string) bool { return !has[name] }) {
 			continue
 		}
-		grant := a.DefaultGrant
-		came, refusal, err := s.bringComesWith(ctx, c, tenant, a.Profile, definition, a.Catalogue, &grant)
+		came, refusal, err := s.bringComesWith(ctx, c, tenant, a.Profile, definition, a.Catalogue)
 		switch {
 		case err != nil:
 			log.WarnContext(ctx, "what an app comes with could not be installed", "app", a.Profile, "error", err.Error())

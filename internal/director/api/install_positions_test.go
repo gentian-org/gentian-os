@@ -18,9 +18,9 @@ import (
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 )
 
-// An install names the positions the app is given to. User is written as
-// the default grant, the others as a list on the entry, in one commit; the
-// same request on an installed app replaces what the entry said.
+// An install names the positions the app is given to, written as a list on
+// the entry in one commit. User gives no app and is not written. The same
+// request on an installed app replaces what the entry said.
 func TestAnAppIsInstalledForPositions(t *testing.T) {
 	h := start(t)
 	tom := h.token(t, "tenant-demo", "tom")
@@ -30,7 +30,7 @@ func TestAnAppIsInstalledForPositions(t *testing.T) {
 	}
 	h.asked.reset()
 	code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom,
-		`{"positions":["user","sales","tenant-administrator","sales"]}`)
+		`{"positions":["user","sales","tenant-administrator","sales","all-apps"]}`)
 	if code != http.StatusAccepted {
 		t.Fatalf("install: %d %v", code, body)
 	}
@@ -38,11 +38,11 @@ func TestAnAppIsInstalledForPositions(t *testing.T) {
 		t.Fatalf("an install for positions asked %q, want can_install_app then can_grant", got)
 	}
 	file := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
-	if !strings.Contains(file, "  - profile: element\n    defaultGrant: true\n    positions: [sales, tenant-administrator]\n") {
+	if !strings.Contains(file, "  - profile: element\n    positions: [sales, tenant-administrator, all-apps]\n") || strings.Contains(file, "defaultGrant") {
 		t.Fatalf("the entry does not say who has the app:\n%s", file)
 	}
 
-	// Again with fewer: user leaves, and so does the default grant.
+	// Again with fewer.
 	if code, body := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, `{"positions":["sales"]}`); code != http.StatusAccepted || body["status"] != "updated" {
 		t.Fatalf("change: %d %v", code, body)
 	}

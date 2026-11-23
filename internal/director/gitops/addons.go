@@ -35,19 +35,20 @@ type AddonPin struct {
 	Catalogue string `json:"catalogue,omitempty"`
 }
 
-// AddonGrant is who has one addon of an app by default, as the app's entry
-// records it under addonGrants. Only an addon for everyone has an entry.
+// AddonGrant is an entry of an app's addonGrants, which has no effect
+// (Tenant.spec.apps[].addonGrants). It is read so that an entry carrying
+// one parses, and a rewrite of the addons removes it.
 type AddonGrant struct {
 	// Name is the addon's profile name, as the addons list has it.
 	Name string `json:"name"`
-	// DefaultGrant is whether every member of the tenant has the addon.
+	// DefaultGrant is accepted and has no effect.
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
 }
 
 // SetAddons rewrites the addons list of one installed app in the tenant YAML.
-// It is SetAddonsPinned with no build to pin and no grant stated.
+// It is SetAddonsPinned with no build to pin.
 func (g *GitOps) SetAddons(ctx context.Context, tenant, profile string, addons []string, meta Meta) (res Result, err error) {
-	return g.SetAddonsPinned(ctx, tenant, profile, addons, nil, nil, meta)
+	return g.SetAddonsPinned(ctx, tenant, profile, addons, nil, meta)
 }
 
 // SetAddonsPinned rewrites the addons list of one installed app in the tenant
@@ -70,16 +71,10 @@ func (g *GitOps) SetAddons(ctx context.Context, tenant, profile string, addons [
 // bare install does to an app's own pin: one that was active and pinned
 // stays pinned, so that changing the selection does not unpin what was not
 // touched, and one that is new to the list is activated unpinned. An addon
-// that leaves the list takes its pin with it.
-//
-// grants are the addons whose default grant this call states, true for an
-// addon for everyone and false for one given per person, each for an addon
-// in the list. They are written under addonGrants, and only those for
-// everyone are. An addon the call does not state keeps what its entry has,
-// as an unstated pin does, and an addon that leaves the list takes its grant
-// with it.
+// that leaves the list takes its pin with it. An addonGrants block the entry
+// still carries is removed: it has no effect.
 func (g *GitOps) SetAddonsPinned(
-	ctx context.Context, tenant, profile string, addons []string, pins []AddonPin, grants map[string]bool, meta Meta,
+	ctx context.Context, tenant, profile string, addons []string, pins []AddonPin, meta Meta,
 ) (res Result, err error) {
 	if !ValidName(profile) {
 		return Result{}, fmt.Errorf("%w: profile %q", ErrInvalidName, profile)
@@ -111,11 +106,6 @@ func (g *GitOps) SetAddonsPinned(
 		stated[pin.Name] = pin
 		said = append(said, pin.Name+" at "+shortDigest(pin.Digest))
 	}
-	for name := range grants {
-		if !listed[name] {
-			return Result{}, fmt.Errorf("%w: granted addon %q is not in the list", ErrInvalidName, name)
-		}
-	}
 	msg := fmt.Sprintf("feat(%s): set addons for %s (via %s)", tenant, profile, meta.actor())
 	if len(said) > 0 {
 		// The digest is in the message for the reason an install's is: it is
@@ -131,7 +121,7 @@ func (g *GitOps) SetAddonsPinned(
 		if err := refusePlaced(strings.Split(text, "\n"), profile); err != nil {
 			return "", "", false, err
 		}
-		had, hadGrants, err := addonsOf(text, profile)
+		had, err := addonsOf(text, profile)
 		if err != nil {
 			return "", "", false, err
 		}
@@ -143,17 +133,7 @@ func (g *GitOps) SetAddonsPinned(
 				final = append(final, pin)
 			}
 		}
-		var granted []AddonGrant
-		for _, ad := range addons {
-			everyone, stated := grants[ad]
-			if !stated {
-				everyone = hadGrants[ad]
-			}
-			if everyone {
-				granted = append(granted, AddonGrant{Name: ad, DefaultGrant: true})
-			}
-		}
-		updated, ok := rewriteAddons(text, profile, addons, final, granted)
+		updated, ok := rewriteAddons(text, profile, addons, final)
 		if !ok {
 			return text, "not_installed", false, nil
 		}
@@ -165,22 +145,20 @@ func (g *GitOps) SetAddonsPinned(
 }
 
 // addonsOf reads what one app's entry activates now: every addon in its
-// list, with the pin it has, if any, and whether it is for everyone. An addon
-// with no pin has an empty one.
+// list, with the pin it has, if any. An addon with no pin has an empty one.
 //
 // Read with a YAML parser although the manifest is written by a line editor:
 // reading reflows nothing, and the entry may be in any form a person wrote.
-func addonsOf(text, profile string) (map[string]AddonPin, map[string]bool, error) {
+func addonsOf(text, profile string) (map[string]AddonPin, error) {
 	var doc struct {
 		Spec struct {
 			Apps []App `json:"apps"`
 		} `json:"spec"`
 	}
 	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
-		return nil, nil, fmt.Errorf("the tenant's manifest does not parse: %w", err)
+		return nil, fmt.Errorf("the tenant's manifest does not parse: %w", err)
 	}
 	out := map[string]AddonPin{}
-	everyone := map[string]bool{}
 	for _, app := range doc.Spec.Apps {
 		if app.Profile != profile {
 			continue
@@ -193,25 +171,21 @@ func addonsOf(text, profile string) (map[string]AddonPin, map[string]bool, error
 				out[pin.Name] = pin
 			}
 		}
-		for _, g := range app.AddonGrants {
-			if _, active := out[g.Name]; active && g.DefaultGrant {
-				everyone[g.Name] = true
-			}
-		}
 	}
-	return out, everyone, nil
+	return out, nil
 }
 
 // rewriteAddons replaces the addons block of the given profile's list entry,
 // and its addonPins block, reporting false when the profile is not installed.
-// It writes exactly the names and pins it is given: both blocks are removed
-// in whatever form they are in, and written again at the end of the entry.
+// It writes exactly the names and pins it is given: both blocks, and an
+// addonGrants block, are removed in whatever form they are in, and the two
+// written again at the end of the entry.
 //
 // This is a line editor rather than a YAML round-trip because tenant files are
 // hand-maintained and carry comments; a load/dump cycle would reflow all of them
 // and make every review a full-file diff. It only touches lines belonging to the
 // matched list item, so sibling entries and other keys survive untouched.
-func rewriteAddons(text, profile string, addons []string, pins []AddonPin, grants []AddonGrant) (string, bool) {
+func rewriteAddons(text, profile string, addons []string, pins []AddonPin) (string, bool) {
 	lines := strings.Split(text, "\n")
 	start, end, keyIndent, ok := appEntryExtent(lines, profile)
 	if !ok {
@@ -257,13 +231,6 @@ func rewriteAddons(text, profile string, addons []string, pins []AddonPin, grant
 			if pin.Catalogue != "" {
 				block = append(block, pad+"  catalogue: "+pin.Catalogue)
 			}
-		}
-	}
-
-	if len(grants) > 0 {
-		block = append(block, pad+"addonGrants:")
-		for _, g := range grants {
-			block = append(block, pad+"- name: "+g.Name, pad+"  defaultGrant: true")
 		}
 	}
 

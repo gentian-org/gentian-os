@@ -54,16 +54,16 @@ type Authenticator interface {
 
 // Repository is the git backend.
 type Repository interface {
-	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, meta gitops.Meta) (gitops.Result, error)
-	InstallFor(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant *bool, positions *[]string, meta gitops.Meta) (gitops.Result, error)
+	InstallFrom(ctx context.Context, tenant, profile, digest, catalogue string, meta gitops.Meta) (gitops.Result, error)
+	InstallFor(ctx context.Context, tenant, profile, digest, catalogue string, positions *[]string, meta gitops.Meta) (gitops.Result, error)
 	RetryMove(ctx context.Context, tenant, profile, digest string, meta gitops.Meta) (gitops.Result, error)
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
-	InstallWith(ctx context.Context, tenant, with string, apps []gitops.CameWith, defaultGrant *bool, meta gitops.Meta) (gitops.Result, []string, error)
+	InstallWith(ctx context.Context, tenant, with string, apps []gitops.CameWith, meta gitops.Meta) (gitops.Result, []string, error)
 	UninstallWith(ctx context.Context, tenant, profile string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
 	LetGo(ctx context.Context, tenant, with string, gone []string, heirs map[string]string, meta gitops.Meta) (gitops.Result, []string, error)
-	Place(ctx context.Context, tenant, profile, digest, catalogue string, defaultGrant bool, meta gitops.Meta) (gitops.Result, error)
+	Place(ctx context.Context, tenant, profile, digest, catalogue string, meta gitops.Meta) (gitops.Result, error)
 	Unplace(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
-	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, grants map[string]bool, meta gitops.Meta) (gitops.Result, error)
+	SetAddonsPinned(ctx context.Context, tenant, profile string, addons []string, pins []gitops.AddonPin, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
 	Tenants(ctx context.Context) ([]string, error)
 	IsPlatformTenant(ctx context.Context, tenant string) (bool, error)
@@ -1129,18 +1129,16 @@ type installRequest struct {
 	// source that serves the bundle can fail an install and cannot change
 	// what is installed (AD-3). It is recorded with the install in git.
 	Digest string `json:"digest,omitempty"`
-	// DefaultGrant installs the app for everyone: every member of the tenant
-	// has access to it by default. It is written on the app's entry in the
-	// same commit, and the operator grants it once the app's group exists.
-	// Absent leaves an installed app's entry as it is; false states that
-	// access is given per person.
+	// DefaultGrant is accepted and has no effect: an app reaches people
+	// through the positions it is given to and through the position
+	// all-apps, which uses every installed app.
 	DefaultGrant *bool `json:"defaultGrant,omitempty"`
 	// Positions are the positions of the tenant the app is given to: the
-	// holders of each use it. A name is one of the three every tenant has
-	// or one the tenant declares. "user" among them is every person of the
-	// tenant, the same as defaultGrant, and is written as that. Absent
+	// holders of each use it. A name is one of the four every tenant has
+	// or one the tenant declares. "user" among them gives nothing and is
+	// not written: that position enters the desktop and uses no app. Absent
 	// leaves an installed app's entry as it is; a list, empty or not,
-	// replaces what the entry said, defaultGrant included.
+	// replaces what the entry said.
 	Positions *[]string `json:"positions,omitempty"`
 	// Approve names egress requests of this build, or of the apps it comes
 	// with, that the caller approves with the install (install_asks.go):
@@ -1150,35 +1148,31 @@ type installRequest struct {
 	Approve []approvedRequest `json:"approve,omitempty"`
 }
 
-// givenTo reads the positions an install names: whether user is among them,
-// and the others, each once. It refuses a name that is no position of the
-// tenant, with the sentence to answer with.
-func (s *Server) givenTo(ctx context.Context, tenant string, names []string) (everyone bool, others []string, refusal string, err error) {
+// givenTo reads the positions an install names, each once, without user,
+// which gives no app. It refuses a name that is no position of the tenant,
+// with the sentence to answer with.
+func (s *Server) givenTo(ctx context.Context, tenant string, names []string) (given []string, refusal string, err error) {
 	own, err := s.cfg.Repo.TenantPositions(ctx, tenant)
 	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
-		return false, nil, "", err
+		return nil, "", err
 	}
 	known := map[string]bool{}
 	for _, p := range own {
 		known[p.Name] = true
 	}
 	seen := map[string]bool{}
-	others = []string{}
+	given = []string{}
 	for _, name := range names {
 		if !authz.Shipped(name) && !known[name] {
-			return false, nil, fmt.Sprintf("%q is not a position of the tenant", name), nil
+			return nil, fmt.Sprintf("%q is not a position of the tenant", name), nil
 		}
-		if seen[name] {
+		if seen[name] || name == authz.PositionUser {
 			continue
 		}
 		seen[name] = true
-		if name == authz.PositionUser {
-			everyone = true
-			continue
-		}
-		others = append(others, name)
+		given = append(given, name)
 	}
-	return everyone, others, "", nil
+	return given, "", nil
 }
 
 // install commits an app to a tenant's manifest.
@@ -1189,10 +1183,12 @@ func (s *Server) givenTo(ctx context.Context, tenant string, names []string) (ev
 // arrives is decided where its artifacts are pulled, by whether the tenant
 // holds a credential for the repository they come from.
 //
-// An install for everyone asks a second one. It gives people access to the
+// An install for positions asks a second one. It gives people access to the
 // app, which is what can_grant on the tenant guards wherever else that is
 // done, so the request must pass both -- and is refused before anything is
 // fetched or written when it does not.
+//
+// defaultGrant in the body is read and has no effect.
 func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("p")
@@ -1262,7 +1258,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	if body.Positions != nil {
-		everyone, others, refusal, err := s.givenTo(ctx, tenant, *body.Positions)
+		given, refusal, err := s.givenTo(ctx, tenant, *body.Positions)
 		if err != nil {
 			s.repoError(w, r, err)
 			return
@@ -1271,9 +1267,9 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			s.fail(w, r, http.StatusBadRequest, refusal)
 			return
 		}
-		body.DefaultGrant, body.Positions = &everyone, &others
+		body.Positions = &given
 	}
-	if (body.DefaultGrant != nil && *body.DefaultGrant) || (body.Positions != nil && len(*body.Positions) > 0) {
+	if body.Positions != nil && len(*body.Positions) > 0 {
 		target := authz.Tenant(tenant)
 		ok, err := s.can(ctx, c, "can_grant", target)
 		if err != nil {
@@ -1282,8 +1278,8 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		if !ok {
 			s.fail(w, r, http.StatusForbidden,
-				"installing an app for everyone or for a position gives people access to it, which needs can_grant on the tenant; "+
-					"install it without defaultGrant and positions, or ask somebody who may grant")
+				"installing an app for a position gives people access to it, which needs can_grant on the tenant; "+
+					"install it without positions, or ask somebody who may grant")
 			return
 		}
 		c.meta.Decision += " and can_grant " + target
@@ -1395,11 +1391,11 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		defer done()
 		ctx, r = writing, r.WithContext(writing)
 	}
-	came, ok := s.installComesWith(w, r, c, tenant, profile, definition, catalogueName, body.DefaultGrant)
+	came, ok := s.installComesWith(w, r, c, tenant, profile, definition, catalogueName)
 	if !ok {
 		return
 	}
-	res, err := s.cfg.Repo.InstallFor(ctx, tenant, profile, body.Digest, catalogueName, body.DefaultGrant, body.Positions, c.meta)
+	res, err := s.cfg.Repo.InstallFor(ctx, tenant, profile, body.Digest, catalogueName, body.Positions, c.meta)
 	if err == nil && definition != nil && len(definition.Spec.ComesWith) > 0 {
 		s.approveAmong(ctx, tenant)
 	}
@@ -1796,10 +1792,8 @@ type addonsRequest struct {
 // of the store's confirmation, sent on -- and the addon it names is the
 // second half of the coordinate.
 //
-// Either object may say who has the addon: "defaultGrant": true makes it an
-// addon for everyone, as an app's install does, and false one given per
-// person. {"name": "<addon>", "defaultGrant": ...} says it of an addon named
-// with no build. An addon that does not say keeps the grant it had.
+// Either object may carry "defaultGrant", which is read and has no effect,
+// and {"name": "<addon>"} names an addon with no build.
 type addonEntry struct {
 	Name         string
 	Coordinate   string
@@ -1869,8 +1863,6 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 	var sources []visibleSource
 	var bare []string
 	var pins []gitops.AddonPin
-	var grants map[string]bool
-	forEveryone := false
 	for _, entry := range body.Addons {
 		name := entry.Name
 		if entry.Coordinate != "" || entry.Digest != "" {
@@ -1913,31 +1905,6 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		}
 		seen[name] = true
 		names = append(names, name)
-		if entry.DefaultGrant != nil {
-			if grants == nil {
-				grants = map[string]bool{}
-			}
-			grants[name] = *entry.DefaultGrant
-			forEveryone = forEveryone || *entry.DefaultGrant
-		}
-	}
-	// An addon for everyone gives people access to it, as an app installed
-	// for everyone does: the same second question, before anything is
-	// fetched or written.
-	if forEveryone {
-		target := authz.Tenant(tenant)
-		ok, err := s.can(ctx, c, "can_grant", target)
-		if err != nil {
-			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-			return
-		}
-		if !ok {
-			s.fail(w, r, http.StatusForbidden,
-				"an add-on for everyone gives people access to it, which needs can_grant on the tenant; "+
-					"set it without defaultGrant, or ask somebody who may grant")
-			return
-		}
-		c.meta.Decision += " and can_grant " + target
 	}
 
 	// An add-on named with no build is one whose profile the cluster must
@@ -2026,7 +1993,7 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		}
 	}
 
-	res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, profile, names, pins, grants, c.meta)
+	res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, profile, names, pins, c.meta)
 	s.written(w, r, res, err)
 }
 

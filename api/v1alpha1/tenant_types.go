@@ -41,17 +41,17 @@ type TenantSignUp struct {
 	// may make an account, with an e-mail address as the login, a message to
 	// that address to confirm it, and a proof-of-work check against scripted
 	// sign-ups. An account made that way holds the positions Positions names
-	// and nothing else: without user among them it has no desktop and is not
-	// counted as a user of the tenant. It is for a tenant whose apps serve
-	// the public -- customers with accounts -- and not for a workspace, whose
-	// people are invited. Off by default; off, every account is made by an
+	// and nothing else: without user or all-apps among them it has no
+	// desktop and is not counted as a user of the tenant. It is for a tenant
+	// whose apps serve the public -- customers with accounts -- and not for a
+	// workspace, whose people are invited. Off by default; off, every account is made by an
 	// invitation.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
 	// Positions are the positions of this tenant an account is given when
-	// the person made it themself on the registration page: user or a name
-	// of spec.positions, e.g. customer. Only with Enabled. An account that
-	// came in through an identity provider is not given them. A position
+	// the person made it themself on the registration page: user, all-apps
+	// or a name of spec.positions, e.g. customer. Only with Enabled. An
+	// account that came in through an identity provider is not given them. A position
 	// that holds admin on the tenant or on an app, itself or through a
 	// position it includes, is never given this way, and a tenant that
 	// names one is refused.
@@ -180,18 +180,19 @@ type TenantComponentRef struct {
 // person holds, "Sales intern" or "Engineering manager". What it is, is
 // declared here; who holds it is not, and lives in the rights store.
 //
-// Every tenant has three positions it does not declare: user, a person of
-// the tenant, with the apps installed for everyone; app-administrator, who
-// administers every installed app; and tenant-administrator, who administers
-// the tenant and holds no role on any app.
+// Every tenant has four positions it does not declare: user, a person of
+// the tenant, who enters its desktop and uses no app; all-apps, who
+// includes user and uses every installed app and add-on; app-administrator,
+// who administers every installed app; and tenant-administrator, who
+// administers the tenant and holds no role on any app.
 type TenantPosition struct {
-	// Name is the position's name in the tenant. Not one of the three every
+	// Name is the position's name in the tenant. Not one of the four every
 	// tenant has.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	// +kubebuilder:validation:XValidation:rule="!(self in ['user', 'app-administrator', 'tenant-administrator'])",message="user, app-administrator and tenant-administrator are positions every tenant has"
+	// +kubebuilder:validation:XValidation:rule="!(self in ['user', 'all-apps', 'app-administrator', 'tenant-administrator'])",message="user, all-apps, app-administrator and tenant-administrator are positions every tenant has"
 	Name string `json:"name"`
 
 	// Title is the position as people read it.
@@ -257,10 +258,11 @@ type TenantSignInFrom struct {
 	Tenant string `json:"tenant"`
 
 	// Positions are the positions of this tenant its people are given when
-	// they arrive: user (a person of the tenant, who may enter it) or a
-	// name of spec.positions. A position that holds admin on the tenant or
-	// on an app, itself or through a position it includes, is never given
-	// this way, and a tenant that names one is refused.
+	// they arrive: user (a person of the tenant, who may enter it), all-apps
+	// (user, and every installed app) or a name of spec.positions. A
+	// position that holds admin on the tenant or on an app, itself or
+	// through a position it includes, is never given this way, and a tenant
+	// that names one is refused.
 	// +optional
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -303,9 +305,10 @@ type TenantPositionGiver struct {
 	Component string `json:"component"`
 
 	// Positions are the positions of this tenant the component gives and
-	// takes: user or a name of spec.positions. A position that holds admin
-	// on the tenant or on an app, itself or through a position it includes,
-	// is never given this way, and a tenant that names one is refused.
+	// takes: user, all-apps or a name of spec.positions. A position that
+	// holds admin on the tenant or on an app, itself or through a position
+	// it includes, is never given this way, and a tenant that names one is
+	// refused.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=16
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
@@ -1352,22 +1355,17 @@ type TenantApp struct {
 	// +kubebuilder:validation:MaxItems=128
 	AddonPins []AddonPin `json:"addonPins,omitempty"`
 
-	// DefaultGrant says every member of the tenant has access to this app by
-	// default. The people who are members when the app's group first exists
-	// are added to it, once, and the group is marked so that somebody invited
-	// later has the app pre-selected. It is applied once per install
-	// (status.defaultGrantedApps): a person an administrator removes from the
-	// group afterwards stays removed.
-	//
-	// Absent or false, access is given per person.
+	// DefaultGrant is accepted and has no effect. An app reaches people
+	// through the positions it is given to (positions) and through the
+	// position all-apps, which uses every installed app.
 	// +optional
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
 
 	// Positions names the positions of the tenant whose holders use this
 	// app: each holds the app's role user. A name is one of the positions
 	// every tenant has or one the tenant declares (spec.positions); a name
-	// that is neither gives nothing. defaultGrant is the position user, and
-	// the two are read together.
+	// that is neither gives nothing, and neither does user, the position
+	// that enters the desktop and uses no app.
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=256
@@ -1394,13 +1392,9 @@ type TenantApp struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	CameWith string `json:"cameWith,omitempty"`
 
-	// AddonGrants says which addons of this app every member of the tenant
-	// has access to by default. An addon is entitled by its own group, as an
-	// app is, and defaultGrant on an entry here is that addon's defaultGrant:
-	// applied once per install, noted with the apps' (status.defaultGrantedApps).
-	// Keyed by the addon's name and beside addons, as addonPins is; an addon
-	// with no entry is given per person. An entry naming an addon that is not
-	// in addons grants nothing.
+	// AddonGrants is accepted and has no effect, as defaultGrant has none.
+	// An add-on reaches people through the position all-apps, a position
+	// that names a role on it, and the administration of its base app.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -1408,35 +1402,16 @@ type TenantApp struct {
 	AddonGrants []AddonGrant `json:"addonGrants,omitempty"`
 }
 
-// AddonGrant is who has one addon of an app by default.
+// AddonGrant is an entry of addonGrants, which has no effect.
 type AddonGrant struct {
 	// Name is the addon's profile name, as addons lists it.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
-	// DefaultGrant says every member of the tenant has access to this addon
-	// by default, as an app's defaultGrant does for the app.
+	// DefaultGrant is accepted and has no effect.
 	// +optional
 	DefaultGrant bool `json:"defaultGrant,omitempty"`
-}
-
-// AddonDefaultGranted answers whether an addon of this app is declared for
-// everyone: listed in addons and granted by default in addonGrants.
-func (a TenantApp) AddonDefaultGranted(addon string) bool {
-	listed := false
-	for _, name := range a.Addons {
-		listed = listed || name == addon
-	}
-	if !listed {
-		return false
-	}
-	for _, g := range a.AddonGrants {
-		if g.Name == addon && g.DefaultGrant {
-			return true
-		}
-	}
-	return false
 }
 
 // AddonPin is the build one addon was installed from.

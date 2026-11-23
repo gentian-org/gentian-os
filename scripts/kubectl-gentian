@@ -96,7 +96,7 @@
 #                                                the internet has them: present, pending, missing, or held by another record
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
-#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone] [--approve-egress]
+#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--positions <a,b>] [--approve-egress]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
 #   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...
@@ -954,7 +954,7 @@ cmd_apps_list() {
     done
     if [[ -z "${available}" ]]; then
         _call GET "/v1/tenants/${t}/apps" |
-            jq -r '(["APP","FOR","ADDONS"] | @tsv), (.apps[] | [.profile, (if .defaultGrant then "everyone" else "-" end), ((.addons // []) | join(","))] | @tsv)' |
+            jq -r '(["APP","FOR","ADDONS"] | @tsv), (.apps[] | [.profile, (if ((.positions // []) | length) > 0 then (.positions | join(",")) else "-" end), ((.addons // []) | join(","))] | @tsv)' |
             column -t -s $'\t'
         return 0
     fi
@@ -995,12 +995,13 @@ cmd_apps_list() {
 # way the director fetches the bundle from the source and installs nothing
 # unless it hashes to the digest sent.
 _apps_install() {
-    local app="$1" t="$2" everyone="$3" from="" digest="" approve="false"
+    local app="$1" t="$2" positions="$3" from="" digest="" approve="false"
     shift 3
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --from) from="${2:?}"; shift 2 ;;
             --digest) digest="${2:?}"; shift 2 ;;
+            --positions) shift 2 ;;
             --approve-egress) approve="true"; shift ;;
             *) shift ;;
         esac
@@ -1057,8 +1058,8 @@ _apps_install() {
         fi
     fi
     local body answer status commit message
-    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --argjson e "${everyone}" --argjson a "${approving}" \
-        '{coordinate: $c, digest: $d} + (if $e then {defaultGrant: true} else {} end) +
+    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --arg p "${positions}" --argjson a "${approving}" \
+        '{coordinate: $c, digest: $d} + (if $p != "" then {positions: ($p | split(","))} else {} end) +
          (if ($a | length) > 0 then {approve: $a} else {} end)')"
     answer="$(_call POST "/v1/tenants/${t}/apps/${app}" "${body}")" || exit 1
     status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
@@ -1077,8 +1078,8 @@ _apps_install() {
                 echo "${app} in ${t}: ${message}. The retry was asked for a moment ago; nothing new was committed."
             fi ;;
         *)
-            if [[ "${everyone}" == "true" ]]; then
-                echo "Installing ${app} into ${t} for everyone: committed (${commit:-no commit id}); the platform installs it and grants it to every member."
+            if [[ -n "${positions}" ]]; then
+                echo "Installing ${app} into ${t} for ${positions}: committed (${commit:-no commit id}); the platform installs it and gives it to their holders."
             elif [[ "${status}" == "updated" ]]; then
                 echo "Moving ${app} in ${t} to this build: committed (${commit:-no commit id}); the platform rolls it out."
             else
@@ -2886,18 +2887,19 @@ cmd_apps() {
             local app="${1:-}"
             [[ -n "${app}" && "${app}" != -* ]] || die "usage: kubectl gentian apps ${sub} <app> --tenant <tenant>"
             shift
-            local t purge="false" everyone="false" a
+            local t purge="false" positions="" a prev=""
             t="$(_tenant_flag "$@")"
             for a in "$@"; do
                 [[ "${a}" == "--purge" ]] && purge="true"
-                [[ "${a}" == "--for-everyone" ]] && everyone="true"
+                [[ "${prev}" == "--positions" ]] && positions="${a}"
+                prev="${a}"
             done
-            [[ "${everyone}" == "false" || "${sub}" == "install" ]] || die "--for-everyone goes with install"
+            [[ -z "${positions}" || "${sub}" == "install" ]] || die "--positions goes with install"
             if [[ "${sub}" == "install" ]]; then
-                # --for-everyone is part of the install, in the same commit:
-                # every member has the app by default, granted once its group
-                # exists.
-                _apps_install "${app}" "${t}" "${everyone}" "$@"
+                # --positions is part of the install, in the same commit: the
+                # holders of each position named use the app. The position
+                # all-apps uses every installed app without being named.
+                _apps_install "${app}" "${t}" "${positions}" "$@"
             elif [[ "${purge}" == "true" ]]; then
                 # Two acts, in order: uninstall, which keeps the data, and
                 # then the purge, which destroys it and is refused until the

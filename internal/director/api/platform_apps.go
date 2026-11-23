@@ -41,7 +41,7 @@ import (
 //     alone and runs the build the cluster has.
 //   - A catalog entry placed while the cluster has a capability is found in
 //     the cluster catalogs' indexes (placedWith), before it is on the
-//     cluster, and placed at the build the index lists, for everyone. The
+//     cluster, and placed at the build the index lists. The
 //     one capability is llm, the cluster serving models (spec.llm.enabled).
 //     Only the cluster's catalogs place: a tenant's own catalog writing an
 //     app into every other tenant would be a way around every install check.
@@ -238,7 +238,7 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 				if _, ok := have[name]; ok {
 					continue
 				}
-				res, err := s.cfg.Repo.Place(ctx, t.Name, name, "", "", false, c.meta)
+				res, err := s.cfg.Repo.Place(ctx, t.Name, name, "", "", c.meta)
 				if err != nil {
 					log.WarnContext(ctx, "the platform could not place an app", "tenant", t.Name, "app", name, "error", err.Error())
 					continue
@@ -286,7 +286,7 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 		}
 		// A capability's apps go to user tenants only: nobody uses an app
 		// in the platform tenant. Their entries are the tenant's apps as
-		// they always were, unmarked: installed for everyone at the build
+		// they always were, unmarked: installed at the build
 		// the catalog lists when the cluster gains the capability, and
 		// uninstalled when it loses it.
 		if platform {
@@ -296,8 +296,7 @@ func (s *Server) placePlatformApps(ctx context.Context) (placed, removed int) {
 			_, present := have[a.name]
 			switch {
 			case a.wanted && !present:
-				everyone := true
-				res, detail, err := s.moveTo(ctx, c, t.Name, a.name, a.catalogue, a.digest, &everyone)
+				res, detail, err := s.moveTo(ctx, c, t.Name, a.name, a.catalogue, a.digest)
 				if err != nil {
 					log.WarnContext(ctx, "the platform could not place an app", "tenant", t.Name, "app", a.name, "detail", detail)
 					continue

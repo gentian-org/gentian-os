@@ -60,7 +60,7 @@ type CameWith struct {
 // when a push fails, and the request is not as many pushes long as it has
 // apps.
 func (g *GitOps) InstallWith(
-	ctx context.Context, tenant, with string, apps []CameWith, defaultGrant *bool, meta Meta,
+	ctx context.Context, tenant, with string, apps []CameWith, meta Meta,
 ) (res Result, installed []string, err error) {
 	if !ValidName(with) {
 		return Result{}, nil, fmt.Errorf("%w: profile %q", ErrInvalidName, with)
@@ -78,11 +78,7 @@ func (g *GitOps) InstallWith(
 		}
 		names = append(names, a.Profile)
 	}
-	forEveryone := defaultGrant != nil && *defaultGrant
 	msg := fmt.Sprintf("feat(%s): install %s with %s (via %s)", tenant, strings.Join(names, ", "), with, meta.actor())
-	if forEveryone {
-		msg = strings.Replace(msg, " (via ", " for everyone (via ", 1)
-	}
 	res, err = g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
 		installed = nil
 		if adoptsAnotherRealm(text, tenant) {
@@ -93,7 +89,7 @@ func (g *GitOps) InstallWith(
 			if _, _, _, present := appEntryExtent(strings.Split(out, "\n"), a.Profile); present {
 				continue
 			}
-			next, ok := insertComponentProfile(out, a.Profile, a.Digest, a.Catalogue, forEveryone)
+			next, ok := insertComponentProfile(out, a.Profile, a.Digest, a.Catalogue)
 			if !ok {
 				return "", "", false, errors.New("failed to update apps list")
 			}

@@ -39,7 +39,7 @@ func TestATenantTheClusterWouldRefuseIsNotCommitted(t *testing.T) {
 
 	before := tip()
 	answer = `admission webhook "vtenant.gentianos.io" denied the request: no`
-	_, err := g.InstallFrom(ctx, "demo", "element", "", "", nil, meta("u-ada"))
+	_, err := g.InstallFrom(ctx, "demo", "element", "", "", meta("u-ada"))
 	var refused *gitops.TenantRefused
 	if !errors.As(err, &refused) || refused.Tenant != "demo" || !strings.Contains(refused.Reason, "denied the request") {
 		t.Fatalf("install = %v", err)
@@ -52,12 +52,12 @@ func TestATenantTheClusterWouldRefuseIsNotCommitted(t *testing.T) {
 	}
 
 	answer = ""
-	if _, err := g.InstallFrom(ctx, "demo", "element", "", "", nil, meta("u-ada")); err != nil || tip() == before {
+	if _, err := g.InstallFrom(ctx, "demo", "element", "", "", meta("u-ada")); err != nil || tip() == before {
 		t.Fatalf("a change the cluster takes: %v, committed %v", err, tip() != before)
 	}
 
 	before, unreachable = tip(), errors.New("the operator is not there")
-	if _, err := g.InstallFrom(ctx, "demo", "wiki", "", "", nil, meta("u-ada")); err != nil || tip() == before {
+	if _, err := g.InstallFrom(ctx, "demo", "wiki", "", "", meta("u-ada")); err != nil || tip() == before {
 		t.Fatalf("a change made while the cluster cannot be asked: %v, committed %v", err, tip() != before)
 	}
 	if len(unasked) != 1 || unasked[0] != "demo" {

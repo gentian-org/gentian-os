@@ -16,13 +16,15 @@ import (
 	"testing"
 )
 
-// The three positions every tenant has follow from what it has installed:
-// User holds the apps given to everyone, App administrator every app that is
-// not an add-on, Tenant administrator the tenant and no app.
+// The four positions every tenant has follow from what it has installed:
+// User holds the tenant and no app, All apps includes User and holds every
+// app and add-on, App administrator every app that is not an add-on, Tenant
+// administrator the tenant and no app. An app given to user, or once given
+// to everyone, gives User nothing.
 func TestThePositionsEveryTenantHas(t *testing.T) {
 	got, err := positionTuples("acme", ShippedPositions([]InstalledApp{
-		{Profile: "wiki", ForEveryone: true},
-		{Profile: "shop", Addons: []InstalledApp{{Profile: "shop-sales", ForEveryone: true}, {Profile: "shop-stock"}}},
+		{Profile: "wiki", Positions: []string{PositionUser}},
+		{Profile: "shop", Addons: []InstalledApp{{Profile: "shop-sales"}, {Profile: "shop-stock"}}},
 		{Profile: ""},
 	}))
 	if err != nil {
@@ -34,12 +36,16 @@ func TestThePositionsEveryTenantHas(t *testing.T) {
 	}
 	sort.Strings(keys)
 	want := []string{
+		"position:acme/all-apps#holder|user|app:acme/shop",
+		"position:acme/all-apps#holder|user|app:acme/shop-sales",
+		"position:acme/all-apps#holder|user|app:acme/shop-stock",
+		"position:acme/all-apps#holder|user|app:acme/wiki",
+		"position:acme/all-apps|included_in|position:acme/user",
 		"position:acme/app-administrator#holder|admin|app:acme/shop",
 		"position:acme/app-administrator#holder|admin|app:acme/wiki",
 		"position:acme/tenant-administrator#holder|admin|tenant:acme",
-		"position:acme/user#holder|user|app:acme/shop-sales",
-		"position:acme/user#holder|user|app:acme/wiki",
 		"position:acme/user#holder|user|tenant:acme",
+		"tenant:acme|tenant|position:acme/all-apps",
 		"tenant:acme|tenant|position:acme/app-administrator",
 		"tenant:acme|tenant|position:acme/tenant-administrator",
 		"tenant:acme|tenant|position:acme/user",
@@ -47,13 +53,43 @@ func TestThePositionsEveryTenantHas(t *testing.T) {
 	if strings.Join(keys, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("tuples:\n%s\nwant:\n%s", strings.Join(keys, "\n"), strings.Join(want, "\n"))
 	}
-	for _, name := range []string{PositionUser, PositionAppAdministrator, PositionTenantAdministrator} {
+	for _, name := range []string{PositionUser, PositionAllApps, PositionAppAdministrator, PositionTenantAdministrator} {
 		if !Shipped(name) {
 			t.Errorf("%s is not told from a tenant's own", name)
 		}
 	}
 	if Shipped("sales-manager") {
 		t.Error("a tenant's own position is taken for one every tenant has")
+	}
+}
+
+// All apps follows the installed set: with nothing installed it holds no
+// app and still includes User.
+func TestAllAppsFollowsWhatIsInstalled(t *testing.T) {
+	got, err := positionTuples("acme", ShippedPositions(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := range got {
+		if strings.HasPrefix(k, "position:acme/all-apps#holder|") || strings.HasPrefix(k, "position:acme/user#holder|user|app:") {
+			t.Errorf("unexpected %s", k)
+		}
+	}
+	if _, ok := got["position:acme/all-apps|included_in|position:acme/user"]; !ok {
+		t.Error("all-apps does not include user")
+	}
+}
+
+// A tenant cannot declare a position under a name every tenant has.
+func TestATenantCannotDeclareAShippedPosition(t *testing.T) {
+	for _, name := range []string{PositionUser, PositionAllApps, PositionAppAdministrator, PositionTenantAdministrator} {
+		err := ValidatePositions("acme", []PositionSpec{{Name: name}})
+		if err == nil || !strings.Contains(err.Error(), "every tenant has") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if err := ValidatePositions("acme", []PositionSpec{{Name: "sales", Includes: []string{PositionAllApps}}}); err != nil {
+		t.Errorf("a tenant's own position may include all-apps: %v", err)
 	}
 }
 
@@ -131,7 +167,7 @@ func TestNamesOfPositionsAndRoles(t *testing.T) {
 
 // An app given to positions: each named position holds its role user, a
 // tenant's own beside the roles it declares, and a name that is no position
-// gives nothing.
+// gives nothing, nor does user.
 func TestAnAppGivenToPositions(t *testing.T) {
 	apps := []InstalledApp{
 		{Profile: "wiki", Positions: []string{PositionUser}},
@@ -150,7 +186,6 @@ func TestAnAppGivenToPositions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"position:acme/user#holder|user|app:acme/wiki",
 		"position:acme/tenant-administrator#holder|user|app:acme/shop",
 		"position:acme/sales#holder|user|app:acme/shop",
 	} {
@@ -159,7 +194,7 @@ func TestAnAppGivenToPositions(t *testing.T) {
 		}
 	}
 	for k := range got {
-		if strings.Contains(k, "gone") || k == "position:acme/user#holder|user|app:acme/shop" {
+		if strings.Contains(k, "gone") || strings.HasPrefix(k, "position:acme/user#holder|user|app:") {
 			t.Errorf("unexpected %s", k)
 		}
 	}

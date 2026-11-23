@@ -32,12 +32,9 @@ type DeclaredRole struct {
 // by profile name.
 type InstalledApp struct {
 	Profile string
-	// ForEveryone says the tenant gave the app to every person of the
-	// tenant: the position User holds its role user (ShippedPositions).
-	ForEveryone bool
-	// Positions are the further positions the tenant gave the app to: each
-	// holds its role user. A name that is no position of the tenant gives
-	// nothing.
+	// Positions are the positions the tenant gave the app to: each holds
+	// its role user. A name that is no position of the tenant gives
+	// nothing, and neither does user: that position is the desktop alone.
 	Positions []string
 	// Roles are the further roles the app's profile declares.
 	Roles []DeclaredRole

@@ -534,7 +534,7 @@ func (s *Server) moveEntry(ctx context.Context, c call, e updateEntry) (gitops.R
 	if e.AddonOf != "" {
 		return s.moveAddonTo(ctx, c, e.Tenant, e.AddonOf, e.Profile, e.Catalogue, e.Newest)
 	}
-	return s.moveTo(ctx, c, e.Tenant, e.Profile, e.Catalogue, e.Newest, nil)
+	return s.moveTo(ctx, c, e.Tenant, e.Profile, e.Catalogue, e.Newest)
 }
 
 // moveTo moves one tenant's app to a build of a catalogue: fetched or read
@@ -543,8 +543,7 @@ func (s *Server) moveEntry(ctx context.Context, c call, e updateEntry) (gitops.R
 // writer: what would have been the refusal comes back as detail.
 // As an install does, it first installs the apps the build comes with and the
 // tenant does not have, and moves nothing where one of them cannot be had.
-// defaultGrant is the install's, as InstallFrom takes it: nil for a move.
-func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueName, digest string, defaultGrant *bool) (gitops.Result, string, error) {
+func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueName, digest string) (gitops.Result, string, error) {
 	source, definition, detail, err := s.materialise(ctx, c, "app", tenant, profile, catalogueName, digest)
 	if err != nil {
 		return gitops.Result{}, detail, err
@@ -555,13 +554,13 @@ func (s *Server) moveTo(ctx context.Context, c call, tenant, profile, catalogueN
 		writing, done := context.WithTimeout(context.WithoutCancel(ctx), comesWithWait)
 		defer done()
 		ctx = writing
-		if _, refusal, err := s.bringComesWith(ctx, c, tenant, profile, definition, source.Name, defaultGrant); err != nil {
+		if _, refusal, err := s.bringComesWith(ctx, c, tenant, profile, definition, source.Name); err != nil {
 			return gitops.Result{}, err.Error(), err
 		} else if refusal != "" {
 			return gitops.Result{}, refusal, errComesWithRefused
 		}
 	}
-	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, digest, source.Name, defaultGrant, c.meta)
+	res, err := s.cfg.Repo.InstallFrom(ctx, tenant, profile, digest, source.Name, c.meta)
 	if err != nil {
 		return gitops.Result{}, err.Error(), err
 	}
@@ -588,7 +587,7 @@ func (s *Server) moveAddonTo(ctx context.Context, c call, tenant, base, addon, c
 			continue
 		}
 		pin := []gitops.AddonPin{{Name: addon, Digest: digest, Catalogue: source.Name}}
-		res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, base, a.Addons, pin, nil, c.meta)
+		res, err := s.cfg.Repo.SetAddonsPinned(ctx, tenant, base, a.Addons, pin, c.meta)
 		if err != nil {
 			return gitops.Result{}, err.Error(), err
 		}

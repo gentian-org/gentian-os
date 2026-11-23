@@ -1469,12 +1469,10 @@ See [store-contract.md](../concepts/store-contract.md) §3 and §4.
 An addon is **an app of its own** in the rights store, with its own roles
 (`spec.roles` of its profile): its tile asks `can_launch` on
 `app:<t>/<addon>`, a role on it lets a person into its base, and the base's
-administrator administers it. An addon for everyone is listed in
-`Tenant.spec.apps[].addonGrants` (`name`, `defaultGrant: true`), which gives
-it to the position User; any other addon is given per position or person.
-The director's `PUT .../apps/{p}/addons` takes `"defaultGrant"` on an
-object entry (`{coordinate, digest, defaultGrant}` or `{name, defaultGrant}`),
-and needs `can_grant` for `true`.
+administrator administers it. The position All apps uses every active
+addon; any other is given per position or person.
+`Tenant.spec.apps[].addonGrants`, and `"defaultGrant"` on an entry of the
+director's `PUT .../apps/{p}/addons`, are accepted and have no effect.
 
 **Editions** are `ce · me · ie · pe · ee`, and say *who maintains and supports
 the entry*, not who publishes it:

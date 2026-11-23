@@ -29,7 +29,7 @@ import (
 // shippedPositions are the positions every tenant has, as a list tells
 // them from a tenant's own. What each holds follows from what the tenant
 // has installed and is the rights store's to say.
-var shippedPositions = []string{authz.PositionUser, authz.PositionAppAdministrator, authz.PositionTenantAdministrator}
+var shippedPositions = []string{authz.PositionUser, authz.PositionAllApps, authz.PositionAppAdministrator, authz.PositionTenantAdministrator}
 
 func (s *Server) tenantPositions(w http.ResponseWriter, r *http.Request, _ call) {
 	positions, err := s.cfg.Repo.TenantPositions(r.Context(), r.PathValue("t"))

@@ -44,8 +44,8 @@ service's answer from OpenFGA.
 |---|---|---|
 | **Tenants** (platform administrator) | Create, retire and purge tenants, issue a tenant administrator's activation link | director, registrar |
 | **Members** | List, invite, update, switch off, remove; password reset; require or remove an authenticator; mailboxes of removed people (§4.3a) | registrar |
-| **Positions** | The three positions every tenant has and the tenant's own: what each holds, which positions it includes, who was given it | director (what a position is), registrar (who holds it) |
-| **Apps** | The tenant's installed apps. Per app: state, who has access and whether it is for everyone, integrations, what it asked of the platform and what was approved, public addresses and their approval, uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([store-contract.md](store-contract.md) §8) | director, usher |
+| **Positions** | The four positions every tenant has (User, All apps, App administrator, Tenant administrator) and the tenant's own: what each holds, which positions it includes, who was given it | director (what a position is), registrar (who holds it) |
+| **Apps** | The tenant's installed apps. Per app: state, who has access and which positions it is given to, integrations, what it asked of the platform and what was approved, public addresses and their approval, uninstall, purge. Uninstall keeps the app's data; purge destroys the data of an app that is no longer installed ([store-contract.md](store-contract.md) §8) | director, usher |
 | **Resources** | Plan, ceiling, usage history (§4.8) | usher (read), director (write) |
 | **Export** | Take one export now; download or delete the exports a person started. Scheduled backups are not listed. What is exported before an app update: the tenant's backup policy's `beforeMove` ([versioning.md](versioning.md) §5), read-only when the cluster allows tenants no policy of their own | usher (read), director |
 | **Security** | The realm's password, session and lockout policy (§4.5) | director |
@@ -89,7 +89,7 @@ relays an identity the edge established.
 | Interface | Where | For whom | Shows | Does |
 | --- | --- | --- | --- | --- |
 | **Desktop** | on the cluster, per tenant | everyone | the tiles the signed-in person may open: the usher's answer (`GET /v1/tenants/{t}/tiles`), filtered for the caller before it arrives | opens them. Nothing else: no install, uninstall, add-on, access, repository or store logic |
-| **Administration console** (this document) | on the cluster, per tenant | administrators | people and positions, policies, resources, credentials, and under **Apps** every installed app: its state, who holds which role on it and which positions it is given to, its integrations, its privileges | administers: gives and takes away access, sets "for everyone", approves privileges, uninstalls, purges. It installs nothing and lists no catalog |
+| **Administration console** (this document) | on the cluster, per tenant | administrators | people and positions, policies, resources, credentials, and under **Apps** every installed app: its state, who holds which role on it and which positions it is given to, its integrations, its privileges | administers: gives and takes away access, gives apps to positions, approves privileges, uninstalls, purges. It installs nothing and lists no catalog |
 | **App Store app** ([store-contract.md](store-contract.md) §6) | on the cluster, per tenant; absent where the cluster offers no store | people who may install apps in the tenant | the store's data, at once and with no store account: apps, descriptions, pictures, reviews, evaluations and reports, versions, list prices. Signed in at the store: what the tenant has acquired | acquires from the store, which is what the sign-in to the store is for; installs through the director and sets the repository credential through the custodian |
 | **The store** ([store-contract.md](store-contract.md) §1) | outside the cluster, run by a vendor | — | nothing on the cluster. It serves data to the App Store app: the catalog to anyone who asks, with no token; a tenant's standing and acquisitions to a person signed in to it | data and commerce only. It never calls the cluster |
 | **Operations Console** | on the cluster, where installed | whoever looks after the cluster | an add-on's own screens ([data-ownership.md](data-ownership.md) §5) | what the add-on does; it is not part of the OS |
@@ -107,7 +107,7 @@ same fact from two places:
 | --- | --- |
 | What an app is: name, summary, description, pictures | What is installed, at which digest |
 | Reviews and their summary | Its state: installing, ready, failing, and why |
-| Evaluations and reports | Who has access, and the "for everyone" setting |
+| Evaluations and reports | Who has access, and the positions it is given to |
 | Editions, versions and the digest of each | Its integrations |
 | Prices | Its privileges: what it requests of the platform and what was approved |
 | What the tenant has acquired | What its data is, when it is uninstalled and when it is purged |
@@ -214,7 +214,8 @@ No password is derived, stored or printed for either ([iam.md §1.4](iam.md)).
 
 **Inviting a member.** *Members* → *Invite*: address, name, optional recovery
 address, the positions to give. The registrar creates the account with no
-password, always gives the position User (entering the tenant takes it),
+password, always gives the position User (entering the tenant takes it; User holds
+no app, so the apps come with All apps or another position given here),
 and has Keycloak mail a link
 with `VERIFY_EMAIL` and `UPDATE_PASSWORD`.
 

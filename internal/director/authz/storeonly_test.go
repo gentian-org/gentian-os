@@ -69,7 +69,7 @@ func positionsFor(apps []InstalledApp) []PositionSpec {
 // exactly the projection's entries has nothing only the store knows --
 // whatever the projection comes to write.
 func TestWhatTheProjectionWritesIsNotStoreOnly(t *testing.T) {
-	apps := []InstalledApp{{Profile: "wiki", ForEveryone: true}, {Profile: "office", Addons: []InstalledApp{
+	apps := []InstalledApp{{Profile: "wiki"}, {Profile: "office", Addons: []InstalledApp{
 		{Profile: "sheets", Roles: []DeclaredRole{{Name: "auditor"}}}, {Profile: "slides"},
 	}}}
 	positions := positionsFor(apps)

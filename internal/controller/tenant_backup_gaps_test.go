@@ -103,19 +103,22 @@ func projected(cluster, tenant string, apps ...string) []authz.Tuple {
 		{User: "cluster:" + cluster, Relation: "operated_by", Object: "tenant:" + tenant},
 		{User: "user:" + tenant + "/pat", Relation: "perimeter_approver", Object: "tenant:" + tenant},
 	}
-	// The three positions every tenant has, and what each holds.
+	// The four positions every tenant has, and what each holds.
 	admins := authz.Holders(authz.Position(tenant, authz.PositionTenantAdministrator))
 	users := authz.Holders(authz.Position(tenant, authz.PositionUser))
+	allApps := authz.Holders(authz.Position(tenant, authz.PositionAllApps))
 	appAdmins := authz.Holders(authz.Position(tenant, authz.PositionAppAdministrator))
-	for _, name := range []string{authz.PositionUser, authz.PositionAppAdministrator, authz.PositionTenantAdministrator} {
+	for _, name := range []string{authz.PositionUser, authz.PositionAllApps, authz.PositionAppAdministrator, authz.PositionTenantAdministrator} {
 		out = append(out, authz.Tuple{User: "tenant:" + tenant, Relation: "tenant", Object: authz.Position(tenant, name)})
 	}
 	out = append(out,
 		authz.Tuple{User: admins, Relation: "admin", Object: "tenant:" + tenant},
-		authz.Tuple{User: users, Relation: "user", Object: "tenant:" + tenant})
+		authz.Tuple{User: users, Relation: "user", Object: "tenant:" + tenant},
+		authz.Tuple{User: authz.Position(tenant, authz.PositionAllApps), Relation: "included_in", Object: authz.Position(tenant, authz.PositionUser)})
 	for _, app := range apps {
 		out = append(out,
 			authz.Tuple{User: "tenant:" + tenant, Relation: "tenant", Object: "app:" + tenant + "/" + app},
+			authz.Tuple{User: allApps, Relation: "user", Object: "app:" + tenant + "/" + app},
 			authz.Tuple{User: appAdmins, Relation: "admin", Object: "app:" + tenant + "/" + app})
 	}
 	return out

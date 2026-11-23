@@ -104,7 +104,7 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	}
 	sales := InstalledApp{Profile: "crm-ce", Roles: []DeclaredRole{{Name: "manager", Includes: []string{"salesman"}}, {Name: "salesman"}}}
 	installed := map[string][]InstalledApp{
-		tenant:   {{Profile: "xwiki-ce", ForEveryone: true}, {Profile: "odoo-base-ce", Addons: []InstalledApp{sales}}},
+		tenant:   {{Profile: "xwiki-ce"}, {Profile: "odoo-base-ce", Addons: []InstalledApp{sales}}},
 		"apps-b": {{Profile: "xwiki-ce"}},
 	}
 	if err := c.ReconcileApps(ctx, installed); err != nil {
@@ -125,6 +125,7 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	}
 	if err := c.Write(ctx, []Tuple{
 		holds("reader", PositionUser),
+		holds("everything", PositionAllApps),
 		holds("seller", "sales-manager"),
 		holds("chief", "executive"),
 		holds("boss", PositionTenantAdministrator),
@@ -158,8 +159,10 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 		want      bool
 		why       string
 	}{
-		{"reader", "xwiki-ce", true, "an app installed for everyone is the position User's"},
-		{"reader", "odoo-base-ce", false, "an app that is not, is not"},
+		{"reader", "xwiki-ce", false, "the position User holds no app"},
+		{"everything", "xwiki-ce", true, "the position All apps holds every installed app"},
+		{"everything", "odoo-base-ce", true, "every one"},
+		{"everything", "crm-ce", true, "and every add-on"},
 		{"seller", "crm-ce", true, "the position holds a role the add-on declares"},
 		{"seller", "odoo-base-ce", true, "and a role on an add-on lets a person into its base"},
 		{"chief", "crm-ce", true, "a position that includes another holds its roles"},
@@ -174,6 +177,9 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	}
 	if !ask("keeper", "can_administer", App(tenant, "crm-ce")) || ask("seller", "can_administer", App(tenant, "crm-ce")) {
 		t.Error("an add-on is administered by its base's admin, and by nobody for holding a role on it")
+	}
+	if !ask("reader", "can_enter", Tenant(tenant)) || !ask("everything", "can_enter", Tenant(tenant)) {
+		t.Error("User and All apps, which includes it, enter the tenant")
 	}
 	if !ask("seller", "holder", Role(tenant, "crm-ce", "salesman")) {
 		t.Error("manager includes salesman")
@@ -197,19 +203,26 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	if left, err := c.Read(ctx, Tuple{Relation: "holder", Object: Position(tenant, "sales-manager")}); err != nil || len(left) != 0 {
 		t.Errorf("holders left of a position that is gone: %v, %v", left, err)
 	}
-	if !may("reader", "xwiki-ce") {
+	if !may("everything", "xwiki-ce") {
 		t.Error("removing one position took another's holders")
 	}
 
 	// The add-on is deactivated: its roles and their holders go, the base
 	// stays.
-	installed[tenant] = []InstalledApp{{Profile: "xwiki-ce", ForEveryone: true}, {Profile: "odoo-base-ce"}}
+	installed[tenant] = []InstalledApp{{Profile: "xwiki-ce"}, {Profile: "odoo-base-ce"}}
 	if err := c.ReconcileApps(ctx, installed); err != nil {
+		t.Fatal(err)
+	}
+	derive()
+	if err := c.ReconcilePositions(ctx, map[string][]PositionSpec{tenant: ShippedPositions(installed[tenant])}); err != nil {
 		t.Fatal(err)
 	}
 	derive()
 	if may("keeper", "crm-ce") || !may("keeper", "odoo-base-ce") {
 		t.Error("deactivating the add-on did not leave the base as it was")
+	}
+	if may("everything", "crm-ce") || !may("everything", "odoo-base-ce") {
+		t.Error("All apps does not follow the add-ons that are active")
 	}
 	// Uninstalled: nothing is left to ask about.
 	installed[tenant] = nil
@@ -219,8 +232,11 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	if err := c.ReconcilePositions(ctx, map[string][]PositionSpec{tenant: ShippedPositions(nil)}); err != nil {
 		t.Fatal(err)
 	}
-	if may("reader", "xwiki-ce") {
+	if may("everything", "xwiki-ce") {
 		t.Error("an uninstalled app can still be launched")
+	}
+	if held, err := c.Read(ctx, Tuple{User: Holders(Position(tenant, PositionAllApps)), Object: "app:"}); err != nil || len(held) != 0 {
+		t.Errorf("All apps still holds uninstalled apps: %v, %v", held, err)
 	}
 	left, err := c.Read(ctx, Tuple{User: Tenant(tenant), Relation: "tenant", Object: "app:"})
 	if err != nil {

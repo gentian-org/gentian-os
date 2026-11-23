@@ -76,7 +76,7 @@ func TestRenamingAClusterCatalogueRewritesEverythingThatNamesIt(t *testing.T) {
 	ctx := context.Background()
 	shop := materialise(t, g, "shop", profilebundle.ClusterOrigin("partner"))
 	notes := materialise(t, g, "notes", profilebundle.ClusterOrigin("main"))
-	if _, err := g.InstallFrom(ctx, "demo", "shop", shop, "partner", nil, meta("u-ada")); err != nil {
+	if _, err := g.InstallFrom(ctx, "demo", "shop", shop, "partner", meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 	before := map[string]string{}
@@ -162,10 +162,10 @@ func TestRenamingATenantsCatalogueTouchesThatTenantOnly(t *testing.T) {
 	}
 	crm := materialise(t, g, "crm", profilebundle.TenantOrigin("demo", "aluvian"))
 	erp := materialise(t, g, "erp", profilebundle.TenantOrigin("solo", "aluvian"))
-	if _, err := g.InstallFrom(ctx, "demo", "crm", crm, "aluvian", nil, meta("u-ada")); err != nil {
+	if _, err := g.InstallFrom(ctx, "demo", "crm", crm, "aluvian", meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.InstallFrom(ctx, "solo", "erp", erp, "aluvian", nil, meta("u-ada")); err != nil {
+	if _, err := g.InstallFrom(ctx, "solo", "erp", erp, "aluvian", meta("u-ada")); err != nil {
 		t.Fatal(err)
 	}
 	untouched := map[string]string{}

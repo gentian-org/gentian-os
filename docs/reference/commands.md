@@ -457,7 +457,7 @@ kubectl gentian apps list --tenant demo --available                  # what the 
 kubectl gentian apps install xwiki-ce --tenant demo                  # the build the catalog lists
 kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several catalogues serve the name
 kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
-kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
+kubectl gentian apps install xwiki-ce --tenant demo --positions sales,support   # and gives it to these positions
 kubectl gentian apps install xwiki-ce --tenant demo --approve-egress # and approves the outbound access it asks for
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
@@ -558,10 +558,12 @@ safe to repeat, and running the command again continues with what is left.
 What each act keeps and destroys, kind by kind, is in
 [store-contract.md](../concepts/store-contract.md) §8.
 
-`--for-everyone` writes `defaultGrant: true` on the app's entry in the same
-commit, which gives the app to the position User: every person of the tenant
-then has it. It needs the right to grant in the tenant as well as to install.
-Without the flag, the app is given to positions or people in the Admin Console
+`--positions` names the positions of the tenant the app is given to, written
+on the app's entry in the same commit: the holders of each then use it. It
+needs the right to grant in the tenant as well as to install. The position
+All apps (`all-apps`) uses every installed app without being named, and User
+(`user`) is the desktop alone and gives no app. Without the flag, the app is
+given to positions or people in the Admin Console
 ([store-contract.md](../concepts/store-contract.md) §3).
 
 An install first says what the build, and the apps it comes with, ask for
