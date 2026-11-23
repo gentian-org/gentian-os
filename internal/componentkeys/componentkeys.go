@@ -10,8 +10,8 @@ SPDX-License-Identifier: MPL-2.0
 
 // Package componentkeys is the list of keys components hold, as the operator
 // writes it for a service that recognizes a component by its key: the
-// director's commission keys, the registrar's vouching keys, the bouncer's
-// checkers and the arbiter's table.
+// director's commission keys, the registrar's vouching keys and position
+// givers, the bouncer's checkers and the arbiter's table.
 //
 // The operator gives such a component a key of its own, in a Secret of its
 // tenant's namespace, and lists only the key's hash. The service reads no
@@ -68,6 +68,25 @@ type Commission struct {
 type Vouching struct {
 	Key
 	Consent string `json:"consent,omitempty"`
+}
+
+// PositionGiver is an entry of the registrar's list of position givers: a
+// component that may give people of other tenants, or of its own, some of
+// those tenants' positions and take them again. Each tenant in Gives names
+// the component in spec.positionGivers with those positions.
+type PositionGiver struct {
+	Key
+	Gives []PositionGrant `json:"gives"`
+}
+
+// PositionGrant is the positions of one tenant a position giver gives.
+// Administering are the ones the tenant names for it that administer the
+// tenant or an app, which it never gives: listed so that a refusal can say
+// why.
+type PositionGrant struct {
+	Tenant        string   `json:"tenant"`
+	Positions     []string `json:"positions"`
+	Administering []string `json:"administering,omitempty"`
 }
 
 // PersonSecrets is an entry of the confidant's list: a component that keeps

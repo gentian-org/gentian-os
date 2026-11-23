@@ -134,6 +134,30 @@ may be `user` (who may enter the tenant) or one of `spec.positions`, never
 an administrator's. Either side taking its line away ends
 the sign-in.
 
+An entry may give its positions only to some of the source's people: those
+who hold one of the source's positions named in `holding`, given to them or
+through a position that includes it.
+
+```yaml
+  signInFrom:
+    - tenant: team
+      positions: [website-editor]
+      holding: [sales]               # positions of team
+```
+
+The realm says, with each arrival, who the person is in the source realm,
+and the operator asks the rights store what they hold there. At every
+arrival it gives the entry's positions to a person who holds one of
+`holding`, and takes them from one who does not: who left sales loses
+`website-editor` the next time they sign in, whoever gave it to them; a
+person who should keep it without being in sales is given a position of the
+target's own for it. A position that holds `admin` on the tenant or an app,
+itself or through an inclusion, is never given or taken this way. An
+arrival that does not say
+who the person is in the source gives and takes nothing. An entry without
+`holding` gives its positions to everybody from the source and takes
+nothing.
+
 The source's desktop may then frame the target's apps, so a tile on it opens
 one of them in a window ([routing.md](../concepts/routing.md) §4.3). Only on
 the same site: an app on another registrable domain than the source's desktop

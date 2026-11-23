@@ -121,6 +121,11 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	vouchingKeys := &VouchingKeys{}
 	go vouchingKeys.Follow(ctx, envvar.Or("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log, VouchingKeysList)
 
+	// The components tenants let give some of their positions, each with the
+	// hash of its own key, written and followed the same way.
+	positionGivers := &PositionGivers{}
+	go positionGivers.Follow(ctx, envvar.Or("REGISTRAR_POSITION_GIVERS", "/etc/gentian/position-givers/keys.json"), 5*time.Second, log, PositionGiversList)
+
 	// The Tenants, and -- for one that is not there -- its Argo CD
 	// Application, which says whether its creation failed.
 	tenants := &ClusterTenants{
@@ -145,6 +150,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		// settings templates an invitation may apply live there.
 		DesktopAPI:       os.Getenv("REGISTRAR_DESKTOP_API_URL"),
 		VouchingKeys:     vouchingKeys,
+		PositionGivers:   positionGivers,
 		Invitations:      invitations,
 		InvitationExpiry: invitationExpiry(log),
 		RoleHolders:      ClaimRoleHolders(reader),

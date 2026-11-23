@@ -267,6 +267,13 @@ spec:
                  components' Secrets and never here. */}}
             - name: REGISTRAR_VOUCHING_KEYS
               value: /etc/gentian/vouching/keys.json
+            {{- /* The components tenants let give some of their positions
+                 (spec.positionGivers), each with the hash of the key the
+                 operator gave it and what it may give in which tenant. The
+                 registrar admits such a key on the two routes that give
+                 and take a position, for exactly that. */}}
+            - name: REGISTRAR_POSITION_GIVERS
+              value: /etc/gentian/position-givers/keys.json
             {{- /* The durable record of WHO WAS ALLOWED to ask for a change
                  to a person (S7A.17).
 
@@ -318,6 +325,9 @@ spec:
             - name: vouching-keys
               mountPath: /etc/gentian/vouching
               readOnly: true
+            - name: position-givers
+              mountPath: /etc/gentian/position-givers
+              readOnly: true
             - name: operator-token
               mountPath: /var/run/secrets/gentian/operator
               readOnly: true
@@ -342,6 +352,13 @@ spec:
         - name: vouching-keys
           configMap:
             name: registrar-vouching-keys
+            optional: true
+        # The operator's list of components tenants let give positions.
+        # Optional and followed, as the list above: without it, no
+        # component gives a position.
+        - name: position-givers
+          configMap:
+            name: registrar-position-givers
             optional: true
         {{- include "gentian-os.operatorTokenVolume" . | nindent 8 }}
         {{- with .Values.trustAnchorSecret }}

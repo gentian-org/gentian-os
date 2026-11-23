@@ -42,6 +42,11 @@ type Event struct {
 	User string `json:"user,omitempty"`
 	// Provider is the identity provider a person came in through.
 	Provider string `json:"provider,omitempty"`
+	// ProviderUser is who the person is at that provider: the id of their
+	// account there, as the realm's link to it holds it. For a tenant's
+	// provider tenant-<source>, the sub of their account in the source
+	// tenant's realm. Absent when the realm did not say.
+	ProviderUser string `json:"providerUser,omitempty"`
 }
 
 const (
@@ -50,6 +55,9 @@ const (
 	TypeUserEntered = "user.entered"
 	// TypeUserDeleted states that a user no longer exists.
 	TypeUserDeleted = "user.deleted"
+	// TypeUserRegistered states that a person made an account in the realm
+	// themself, on its registration page.
+	TypeUserRegistered = "user.registered"
 )
 
 // SignatureHeader carries "keyid=<id>,t=<unix seconds>,sig=<base64>", where
@@ -71,13 +79,24 @@ var (
 	eventID      = regexp.MustCompile(`^[A-Za-z0-9._-]{8,80}$`)
 	realmName    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`)
 	providerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	// providerUser is what an account id at a provider may be: printable,
+	// without spaces, and bounded.
+	providerUser = regexp.MustCompile(`^[\x21-\x7e]{1,255}$`)
 )
 
 // Arrivals is told of a person who came into a realm through an identity
 // provider, so that what the platform gives such a person is theirs when
-// they arrive.
+// they arrive. providerUser is who they are at the provider, or "" when the realm did
+// not say.
 type Arrivals interface {
-	PersonEntered(ctx context.Context, realm, sub, provider string) error
+	PersonEntered(ctx context.Context, realm, sub, provider, providerUser string) error
+}
+
+// Registrations is told of a person who made an account in a realm
+// themself, so that what the platform gives such an account is theirs from
+// the start. An Arrivals that is also a Registrations is told both.
+type Registrations interface {
+	PersonRegistered(ctx context.Context, realm, sub string) error
 }
 
 // Departures is told of a person who no longer exists in a realm, so that
@@ -88,11 +107,12 @@ type Departures interface {
 
 // Receiver is the HTTP endpoint events arrive at.
 type Receiver struct {
-	keys       map[string]ed25519.PublicKey
-	arrivals   Arrivals
-	departures []Departures
-	log        *slog.Logger
-	now        func() time.Time
+	keys          map[string]ed25519.PublicKey
+	arrivals      Arrivals
+	registrations Registrations
+	departures    []Departures
+	log           *slog.Logger
+	now           func() time.Time
 
 	mu   sync.Mutex
 	seen map[string]time.Time // event id → when it may be forgotten
@@ -101,7 +121,9 @@ type Receiver struct {
 // NewReceiver returns a Receiver that accepts events signed by any of keys,
 // which maps a key id to a public key. More than one key is how a key is
 // rotated without losing events. arrivals may be nil, and departures empty:
-// such an event is then accepted and nothing follows from it.
+// such an event is then accepted and nothing follows from it. When arrivals
+// is also a Registrations, it is told of the accounts people make
+// themselves; otherwise nothing follows from those either.
 func NewReceiver(keys map[string]ed25519.PublicKey, arrivals Arrivals, log *slog.Logger, departures ...Departures) (*Receiver, error) {
 	if len(keys) == 0 {
 		return nil, errors.New("membership: at least one listener key is required")
@@ -109,8 +131,9 @@ func NewReceiver(keys map[string]ed25519.PublicKey, arrivals Arrivals, log *slog
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Receiver{keys: keys, arrivals: arrivals, departures: departures, log: log, now: time.Now,
-		seen: map[string]time.Time{}}, nil
+	registrations, _ := arrivals.(Registrations)
+	return &Receiver{keys: keys, arrivals: arrivals, registrations: registrations, departures: departures, log: log,
+		now: time.Now, seen: map[string]time.Time{}}, nil
 }
 
 // ParseKeys reads "id=base64key,id=base64key".
@@ -157,12 +180,21 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	switch ev.Type {
 	case TypeUserEntered:
-		if ev.User == "" || !providerName.MatchString(ev.Provider) {
+		if ev.User == "" || !providerName.MatchString(ev.Provider) ||
+			(ev.ProviderUser != "" && !providerUser.MatchString(ev.ProviderUser)) {
 			http.Error(w, "malformed event", http.StatusBadRequest)
 			return
 		}
 		if rc.arrivals != nil {
-			err = rc.arrivals.PersonEntered(ctx, ev.Realm, ev.User, ev.Provider)
+			err = rc.arrivals.PersonEntered(ctx, ev.Realm, ev.User, ev.Provider, ev.ProviderUser)
+		}
+	case TypeUserRegistered:
+		if ev.User == "" {
+			http.Error(w, "malformed event", http.StatusBadRequest)
+			return
+		}
+		if rc.registrations != nil {
+			err = rc.registrations.PersonRegistered(ctx, ev.Realm, ev.User)
 		}
 	case TypeUserDeleted:
 		if ev.User == "" {
@@ -190,7 +222,7 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rc.log.InfoContext(ctx, "realm event applied", "event", ev.ID, "realm", ev.Realm, "type", ev.Type,
-		"user", ev.User, "provider", ev.Provider)
+		"user", ev.User, "provider", ev.Provider, "provider_user", ev.ProviderUser)
 	w.WriteHeader(http.StatusNoContent)
 }
 

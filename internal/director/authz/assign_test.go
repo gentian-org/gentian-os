@@ -371,3 +371,41 @@ func TestAPositionsHoldersIncludeThoseOfAPositionThatIncludesIt(t *testing.T) {
 		t.Errorf("deputies = %v, err = %v, want the chief too: chief includes deputy", deputies, err)
 	}
 }
+
+// Whether a person holds one of some positions counts a position given to
+// them and one a given position includes, and no other tenant's.
+func TestHoldsAnyPositionCountsInclusion(t *testing.T) {
+	ctx := context.Background()
+	s := tenantStore(t, "acme")
+	if _, err := Give(ctx, s, "acme", "anna", Assignment{Position: "chief"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		tenant, sub string
+		positions   []string
+		want        bool
+	}{
+		{"acme", "anna", []string{"chief"}, true},
+		{"acme", "anna", []string{"deputy"}, true},
+		{"acme", "anna", []string{"user", "deputy"}, true},
+		{"acme", "anna", []string{"user"}, false},
+		{"acme", "anna", nil, false},
+		{"acme", "ben", []string{"deputy"}, false},
+		{"other", "anna", []string{"chief"}, false},
+	} {
+		got, err := HoldsAnyPosition(ctx, s, c.tenant, c.sub, c.positions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != c.want {
+			t.Errorf("%s holds one of %v in %s: %v, want %v", c.sub, c.positions, c.tenant, got, c.want)
+		}
+	}
+	// Who holds deputy only does not hold chief: inclusion goes one way.
+	if _, err := Give(ctx, s, "acme", "carl", Assignment{Position: "deputy"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := HoldsAnyPosition(ctx, s, "acme", "carl", []string{"chief"}); got {
+		t.Error("a holder of an included position holds the one that includes it")
+	}
+}

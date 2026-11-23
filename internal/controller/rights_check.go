@@ -98,10 +98,21 @@ func (r *ComponentReconciler) ensureRightsCheck(ctx context.Context, comp *genti
 	if wantsPersonSecrets(profile) {
 		confidant = confidantURL()
 	}
+	// The registrar's likewise, for a component a tenant names as one that
+	// gives its positions.
+	registrar := ""
+	named, err := namedAsPositionGiver(ctx, r.Client, tenantName, profile.Name)
+	if err != nil {
+		return err
+	}
+	if named {
+		registrar = r.registrarURL()
+	}
 	return r.ensureKeySecret(ctx, comp, tenantName, rightsCheckKeys, map[string]string{
 		rightsCheckURLKey:       rightsCheckURL(r.bouncerService()),
 		componentDirectorURLKey: director,
 		confidantURLKey:         confidant,
+		registrarURLKey:         registrar,
 	})
 }
 

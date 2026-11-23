@@ -133,10 +133,18 @@ func (g *GitOps) SetTenantSignIn(ctx context.Context, target, source string, pos
 	if err := g.readTenantPatch(ctx, source, SignInFile, &sdoc); err != nil {
 		return Result{}, err
 	}
+	// What the entry asks the source's people to hold is kept: written by
+	// hand, and dropping it would give the positions to everybody.
+	var holding []string
+	for _, f := range tdoc.Spec.SignInFrom {
+		if f.Tenant == source {
+			holding = f.Holding
+		}
+	}
 	from := slices.DeleteFunc(tdoc.Spec.SignInFrom, func(f gentianov1alpha1.TenantSignInFrom) bool { return f.Tenant == source })
 	to := slices.DeleteFunc(sdoc.Spec.SignInTo, func(n string) bool { return n == target })
 	if !remove {
-		from = append(from, gentianov1alpha1.TenantSignInFrom{Tenant: source, Positions: given})
+		from = append(from, gentianov1alpha1.TenantSignInFrom{Tenant: source, Positions: given, Holding: holding})
 		to = append(to, target)
 	}
 	sort.Slice(from, func(i, j int) bool { return from[i].Tenant < from[j].Tenant })
@@ -177,6 +185,9 @@ func renderSignIn(tenant string, doc signInPatch) string {
 			b.WriteString("    - tenant: " + f.Tenant + "\n")
 			if len(f.Positions) > 0 {
 				b.WriteString("      positions: [" + strings.Join(f.Positions, ", ") + "]\n")
+			}
+			if len(f.Holding) > 0 {
+				b.WriteString("      holding: [" + strings.Join(f.Holding, ", ") + "]\n")
 			}
 		}
 	}

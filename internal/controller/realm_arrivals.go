@@ -35,7 +35,10 @@ import (
 // store's, and the operator gives it when the realm says they arrived:
 //
 //   - a cluster administrator is given the position Tenant administrator;
-//   - a person of another tenant is given the positions the sign-in names.
+//   - a person of another tenant is given the positions the sign-in names;
+//     where the sign-in names positions held at home (holding), only while
+//     the person holds one of them in the source tenant, and those
+//     positions are taken from a person who no longer does.
 //
 // Given at every arrival, which writes nothing when it is held already. The
 // realm tells after the sign-in has happened, so the first page a person
@@ -44,6 +47,10 @@ import (
 // Who was given the administrator's position this way is kept on the tenant
 // (enteredFromKernelAnnotation), so that it is taken back when the tenant
 // stops letting the cluster's administrators in.
+//
+// A person who makes an account on the realm's registration page is given
+// the positions spec.signUp.positions names, once, when the realm says the
+// account was made.
 
 const (
 	// kernelProvider is the identity provider a tenant's realm lets the
@@ -83,8 +90,22 @@ func (a *RealmArrivals) tenantsOfRealm(ctx context.Context, realm string, own bo
 	return out, nil
 }
 
+// notAdministrators is positions without the administrators' and without
+// repeats: never given by an arrival, whatever a claim written past the
+// schema says.
+func notAdministrators(positions []string) []string {
+	var out []string
+	for _, p := range positions {
+		if p != rights.PositionTenantAdministrator && p != rights.PositionAppAdministrator && !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // arrivalPositions is what a person who came into tenant through provider
-// is given, and whether it is the cluster administrator's entry.
+// is given whoever they are, and whether it is the cluster administrator's
+// entry. What depends on what they hold at home is heldAtHome's.
 func arrivalPositions(tenant *gentianov1alpha1.Tenant, provider string) (positions []string, fromKernel bool) {
 	if provider == kernelProvider {
 		if tenant.PlatformAdminsEnter() {
@@ -97,22 +118,32 @@ func arrivalPositions(tenant *gentianov1alpha1.Tenant, provider string) (positio
 		return nil, false
 	}
 	for _, from := range tenant.Spec.SignInFrom {
-		if from.Tenant != source {
+		if from.Tenant != source || len(from.Holding) > 0 {
 			continue
 		}
-		for _, p := range from.Positions {
-			// Never an administrator's, whatever a claim written past the
-			// schema says.
-			if p != rights.PositionTenantAdministrator && p != rights.PositionAppAdministrator && !slices.Contains(positions, p) {
-				positions = append(positions, p)
-			}
+		positions = append(positions, from.Positions...)
+	}
+	return notAdministrators(positions), false
+}
+
+// heldAtHome are the entries of the tenant's sign-in that give their
+// positions only to who holds a position at home, for a person who came in
+// through provider, with the source tenant they name.
+func heldAtHome(tenant *gentianov1alpha1.Tenant, provider string) (source string, entries []gentianov1alpha1.TenantSignInFrom) {
+	source, ok := strings.CutPrefix(provider, "tenant-")
+	if !ok {
+		return "", nil
+	}
+	for _, from := range tenant.Spec.SignInFrom {
+		if from.Tenant == source && len(from.Holding) > 0 {
+			entries = append(entries, from)
 		}
 	}
-	return positions, false
+	return source, entries
 }
 
 // PersonEntered implements membership.Arrivals.
-func (a *RealmArrivals) PersonEntered(ctx context.Context, realm, sub, provider string) error {
+func (a *RealmArrivals) PersonEntered(ctx context.Context, realm, sub, provider, providerUser string) error {
 	if a.Rights == nil {
 		return nil
 	}
@@ -122,23 +153,110 @@ func (a *RealmArrivals) PersonEntered(ctx context.Context, realm, sub, provider 
 	}
 	for _, tenant := range tenants {
 		positions, fromKernel := arrivalPositions(tenant, provider)
-		for _, position := range positions {
-			_, err := rights.Give(ctx, a.Rights, tenant.Name, sub, rights.Assignment{Position: position})
-			if errors.Is(err, rights.ErrNoSuchThing) {
-				// A position the tenant no longer declares, or a tenant
-				// whose positions are not written yet: nothing to hold.
-				log.FromContext(ctx).Info("a person who arrived is not given a position the tenant has not",
-					"tenant", tenant.Name, "position", position, "provider", provider)
+		give, take, err := a.byHolding(ctx, tenant, provider, providerUser)
+		if err != nil {
+			return err
+		}
+		if err := a.give(ctx, tenant, sub, notAdministrators(append(positions, give...)), "provider", provider); err != nil {
+			return err
+		}
+		for _, position := range take {
+			// Nor is it taken here: what administers is not an arrival's,
+			// and the tenant's last administrator is never reached from it.
+			if slices.Contains(positions, position) || slices.Contains(give, position) || tenant.PositionAdministers(position) {
 				continue
 			}
+			_, err := rights.Take(ctx, a.Rights, tenant.Name, sub, rights.Assignment{Position: position})
 			if err != nil {
-				return fmt.Errorf("give %s in %s: %w", position, tenant.Name, err)
+				return fmt.Errorf("take %s in %s: %w", position, tenant.Name, err)
 			}
 		}
 		if fromKernel {
 			if err := a.remember(ctx, tenant, sub); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// byHolding is what the entries of the tenant's sign-in that ask what a
+// person holds at home give the person who came in through provider, and
+// what they take from them: an entry's positions are given while the person
+// holds one of the positions it names in the source tenant, and taken once
+// they do not. A person the realm did not say who they are at the provider
+// is given nothing by such an entry, and nothing is taken.
+func (a *RealmArrivals) byHolding(
+	ctx context.Context, tenant *gentianov1alpha1.Tenant, provider, providerUser string,
+) (give, take []string, err error) {
+	source, entries := heldAtHome(tenant, provider)
+	if len(entries) == 0 {
+		return nil, nil, nil
+	}
+	if providerUser == "" {
+		log.FromContext(ctx).Info("a person who arrived is given nothing for what they hold at home: the realm did not say who they are there",
+			"tenant", tenant.Name, "provider", provider)
+		return nil, nil, nil
+	}
+	for _, from := range entries {
+		held, err := rights.HoldsAnyPosition(ctx, a.Rights, source, providerUser, from.Holding)
+		if errors.Is(err, rights.ErrInvalidID) {
+			// Not an account id the store can name: nobody there.
+			log.FromContext(ctx).Info("a person who arrived is given nothing for what they hold at home: not an account id of the source",
+				"tenant", tenant.Name, "provider", provider)
+			return nil, nil, nil
+		}
+		if err != nil {
+			return nil, nil, fmt.Errorf("read what a person holds in %s: %w", source, err)
+		}
+		if held {
+			give = append(give, from.Positions...)
+		} else {
+			take = append(take, from.Positions...)
+		}
+	}
+	return notAdministrators(give), notAdministrators(take), nil
+}
+
+// give gives sub the positions in tenant. A position the tenant does not
+// have is said and passed over.
+func (a *RealmArrivals) give(ctx context.Context, tenant *gentianov1alpha1.Tenant, sub string, positions []string, how ...any) error {
+	for _, position := range positions {
+		if tenant.PositionAdministers(position) {
+			// Administering is given by an administrator, never on arrival.
+			log.FromContext(ctx).Info("a person is not given a position that administers",
+				append([]any{"tenant", tenant.Name, "position", position}, how...)...)
+			continue
+		}
+		_, err := rights.Give(ctx, a.Rights, tenant.Name, sub, rights.Assignment{Position: position})
+		if errors.Is(err, rights.ErrNoSuchThing) {
+			// A position the tenant no longer declares, or a tenant whose
+			// positions are not written yet: nothing to hold.
+			log.FromContext(ctx).Info("a person is not given a position the tenant has not",
+				append([]any{"tenant", tenant.Name, "position", position}, how...)...)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("give %s in %s: %w", position, tenant.Name, err)
+		}
+	}
+	return nil
+}
+
+// PersonRegistered implements membership.Registrations: an account a
+// person made on the realm's registration page is given the positions the
+// tenant names for it.
+func (a *RealmArrivals) PersonRegistered(ctx context.Context, realm, sub string) error {
+	if a.Rights == nil {
+		return nil
+	}
+	tenants, err := a.tenantsOfRealm(ctx, realm, true)
+	if err != nil {
+		return err
+	}
+	for _, tenant := range tenants {
+		if err := a.give(ctx, tenant, sub, notAdministrators(tenant.SignUpPositions()), "at", "sign-up"); err != nil {
+			return err
 		}
 	}
 	return nil

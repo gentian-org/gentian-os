@@ -246,16 +246,22 @@ func (s *Server) take(w http.ResponseWriter, r *http.Request, c call) {
 }
 
 func (s *Server) assign(w http.ResponseWriter, r *http.Request, c call, give bool) {
+	var body assignmentBody
+	if !s.decode(w, r, &body) {
+		return
+	}
+	s.assignTo(w, r, c, give, body)
+}
+
+// assignTo gives or takes what body names, once the caller is known to be
+// allowed it.
+func (s *Server) assignTo(w http.ResponseWriter, r *http.Request, c call, give bool, body assignmentBody) {
 	realm, ok := s.realmFor(w, r)
 	if !ok {
 		return
 	}
 	rights := s.rights(w, r)
 	if rights == nil {
-		return
-	}
-	var body assignmentBody
-	if !s.decode(w, r, &body) {
 		return
 	}
 	// The person is one of this tenant's: an id that is nobody's there is
@@ -267,13 +273,19 @@ func (s *Server) assign(w http.ResponseWriter, r *http.Request, c call, give boo
 		return
 	}
 	tenant, a := r.PathValue("t"), body.assignment()
+	// Who acts, as the operator records it: the person, or the component
+	// admitted by its own key.
+	actor := c.subject
+	if c.component != "" {
+		actor = c.component
+	}
 	var changed bool
 	verb := "take"
 	if give {
 		verb = "give"
-		changed, err = rights.Give(r.Context(), c.subject, tenant, person.ID, a)
+		changed, err = rights.Give(r.Context(), actor, tenant, person.ID, a)
 	} else {
-		changed, err = rights.Take(r.Context(), c.subject, tenant, person.ID, a)
+		changed, err = rights.Take(r.Context(), actor, tenant, person.ID, a)
 	}
 	if err != nil {
 		s.rightsError(w, r, err)

@@ -2259,6 +2259,10 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(countryChanged())).
 		// Which desktops may frame a tenant's apps turns on the sign-ins the
 		// tenant takes part in, declared on both tenants (signin_framers.go).
+		// The tenants that name a component as one that gives their positions
+		// put the registrar's address into its key Secret (position_givers.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsNamedAsPositionGivers(mgr.GetClient()),
+			builder.WithPredicates(positionGiversChanged())).
 		Watches(&gentianov1alpha1.Tenant{}, componentsFramedBySignIn(mgr.GetClient()),
 			builder.WithPredicates(signInFramersChanged(r.KernelDomain, r.TenancyMode, r.KernelRealm))).
 		// The domains a tenant trusts for itself answer its apps' egress
