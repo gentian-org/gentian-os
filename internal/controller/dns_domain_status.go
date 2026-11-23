@@ -151,6 +151,11 @@ func (v *DNSPublicationVerifier) webRecords(ctx context.Context, domains []serve
 	var targets []string
 	seenAddr := map[string]bool{}
 	for i := range gateways.Items {
+		// The edge's addresses only. The inside Gateway's and the outgoing
+		// fleet's are the cluster's own, and no public record names them.
+		if !isEdgeGateway(&gateways.Items[i]) {
+			continue
+		}
 		for _, a := range gateways.Items[i].Status.Addresses {
 			ip := net.ParseIP(a.Value)
 			if ip == nil || ip.To4() == nil || seenAddr[a.Value] {
@@ -170,6 +175,10 @@ func (v *DNSPublicationVerifier) webRecords(ctx context.Context, domains []serve
 	}
 	routed := map[string]bool{}
 	for i := range routes.Items {
+		// A host of an inside entry has no public record to check.
+		if routeOnInside(&routes.Items[i]) {
+			continue
+		}
 		for _, h := range routes.Items[i].Spec.Hostnames {
 			routed[strings.ToLower(string(h))] = true
 		}

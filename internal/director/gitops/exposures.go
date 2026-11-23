@@ -62,9 +62,11 @@ type Exposure struct {
 	// Kind is what was approved, as the profile's entry declared it when the
 	// approver said yes: "public" (a public address, no credential passed
 	// on), "publicAppCredential" (a public address that passes the caller's
-	// Authorization header to the app) or "signInAppAuthorization" (no
-	// public address: an entry behind sign-in whose Authorization header is
-	// the app's own). Empty is "public". The operator acts on an approval
+	// Authorization header to the app), "insideAppCredential" (no public
+	// address: an address only the cluster's pods reach, that passes the
+	// caller's Authorization header to the app) or "signInAppAuthorization"
+	// (no public address: an entry behind sign-in whose Authorization header
+	// is the app's own). Empty is "public". The operator acts on an approval
 	// only while the entry still declares the kind recorded here.
 	Kind string `json:"kind,omitempty"`
 	// Owner is the subject that enabled it, from the caller's token.
@@ -110,6 +112,7 @@ type Exposure struct {
 const (
 	KindPublic                 = "public"
 	KindPublicAppCredential    = "publicAppCredential"
+	KindInsideAppCredential    = "insideAppCredential"
 	KindSignInAppAuthorization = "signInAppAuthorization"
 	KindTokenEntry             = "tokenEntry"
 )
@@ -117,7 +120,7 @@ const (
 // validKind reports a kind the registry records; empty is a public address.
 func validKind(k string) bool {
 	switch k {
-	case "", KindPublic, KindPublicAppCredential, KindSignInAppAuthorization, KindTokenEntry:
+	case "", KindPublic, KindPublicAppCredential, KindInsideAppCredential, KindSignInAppAuthorization, KindTokenEntry:
 		return true
 	}
 	return false
@@ -269,7 +272,7 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 			// what takes it away. Only a surface that stays a public address
 			// off a bare name keeps one.
 			e.Owner, e.PublishedAt = h.Owner, h.PublishedAt
-			if e.Kind != KindSignInAppAuthorization && e.Kind != KindTokenEntry && !e.Apex {
+			if e.Kind != KindSignInAppAuthorization && e.Kind != KindTokenEntry && e.Kind != KindInsideAppCredential && !e.Apex {
 				e.Alias, e.AliasSetBy, e.AliasSetAt = h.Alias, h.AliasSetBy, h.AliasSetAt
 			}
 			next = append(next, e)
@@ -292,6 +295,11 @@ func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure,
 	switch e.Kind {
 	case KindPublicAppCredential:
 		what += " (public address that passes the caller's credential to the app)"
+	case KindInsideAppCredential:
+		if verb == "Publish" {
+			verb = "Approve"
+		}
+		what += " (inside the cluster only, passing the caller's credential to the app; not a public address)"
 	case KindSignInAppAuthorization:
 		if verb == "Publish" {
 			verb = "Approve"
@@ -361,7 +369,9 @@ func renderExposures(tenant string, exposures []Exposure) string {
 	b.WriteString("# kind says what was approved. None, or public: a public address that\n")
 	b.WriteString("# passes no credential on. publicAppCredential: a public address that\n")
 	b.WriteString("# passes the caller's Authorization header to the app, which alone\n")
-	b.WriteString("# checks it. signInAppAuthorization: NOT a public address -- an entry\n")
+	b.WriteString("# checks it. insideAppCredential: NOT a public address -- the same for\n")
+	b.WriteString("# callers inside the cluster alone, at a name only the cluster's DNS\n")
+	b.WriteString("# knows. signInAppAuthorization: NOT a public address -- an entry\n")
 	b.WriteString("# behind sign-in on which the Authorization header is left as the\n")
 	b.WriteString("# app's own page sent it. tokenEntry: NOT a public address -- an entry\n")
 	b.WriteString("# on a host of its own that takes a token the tenant's realm made out\n")

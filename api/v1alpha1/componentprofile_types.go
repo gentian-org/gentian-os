@@ -728,7 +728,7 @@ type ComponentSecrets struct {
 }
 
 // SurfaceKind is where an exposure entry is published.
-// +kubebuilder:validation:Enum=gateway;perimeter
+// +kubebuilder:validation:Enum=gateway;perimeter;inside
 type SurfaceKind string
 
 const (
@@ -738,6 +738,12 @@ const (
 	// SurfacePerimeter is a publishing proxy in tenant-<t>-dmz with its own
 	// credential. Off until a perimeter approver enables it on the Component.
 	SurfacePerimeter SurfaceKind = "perimeter"
+	// SurfaceInside is a perimeter entry the internet cannot reach: the same
+	// publishing proxy in tenant-<t>-dmz, enabled the same way, behind a
+	// Gateway with a cluster-internal address only and a name that only the
+	// cluster's own DNS answers. A caller is a pod of this cluster that was
+	// granted the host as egress. Only authMode app.
+	SurfaceInside SurfaceKind = "inside"
 )
 
 // AuthMode is how a caller of an exposure entry is authenticated.
@@ -748,7 +754,7 @@ const (
 // entry alone, and the edge verifies it in place of a session. none and app
 // are for a perimeter entry: none publishes the declared paths to anyone and
 // passes no credential on; app passes the caller's own Authorization header
-// to the app, which alone checks it.
+// to the app, which alone checks it. An inside entry is authMode app.
 //
 // jwt, basic and signature remain values of the field, and no entry may
 // declare them: they named a check at the edge that nothing makes. Nor may a
@@ -758,10 +764,11 @@ type AuthMode string
 
 const (
 	AuthModeOIDC AuthMode = "oidc"
-	// AuthModeApp is a perimeter entry whose callers present a credential
-	// the app itself issued -- an app password, an API key, a token of the
-	// app's own -- in the Authorization header. The publishing proxy passes
-	// that one header on and checks nothing; the app checks every caller.
+	// AuthModeApp is a perimeter or inside entry whose callers present a
+	// credential the app itself issued -- an app password, an API key, a
+	// token of the app's own -- in the Authorization header. The publishing
+	// proxy passes that one header on and checks nothing; the app checks
+	// every caller.
 	// It takes effect once the tenant's perimeter approver has approved the
 	// entry as that.
 	AuthModeApp AuthMode = "app"
@@ -796,7 +803,7 @@ const (
 // ExposureKind is what approving one entry of a profile allows. The registry
 // records it with the approval, and an approval is in force only for an entry
 // that still declares the kind it was approved as.
-// +kubebuilder:validation:Enum=public;publicAppCredential;signInAppAuthorization;tokenEntry
+// +kubebuilder:validation:Enum=public;publicAppCredential;insideAppCredential;signInAppAuthorization;tokenEntry
 type ExposureKind string
 
 const (
@@ -807,6 +814,11 @@ const (
 	// ExposureKindPublicAppCredential is a public address that passes the
 	// caller's Authorization header to the app (authMode app).
 	ExposureKindPublicAppCredential ExposureKind = "publicAppCredential"
+	// ExposureKindInsideAppCredential is no public address. It is an address
+	// only this cluster's pods reach, and only those granted its host as
+	// egress, that passes the caller's Authorization header to the app (an
+	// inside entry, authMode app).
+	ExposureKindInsideAppCredential ExposureKind = "insideAppCredential"
 	// ExposureKindSignInAppAuthorization is no public address. It is an
 	// entry behind sign-in on which the Authorization header is the app's
 	// own (clientAuthorization app).
@@ -843,6 +855,10 @@ func (e *ExposureSpec) RequestKind() ExposureKind {
 		case AuthModeApp:
 			return ExposureKindPublicAppCredential
 		}
+	case SurfaceInside:
+		if e.AuthMode == AuthModeApp {
+			return ExposureKindInsideAppCredential
+		}
 	case SurfaceGateway:
 		if e.AuthMode == AuthModeOIDC && e.ClientAuthorization == ClientAuthorizationApp {
 			return ExposureKindSignInAppAuthorization
@@ -864,11 +880,13 @@ func (e *ExposureSpec) ApprovedAs(approved ExposureKind) bool {
 
 // ExposureSpec declares one entry point.
 //
-// +kubebuilder:validation:XValidation:rule="!(self.surface == 'perimeter' && has(self.forwardToken) && self.forwardToken)",message="forwardToken is meaningless on a perimeter entry: it has no session"
+// +kubebuilder:validation:XValidation:rule="!(self.surface in ['perimeter', 'inside'] && has(self.forwardToken) && self.forwardToken)",message="forwardToken is meaningless on a perimeter or inside entry: it has no session"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode != 'oidc'",message="a perimeter entry cannot use authMode oidc: the session lives on the gateway"
 // +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || (self.surface == 'perimeter' && !has(self.subDomain))",message="apex is for a perimeter entry and names the whole host: it takes no subDomain"
 // +kubebuilder:validation:XValidation:rule="self.surface != 'perimeter' || self.authMode in ['none', 'app', 'oidc']",message="authMode jwt, bearer, basic and signature are not available on a perimeter entry yet: the platform verifies no token, password or signature there. Declare authMode app if the app itself checks the credential its callers send in the Authorization header, or authMode none if the paths are for anyone"
-// +kubebuilder:validation:XValidation:rule="self.authMode != 'app' || self.surface == 'perimeter'",message="authMode app is for a perimeter entry: it passes the caller's Authorization header to the app with no sign-in in front. Behind sign-in, declare authMode oidc with clientAuthorization app"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'inside' || (has(self.subDomain) && self.subDomain.size() > 0)",message="an inside entry names a subDomain: it answers on a host of its own, which the cluster's DNS gives the inside Gateway's address"
+// +kubebuilder:validation:XValidation:rule="self.surface != 'inside' || self.authMode == 'app'",message="an inside entry is authMode app: the app checks the credential its callers send in the Authorization header, and the platform checks nothing there"
+// +kubebuilder:validation:XValidation:rule="self.authMode != 'app' || self.surface in ['perimeter', 'inside']",message="authMode app is for a perimeter or inside entry: it passes the caller's Authorization header to the app with no sign-in in front. Behind sign-in, declare authMode oidc with clientAuthorization app"
 // +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || (self.surface == 'gateway' && self.authMode == 'oidc')",message="clientAuthorization is for a gateway entry behind the session (authMode oidc): it says whose the Authorization header is once a person has signed in"
 // +kubebuilder:validation:XValidation:rule="!has(self.clientAuthorization) || ((!has(self.forwardToken) || !self.forwardToken) && (!has(self.exchangeToken) || !self.exchangeToken))",message="clientAuthorization excludes forwardToken and exchangeToken: the Authorization header toward the app is either the app's own or a token the platform puts there"
 // +kubebuilder:validation:XValidation:rule="!has(self.apex) || !self.apex || self.authMode == 'none'",message="an apex entry is a website for anyone (authMode none): the cluster's main address passes no credential to an app"

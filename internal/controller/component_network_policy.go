@@ -241,9 +241,9 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if ways.rule != nil {
 		rules = append(rules, *ways.rule)
 	}
-	// The granted hosts the cluster serves itself: its edge's pods
-	// (own_served_hosts.go).
-	ownRules, err := r.ownHostsRules(ctx, inside)
+	// The granted hosts the cluster serves itself: the pods of its edge or
+	// of its inside Gateway (own_served_hosts.go).
+	ownRules, err := r.ownHostsRules(ctx, inside, served)
 	if err != nil {
 		return fmt.Errorf("read the edge for the hosts the cluster serves itself: %w", err)
 	}

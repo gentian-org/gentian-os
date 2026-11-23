@@ -434,3 +434,51 @@ func TestEachWayOfABridgeIsListedAndApprovedOnItsOwn(t *testing.T) {
 		t.Fatal("a bridge entry approved for an app that is none")
 	}
 }
+
+// An inside entry is approved by the same approver through the same request,
+// and is no public address: the read says it answers inside the cluster
+// only, the approval records its kind, and it takes no bare name.
+func TestAnInsideEntryIsApprovedAndIsNoPublicAddress(t *testing.T) {
+	inside := kindsProfile("nextcloud", "app", "") +
+		"    - name: api\n      surface: inside\n      authMode: app\n      subDomain: nextcloud-api\n      paths: [\"/api/\"]\n" +
+		"      backend:\n        service: nextcloud\n        port: 8080\n"
+	h := startKinds(t, "app", "", map[string]string{dt.CataloguePath("nextcloud.yaml"): inside})
+	tom := h.token(t, "tenant-demo", "tom")
+	code, body := h.do(t, "GET", exposuresPath("demo"), tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d %v", code, body)
+	}
+	e := entryOf(t, body, "nextcloud", "api")
+	if e["kind"] != "insideAppCredential" || e["publicAddress"] != false || e["insideOnly"] != true ||
+		e["passesCredential"] != true || e["anyoneWithoutSignIn"] != false || e["mainAddress"] != false {
+		t.Fatalf("an inside entry = %v", e)
+	}
+	if e["host"] != "nextcloud-api.demo."+dt.KernelDomain {
+		t.Fatalf("host = %v", e["host"])
+	}
+	if paths, _ := e["paths"].([]any); len(paths) != 1 || paths[0] != "/api/" {
+		t.Fatalf("paths = %v, want what the entry declares and nothing else", e["paths"])
+	}
+	for _, says := range []string{"This is not a public address", "Only programs running in this cluster", "the app alone checks it"} {
+		if !strings.Contains(e["access"].(string), says) {
+			t.Errorf("the approver is not told %q: %v", says, e["access"])
+		}
+	}
+	if pass := entryOf(t, body, "nextcloud", "dav"); pass["insideOnly"] != false {
+		t.Fatalf("a public entry reads as inside: %v", pass)
+	}
+
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/api", tom, `{"apex":true,"acknowledgeMainAddressRule":true}`); code == http.StatusAccepted {
+		t.Fatalf("an inside entry was approved for a bare name: %v", body)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/api", tom, `{"kind":"insideAppCredential"}`); code != http.StatusAccepted {
+		t.Fatalf("approve = %d %v", code, body)
+	}
+	if !strings.Contains(registryOf(t, h, "demo"), "exposureName: api\n      kind: insideAppCredential\n") {
+		t.Fatalf("the registry lacks the kind:\n%s", registryOf(t, h, "demo"))
+	}
+	message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%s", "main")
+	if !strings.HasPrefix(message, "Approve ") || !strings.Contains(message, "not a public address") {
+		t.Errorf("the commit reads as a publication: %q", message)
+	}
+}

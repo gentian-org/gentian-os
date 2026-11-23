@@ -637,19 +637,20 @@ type TenantExposure struct {
 	Install string `json:"install"`
 
 	// ExposureName names an entry of that component's profile that asks for
-	// approval: one whose surface is perimeter, or one behind sign-in that
-	// declares the Authorization header the app's own. Only a perimeter
-	// entry is ever published: the operator checks the entry's surface,
-	// because enabling a gateway entry by name would otherwise put the
-	// component's authenticated surface on the internet.
+	// approval: one whose surface is perimeter or inside, or one behind
+	// sign-in that declares the Authorization header the app's own. Only a
+	// perimeter or inside entry is ever published: the operator checks the
+	// entry's surface, because enabling a gateway entry by name would
+	// otherwise put the component's authenticated surface on the internet.
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MaxLength=40
 	ExposureName string `json:"exposureName"`
 
 	// Kind is what was approved, set by the director from what the profile's
 	// entry declared when the approver said yes: a public address, a public
-	// address that passes the caller's Authorization header to the app, or
-	// an entry behind sign-in whose Authorization header is the app's own.
+	// address that passes the caller's Authorization header to the app, an
+	// address only the cluster's pods reach that does the same, or an entry
+	// behind sign-in whose Authorization header is the app's own.
 	// Empty is a public address, which is all an approval was before kinds
 	// were recorded. The operator acts on an approval only while the entry
 	// still declares this kind, so a profile that later asks for more is

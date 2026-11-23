@@ -251,6 +251,7 @@ spec:
                       enum:
                       - public
                       - publicAppCredential
+                      - insideAppCredential
                       - signInAppAuthorization
                       - tokenEntry
                       type: string

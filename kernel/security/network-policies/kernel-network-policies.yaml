@@ -543,6 +543,32 @@ metadata:
     gentianos.io/function: edge
     gentianos.io/kernel-network-policy: "true"
     gentianos.io/tier: kernel
+  name: kernel-ingress-envoy-inside
+  namespace: kernel-edge
+spec:
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          gentianos.io/tier: tenant
+    ports:
+    - port: 10443
+      protocol: TCP
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: envoy
+      gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-inside
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+    gentianos.io/function: edge
+    gentianos.io/kernel-network-policy: "true"
+    gentianos.io/tier: kernel
   name: kernel-ingress-envoy-gateway
   namespace: kernel-edge
 spec:
@@ -555,6 +581,13 @@ spec:
         matchLabels:
           app.kubernetes.io/name: envoy
           gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kernel-edge
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: envoy
+          gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-inside
     - namespaceSelector:
         matchLabels:
           kubernetes.io/metadata.name: kernel-edge

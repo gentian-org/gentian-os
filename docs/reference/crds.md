@@ -1928,7 +1928,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.exposures[].apexAcknowledgedAt` | string (date-time) |  |  |
 | `spec.exposures[].apexAcknowledgedBy` | string |  | `ApexAcknowledgedBy` is the subject that acknowledged the rule for a website on a bare name, and ApexAcknowledgedAt when: only a site whose scripts the… |
 | `spec.exposures[].expiresAt` | string (date-time) |  | `ExpiresAt` is when it stops answering, for a surface published for a while. |
-| `spec.exposures[].exposureName` | string | yes | `ExposureName` names an entry of that component's profile that asks for approval: one whose surface is perimeter, or one behind sign-in that declares the… |
+| `spec.exposures[].exposureName` | string | yes | `ExposureName` names an entry of that component's profile that asks for approval: one whose surface is perimeter or inside, or one behind sign-in that declares… |
 | `spec.exposures[].install` | string | yes | `Install` names the Component this publishes from. |
 | `spec.exposures[].kind` | string |  | `Kind` is what was approved, set by the director from what the profile's entry declared when the approver said yes: a public address, a public address that… |
 | `spec.exposures[].lastReviewedAt` | string (date-time) |  |  |

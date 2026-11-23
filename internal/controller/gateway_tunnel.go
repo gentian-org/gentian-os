@@ -36,6 +36,21 @@ func kernelEdgeServiceLabels() client.MatchingLabels {
 	}
 }
 
+// insideServiceLabels select the Envoy data-plane Service of the inside
+// Gateway. Its class merges its Gateways as the edge's does, so Envoy Gateway
+// labels the Service with that class.
+func insideServiceLabels() client.MatchingLabels {
+	return client.MatchingLabels{
+		"gateway.envoyproxy.io/owning-gatewayclass": InsideGatewayClassName,
+	}
+}
+
+// isInsideService reports whether an object is that Service.
+func isInsideService(obj client.Object) bool {
+	svc, ok := obj.(*corev1.Service)
+	return ok && svc.GetLabels()["gateway.envoyproxy.io/owning-gatewayclass"] == InsideGatewayClassName
+}
+
 // isKernelEdgeService reports whether an object is that Service.
 func isKernelEdgeService(obj client.Object) bool {
 	svc, ok := obj.(*corev1.Service)

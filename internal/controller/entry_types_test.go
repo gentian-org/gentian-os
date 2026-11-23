@@ -664,7 +664,7 @@ func TestWhatAnEntryAsksForAndWhatAnApprovalCovers(t *testing.T) {
 	entry := func(surface gentianov1alpha1.SurfaceKind, mode gentianov1alpha1.AuthMode, own gentianov1alpha1.ClientAuthorization) *gentianov1alpha1.ExposureSpec {
 		return &gentianov1alpha1.ExposureSpec{Surface: surface, AuthMode: mode, ClientAuthorization: own}
 	}
-	gw, pm := gentianov1alpha1.SurfaceGateway, gentianov1alpha1.SurfacePerimeter
+	gw, pm, in := gentianov1alpha1.SurfaceGateway, gentianov1alpha1.SurfacePerimeter, gentianov1alpha1.SurfaceInside
 	for _, tc := range []struct {
 		e    *gentianov1alpha1.ExposureSpec
 		want gentianov1alpha1.ExposureKind
@@ -682,12 +682,16 @@ func TestWhatAnEntryAsksForAndWhatAnApprovalCovers(t *testing.T) {
 		{entry(gw, gentianov1alpha1.AuthModeApp, ""), ""},
 		{entry(gw, gentianov1alpha1.AuthModeBearer, ""), gentianov1alpha1.ExposureKindTokenEntry},
 		{entry(gw, gentianov1alpha1.AuthModeJWT, ""), ""},
+		{entry(in, gentianov1alpha1.AuthModeApp, ""), gentianov1alpha1.ExposureKindInsideAppCredential},
+		{entry(in, gentianov1alpha1.AuthModeNone, ""), ""},
+		{entry(in, gentianov1alpha1.AuthModeOIDC, ""), ""},
 	} {
 		if got := tc.e.RequestKind(); got != tc.want {
 			t.Errorf("%+v asks for %q, want %q", tc.e, got, tc.want)
 		}
 		for _, approved := range []gentianov1alpha1.ExposureKind{"", gentianov1alpha1.ExposureKindPublic,
-			gentianov1alpha1.ExposureKindPublicAppCredential, gentianov1alpha1.ExposureKindSignInAppAuthorization} {
+			gentianov1alpha1.ExposureKindPublicAppCredential, gentianov1alpha1.ExposureKindInsideAppCredential,
+			gentianov1alpha1.ExposureKindSignInAppAuthorization} {
 			want := tc.want != "" && approved.Normalized() == tc.want
 			if got := tc.e.ApprovedAs(approved); got != want {
 				t.Errorf("%+v approved as %q: covered = %v, want %v", tc.e, approved, got, want)

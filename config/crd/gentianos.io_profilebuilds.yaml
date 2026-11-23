@@ -1398,6 +1398,7 @@ spec:
                           enum:
                           - gateway
                           - perimeter
+                          - inside
                           type: string
                         tile:
                           description: |-
@@ -1528,9 +1529,9 @@ spec:
                       - surface
                       type: object
                       x-kubernetes-validations:
-                      - message: 'forwardToken is meaningless on a perimeter entry:
-                          it has no session'
-                        rule: '!(self.surface == ''perimeter'' && has(self.forwardToken)
+                      - message: 'forwardToken is meaningless on a perimeter or inside
+                          entry: it has no session'
+                        rule: '!(self.surface in [''perimeter'', ''inside''] && has(self.forwardToken)
                           && self.forwardToken)'
                       - message: 'a perimeter entry cannot use authMode oidc: the
                           session lives on the gateway'
@@ -1547,11 +1548,21 @@ spec:
                           paths are for anyone'
                         rule: self.surface != 'perimeter' || self.authMode in ['none',
                           'app', 'oidc']
-                      - message: 'authMode app is for a perimeter entry: it passes
-                          the caller''s Authorization header to the app with no sign-in
-                          in front. Behind sign-in, declare authMode oidc with clientAuthorization
-                          app'
-                        rule: self.authMode != 'app' || self.surface == 'perimeter'
+                      - message: 'an inside entry names a subDomain: it answers on
+                          a host of its own, which the cluster''s DNS gives the inside
+                          Gateway''s address'
+                        rule: self.surface != 'inside' || (has(self.subDomain) &&
+                          self.subDomain.size() > 0)
+                      - message: 'an inside entry is authMode app: the app checks
+                          the credential its callers send in the Authorization header,
+                          and the platform checks nothing there'
+                        rule: self.surface != 'inside' || self.authMode == 'app'
+                      - message: 'authMode app is for a perimeter or inside entry:
+                          it passes the caller''s Authorization header to the app
+                          with no sign-in in front. Behind sign-in, declare authMode
+                          oidc with clientAuthorization app'
+                        rule: self.authMode != 'app' || self.surface in ['perimeter',
+                          'inside']
                       - message: 'clientAuthorization is for a gateway entry behind
                           the session (authMode oidc): it says whose the Authorization
                           header is once a person has signed in'

@@ -62,6 +62,12 @@ peers:
     podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out}
     evidence:
       - kernel/manifests/gateway/chart/templates/outgoing.yaml:25
+  envoy-inside:
+    what: the Envoy proxy pods of the fleet for inside entries, which only the cluster's pods reach
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-inside}
+    evidence:
+      - kernel/manifests/gateway/chart/templates/inside.yaml:25
   bouncer:
     what: the bouncer, the Gateway's external authorization service
     namespace: kernel-edge
@@ -750,6 +756,32 @@ namespaces:
           - port: 19002
             what: shutdown manager
             closed: the kubelet only
+      - name: envoy-inside
+        installedBy: step:A-05-envoy-gateway
+        readAt: envoy-gateway chart v1.9.3
+        podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-inside}
+        ports:
+          - port: 10443
+            what: the https listener of every inside entry
+            from:
+              - peer: tenants
+                why: >-
+                  a component calls an inside entry's host, which the cluster's
+                  DNS answers with this fleet's Service. The caller is held by
+                  its own namespace's egress rules, which open these pods only
+                  for a host its component was granted
+                evidence:
+                  - internal/controller/own_served_hosts.go:117
+                  - internal/controller/coredns_hairpin.go:72
+          - port: 19001
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 19003
+            what: readiness
+            closed: the kubelet's probes only
+          - port: 19002
+            what: shutdown manager
+            closed: the kubelet only
       - name: envoy-gateway
         installedBy: step:A-05-envoy-gateway
         readAt: envoy-gateway chart v1.9.3
@@ -764,6 +796,9 @@ namespaces:
               - peer: envoy-outgoing
                 why: the proxies of the outgoing fleet fetch theirs here too
                 evidence: [kernel/manifests/gateway/chart/templates/outgoing.yaml:25]
+              - peer: envoy-inside
+                why: the proxies of the fleet for inside entries fetch theirs here too
+                evidence: [kernel/manifests/gateway/chart/templates/inside.yaml:25]
           - port: 18001
             what: configuration for a rate limit service
             closed: no rate limit service is installed
