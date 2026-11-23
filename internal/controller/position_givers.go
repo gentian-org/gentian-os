@@ -15,6 +15,13 @@ import (
 	"slices"
 	"sort"
 
+	"k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -108,4 +115,82 @@ func (r *GatewayPlatformReconciler) ensureRegistrarPositionGivers(ctx context.Co
 		return err
 	}
 	return ensureKeyList(ctx, r.Client, registrarPositionGiversConfigMap, registrarPositionGiversKey, givers)
+}
+
+// registrarURLKey is the registrar's address in a component's key Secret,
+// written for a component a tenant names in spec.positionGivers: where it
+// gives and takes the positions it was granted.
+const registrarURLKey = "REGISTRAR_URL"
+
+// namedAsPositionGiver reports whether any tenant names the component of
+// profile in tenant as one that gives its positions.
+func namedAsPositionGiver(ctx context.Context, c client.Reader, tenant, profile string) (bool, error) {
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := c.List(ctx, tenants); err != nil {
+		return false, err
+	}
+	for i := range tenants.Items {
+		t := &tenants.Items[i]
+		if t.DeletionTimestamp != nil {
+			continue
+		}
+		for _, g := range t.Spec.PositionGivers {
+			if g.Tenant == tenant && g.Component == profile && len(g.Positions) > 0 {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// positionGiversChanged lets a tenant's event through when the components it
+// names as position givers may have changed.
+func positionGiversChanged() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(e event.CreateEvent) bool {
+			t, ok := e.Object.(*gentianov1alpha1.Tenant)
+			return ok && len(t.Spec.PositionGivers) > 0
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			t, ok := e.Object.(*gentianov1alpha1.Tenant)
+			return ok && len(t.Spec.PositionGivers) > 0
+		},
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			before, ok1 := e.ObjectOld.(*gentianov1alpha1.Tenant)
+			after, ok2 := e.ObjectNew.(*gentianov1alpha1.Tenant)
+			return ok1 && ok2 && !equality.Semantic.DeepEqual(before.Spec.PositionGivers, after.Spec.PositionGivers)
+		},
+	}
+}
+
+// componentsNamedAsPositionGivers wakes the Components a tenant names as
+// position givers, in the tenants they run in, so that their key Secret
+// gains or loses the registrar's address. An update is mapped for the old
+// and the new tenant both, so a component no longer named is woken too.
+func componentsNamedAsPositionGivers(c client.Reader) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		changed, ok := obj.(*gentianov1alpha1.Tenant)
+		if !ok {
+			return nil
+		}
+		var out []reconcile.Request
+		for _, g := range changed.Spec.PositionGivers {
+			holder := &gentianov1alpha1.Tenant{}
+			if err := c.Get(ctx, types.NamespacedName{Name: g.Tenant}, holder); err != nil {
+				continue
+			}
+			components := &gentianov1alpha1.ComponentList{}
+			if err := c.List(ctx, components, client.InNamespace(holder.NamespaceName())); err != nil {
+				continue
+			}
+			for i := range components.Items {
+				comp := &components.Items[i]
+				if comp.Spec.ProfileRef.Name == g.Component || comp.Name == g.Component {
+					out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Name: comp.Name, Namespace: comp.Namespace}})
+				}
+			}
+		}
+		return out
+	})
 }

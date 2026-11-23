@@ -116,3 +116,50 @@ func TestRegistrarListsAPositionGiverForWhatTheTenantsName(t *testing.T) {
 		t.Fatalf("after the tenants stopped naming it: %s", after)
 	}
 }
+
+// A component a tenant names as one that gives its positions is told where
+// the registrar is, in its key Secret; one no tenant names is not, and is
+// no longer told once the tenant stops naming it.
+func TestAPositionGiverIsToldWhereTheRegistrarIs(t *testing.T) {
+	ctx := context.Background()
+	scheme := rightsScheme(t)
+	shop := rightsComponent("team", "shop")
+	plain := rightsComponent("team", "plain")
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{
+		"shop": partnerCommissionProfile("shop"), "plain": partnerCommissionProfile("plain"),
+	}
+	customers := commissionTenant("customers")
+	customers.Spec.PositionGivers = []gentianov1alpha1.TenantPositionGiver{{Tenant: "team", Component: "shop", Positions: []string{"partner"}}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		rightsTenant("team"), shop, plain, profiles["shop"], profiles["plain"], customers,
+	).Build()
+	components := &ComponentReconciler{Client: c, Scheme: scheme, RegistrarURL: "http://registrar.test:9445"}
+	ensure := func() {
+		t.Helper()
+		for _, comp := range []*gentianov1alpha1.Component{shop, plain} {
+			if err := components.ensureRightsCheck(ctx, comp, defaultTenantName(comp), profiles[comp.Name]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	ensure()
+	if got := string(rightsSecret(t, c, shop).Data[registrarURLKey]); got != "http://registrar.test:9445" {
+		t.Fatalf("the shop's Secret carries the registrar at %q", got)
+	}
+	if _, has := rightsSecret(t, c, plain).Data[registrarURLKey]; has {
+		t.Fatal("a component no tenant names is told where the registrar is")
+	}
+
+	named := &gentianov1alpha1.Tenant{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(customers), named); err != nil {
+		t.Fatal(err)
+	}
+	named.Spec.PositionGivers = nil
+	if err := c.Update(ctx, named); err != nil {
+		t.Fatal(err)
+	}
+	ensure()
+	if _, has := rightsSecret(t, c, shop).Data[registrarURLKey]; has {
+		t.Fatal("a component no longer named is still told where the registrar is")
+	}
+}

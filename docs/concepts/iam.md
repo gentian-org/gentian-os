@@ -355,7 +355,8 @@ without an administrator: an account made on the registration page
 (`spec.signUp.positions`, §1.1b), an arrival from another tenant
 (`spec.signInFrom`, §1.1c), and a component the tenant names in
 `spec.positionGivers`, which gives and takes exactly the positions named
-for it there, through the registrar with its own key
+for it there, through the registrar with its own key, whose Secret then
+carries the registrar's address (`REGISTRAR_URL`)
 ([custom-catalogs.md](../guides/custom-catalogs.md)); the tenant whose
 positions are given is the one that consents. None of the three gives or
 takes a position that holds `admin` on the tenant or on an app, itself or
