@@ -502,7 +502,15 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, err
 	}
 	var hostRefusal string
-	comp.Status.OutgoingHosts, hostRefusal = grantedOutgoingHosts(profile, comp, preApproved, bridgeSignIns)
+	var granted []string
+	granted, hostRefusal = grantedOutgoingHosts(profile, comp, preApproved, bridgeSignIns)
+	// A host the cluster serves itself is not the gateway's to carry
+	// (own_served_hosts.go).
+	own, err := ownServedHosts(ctx, r.Client, granted)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	comp.Status.OutgoingHosts, _ = splitOwnHosts(granted, own)
 	if len(comp.Status.PendingPrivileges) > 0 {
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
 			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
@@ -2260,7 +2268,11 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// The edge's public address, which a component granted the internet
 		// reaches from inside through the edge's pods (own_public_address.go).
 		Watches(&corev1.Service{}, componentsAskingForEgress(mgr.GetClient()),
-			builder.WithPredicates(edgeAddressChanged()))
+			builder.WithPredicates(edgeAddressChanged())).
+		// The hosts the cluster serves itself, which leave the gateway for
+		// outgoing connections (own_served_hosts.go).
+		Watches(&corev1.ConfigMap{}, componentsAskingForEgressOnHairpin(mgr.GetClient()),
+			builder.WithPredicates(hairpinChanged()))
 	// The catalogs whose egress the cluster answers are the policy's: a change
 	// there is a change to what each asking component may do.
 	b = b.Watches(&gentianov1alpha1.PlatformSecurityPolicy{}, componentsAskingForEgressPrivileges(mgr.GetClient()))
