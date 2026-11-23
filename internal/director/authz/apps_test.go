@@ -92,6 +92,13 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 		t.Fatal(err)
 	}
 	const tenant = "apps-a"
+	// What the operator does after each projection: write what follows.
+	derive := func() {
+		t.Helper()
+		if err := ReconcileDerived(ctx, c, []string{tenant, "apps-b"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := c.ReconcileTenants(ctx, "apps-cluster", TenantsNamed(tenant, "apps-b")); err != nil {
 		t.Fatal(err)
 	}
@@ -112,6 +119,7 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	if err := c.ReconcilePositions(ctx, positions); err != nil {
 		t.Fatal(err)
 	}
+	derive()
 	holds := func(user, position string) Tuple {
 		return Tuple{User: "user:" + user, Relation: "holder", Object: Position(tenant, position)}
 	}
@@ -126,12 +134,16 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	// A second pass writes nothing and changes nothing.
+	// A second pass writes nothing and changes nothing: positions leave what
+	// was derived from them alone.
 	if err := c.ReconcileApps(ctx, installed); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.ReconcilePositions(ctx, positions); err != nil {
 		t.Fatal(err)
+	}
+	if derived, err := c.Read(ctx, Tuple{User: Holders(Position(tenant, "executive")), Object: "app:"}); err != nil || len(derived) == 0 {
+		t.Fatalf("the positions' second pass took what was derived for executive: %v, %v", derived, err)
 	}
 	ask := func(user, relation, object string) bool {
 		ok, err := c.Check(ctx, "test", "user:"+user, relation, object)
@@ -175,6 +187,7 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	// them what it held.
 	positions[tenant] = ShippedPositions(installed[tenant])
 	if err := c.ReconcilePositions(ctx, positions); err == nil {
+		derive()
 		// executive includes a position that is gone: refused whole, and
 		// nothing of the tenant's is changed.
 		if may("seller", "crm-ce") {
@@ -194,6 +207,7 @@ func TestInstalledAppsAreLaunchedByWhoHoldsARoleOnThem(t *testing.T) {
 	if err := c.ReconcileApps(ctx, installed); err != nil {
 		t.Fatal(err)
 	}
+	derive()
 	if may("keeper", "crm-ce") || !may("keeper", "odoo-base-ce") {
 		t.Error("deactivating the add-on did not leave the base as it was")
 	}

@@ -358,7 +358,9 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 				}
 				for _, t := range held {
 					p := plain(t)
-					if !ofTenant(p.Object, kind, tenant) {
+					// What follows from what the position holds is the
+					// derivation's to keep (derived.go), not this one's.
+					if !ofTenant(p.Object, kind, tenant) || IsDerived(p.Relation) {
 						continue
 					}
 					if _, keep := want[key(p)]; keep {
