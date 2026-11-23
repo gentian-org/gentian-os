@@ -774,8 +774,8 @@ An `expose[]` entry declares one entry point. Its fields:
 | field | meaning |
 |---|---|
 | `name` | the entry's name; what an enablement and a backchannel-logout declaration refer to |
-| `surface` | `gateway` (behind the zone's session, always on) or `perimeter` (a publishing proxy in `tenant-<t>-dmz`, off until approved) |
-| `authMode` | required, no default: `oidc` on the gateway; `none` or `app` on the perimeter |
+| `surface` | `gateway` (behind the zone's session, always on), `perimeter` (a publishing proxy in `tenant-<t>-dmz`, off until approved) or `inside` (the same proxy, reachable only from the cluster's own pods, at a name only the cluster's DNS knows; it names a `subDomain`; [routing.md §7](routing.md)) |
+| `authMode` | required, no default: `oidc` on the gateway; `none` or `app` on the perimeter; `app` inside |
 | `subDomain` | host label in the tenant's zone; empty means the component's name |
 | `apex` | a perimeter entry on the cluster's bare domain; `authMode: none`, no `subDomain` ([routing.md §5](routing.md)) |
 | `paths`, `denyPaths` | what the entry serves; deny wins over allow regardless of specificity, at the bouncer on the gateway and at the proxy on the perimeter |
@@ -911,7 +911,7 @@ registry.
 # Component.spec
 exposures:
   - exposureName: public-share       # names an entry of the profile
-    kind: public                     # public | publicAppCredential | signInAppAuthorization | tokenEntry
+    kind: public                     # public | publicAppCredential | insideAppCredential | signInAppAuthorization | tokenEntry
     owner: <keycloak subject>        # immutable: a renewal by someone else is a new enablement
     reviewAt: 2026-11-24T00:00:00Z   # always set
     expiresAt: 2026-12-24T00:00:00Z  # optional
