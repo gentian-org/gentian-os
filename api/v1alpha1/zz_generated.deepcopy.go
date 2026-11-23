@@ -3996,11 +3996,6 @@ func (in *PlatformSecurityPolicySpec) DeepCopyInto(out *PlatformSecurityPolicySp
 		*out = make([]AllowedClusterRole, len(*in))
 		copy(*out, *in)
 	}
-	if in.PreApprovedEgressCatalogs != nil {
-		in, out := &in.PreApprovedEgressCatalogs, &out.PreApprovedEgressCatalogs
-		*out = make([]string, len(*in))
-		copy(*out, *in)
-	}
 	if in.TrustedDomains != nil {
 		in, out := &in.TrustedDomains, &out.TrustedDomains
 		*out = make([]string, len(*in))

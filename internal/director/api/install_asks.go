@@ -70,15 +70,14 @@ type approvedRequest struct {
 
 // egressAnswers is what already answers egress requests in a tenant.
 type egressAnswers struct {
-	catalogs []string
-	domains  []string
+	domains []string
 	grants   []gitops.PrivilegeGrant
 }
 
 // egressAnswersFor reads them: the cluster's policy, the tenant's own
 // trusted domains while it was delegated a list, and the tenant's grants.
 func (s *Server) egressAnswersFor(ctx context.Context, tenant string) (egressAnswers, error) {
-	catalogs, domains, err := s.cfg.Repo.EgressPolicy(ctx)
+	domains, err := s.cfg.Repo.EgressPolicy(ctx)
 	if err != nil {
 		return egressAnswers{}, err
 	}
@@ -93,7 +92,7 @@ func (s *Server) egressAnswersFor(ctx context.Context, tenant string) (egressAns
 	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
 		return egressAnswers{}, err
 	}
-	return egressAnswers{catalogs: catalogs, domains: domains, grants: grants}, nil
+	return egressAnswers{domains: domains, grants: grants}, nil
 }
 
 // asksOf are the egress requests one profile states, installed as install
@@ -111,14 +110,12 @@ func asksOf(install string, definition *gentianov1alpha1.ComponentProfile, origi
 		read.Annotations[profilebundle.OriginAnnotation] = origin
 	}
 	shipped := hostnames.PlatformShipped(read)
-	byCatalog := security.PreApprovedEgress(read, have.catalogs)
 	byDomain := security.TrustedEgress(read, have.domains)
 	now := time.Now()
 	var out []askedEgress
 	for i := range read.Privileges().Egress {
 		e := &read.Privileges().Egress[i]
 		ref := security.PrivilegeRef(security.PrivilegeEgress, e.Name)
-		_, catalog := byCatalog[ref]
 		_, domain := byDomain[ref]
 		granted := slices.ContainsFunc(have.grants, func(g gitops.PrivilegeGrant) bool {
 			if g.Install != install || g.Privilege != ref {
@@ -132,7 +129,7 @@ func asksOf(install string, definition *gentianov1alpha1.ComponentProfile, origi
 		})
 		out = append(out, askedEgress{
 			Install: install, Privilege: ref, Reason: e.Reason, Hosts: e.Hosts, HostsAtApproval: e.HostsAtApproval, CameWith: cameWith,
-			answered: (shipped && !e.HostsAtApproval) || catalog || domain || granted,
+			answered: (shipped && !e.HostsAtApproval) || domain || granted,
 		})
 	}
 	return out

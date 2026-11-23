@@ -171,7 +171,7 @@ type Repository interface {
 	PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, reason string, meta gitops.Meta) (gitops.Result, error)
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
-	EgressPolicy(ctx context.Context) (catalogs, trustedDomains []string, err error)
+	EgressPolicy(ctx context.Context) (trustedDomains []string, err error)
 	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	AllowMacWaiver(ctx context.Context, waiver gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 	PlatformClusterRoles(ctx context.Context) ([]gitops.ClusterRoleAllowance, error)

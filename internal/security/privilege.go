@@ -11,7 +11,6 @@ SPDX-License-Identifier: MPL-2.0
 package security
 
 import (
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -195,7 +194,8 @@ func PendingPrivileges(profile *gentianov1alpha1.ComponentProfile, comp *gentian
 }
 
 // PendingPrivilegesUnder is PendingPrivileges with the requests the cluster's
-// policy answers (PreApprovedEgress) counted as granted.
+// policy answers (trusted domains, a profile the platform ships) counted
+// as granted.
 func PendingPrivilegesUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []string {
 	requested := RequestedPrivileges(profile)
 	if len(requested) == 0 {
@@ -231,7 +231,8 @@ func GrantedEgressRules(profile *gentianov1alpha1.ComponentProfile, comp *gentia
 }
 
 // GrantedEgressRulesUnder is GrantedEgressRules with the requests the
-// cluster's policy answers (PreApprovedEgress) counted as granted.
+// cluster's policy answers (trusted domains, a profile the platform ships)
+// counted as granted.
 func GrantedEgressRulesUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []networkingv1.NetworkPolicyEgressRule {
 	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
 		return nil
@@ -366,30 +367,6 @@ func TenantTrustedDomains(tenant *gentianov1alpha1.Tenant) []string {
 // was fetched from (profilebundle.OriginAnnotation, which the director
 // writes and a catalog source never states).
 const OriginAnnotation = "gentianos.io/catalogue-origin"
-
-// PreApprovedEgress are the egress requests of profile that the cluster's
-// policy answers: all of them where the profile's catalog is one of
-// catalogues (PlatformSecurityPolicy spec.preApprovedEgressCatalogs), none
-// otherwise. A profile with no recorded origin is of no listed catalog.
-func PreApprovedEgress(profile *gentianov1alpha1.ComponentProfile, catalogues []string) map[string]struct{} {
-	if profile == nil || len(catalogues) == 0 || profile.Privileges() == nil {
-		return nil
-	}
-	origin := profile.Annotations[OriginAnnotation]
-	if origin == "" || !slices.Contains(catalogues, origin) {
-		return nil
-	}
-	out := map[string]struct{}{}
-	for i := range profile.Privileges().Egress {
-		// A request whose hosts are named at approval has nothing to open
-		// until somebody names them.
-		if profile.Privileges().Egress[i].HostsAtApproval {
-			continue
-		}
-		out[PrivilegeRef(PrivilegeEgress, profile.Privileges().Egress[i].Name)] = struct{}{}
-	}
-	return out
-}
 
 // PrivilegeReason is what the profile said it needs the privilege for, which
 // is what an approver reads before deciding. Empty when the ref is not one of

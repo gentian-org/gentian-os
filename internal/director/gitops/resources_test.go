@@ -331,9 +331,10 @@ func TestConcurrentSecurityPolicySavesBothLand(t *testing.T) {
 	}
 }
 
-// The catalogs whose egress the cluster answers are written by hand, never by
-// the director; its writes of the other two lists carry them across.
-func TestTheDirectorKeepsThePreApprovedEgressCatalogs(t *testing.T) {
+// The domains the cluster trusts are written by hand, never by the
+// director; its writes of the other two lists carry them across. A field the
+// policy no longer has is not written back.
+func TestTheDirectorKeepsTheTrustedDomains(t *testing.T) {
 	remote := dt.Remote(t, "demo")
 	path := "clusters/" + dt.Cluster + "/kernel/claims/" + gitops.PlatformSecurityFile
 	dt.Commit(t, remote, map[string]string{path: `apiVersion: gentianos.io/v1alpha1
@@ -363,11 +364,9 @@ spec:
 		t.Fatal(err)
 	}
 	written := dt.RemoteFile(t, remote, path)
-	if !strings.Contains(written, "preApprovedEgressCatalogs:\n  - \"cluster/acme\"") &&
-		!strings.Contains(written, "preApprovedEgressCatalogs:\n  - cluster/acme") {
-		t.Fatalf("the director's writes dropped the pre-approved catalogs:\n%s", written)
+	if strings.Contains(written, "preApprovedEgressCatalogs") {
+		t.Fatalf("the director wrote back a field the policy no longer has:\n%s", written)
 	}
-	// The trusted domains are the cluster operator's in the same way.
 	if !strings.Contains(written, "trustedDomains:\n  - \"github.com\"\n  - \"example.org\"") &&
 		!strings.Contains(written, "trustedDomains:\n  - github.com\n  - example.org") {
 		t.Fatalf("the director's writes dropped the trusted domains:\n%s", written)
