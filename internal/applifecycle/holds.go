@@ -183,6 +183,9 @@ func holdsOf(profile *gentianov1alpha1.ComponentProfile) []Hold {
 			if services.Authorization.Groups == gentianov1alpha1.AuthorizationGroupsMirror {
 				with = append(with, "groups")
 			}
+			if services.Authorization.HandsOverRoles() {
+				with = append(with, "roles")
+			}
 			add(HoldOwnStore, "", with)
 		}
 		if services.PersonSecrets != nil {

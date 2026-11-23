@@ -176,6 +176,11 @@ func (f *fakeFGA) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "{}")
 	case op == "read":
 		filter := keyOf(body["tuple_key"])
+		// As OpenFGA: an object named by its type alone needs a user.
+		if strings.HasSuffix(filter.Object, ":") && filter.User == "" {
+			http.Error(w, `{"code":"validation_error","message":"the object type field is required and both the object id and user cannot be empty"}`, http.StatusBadRequest)
+			return
+		}
 		var out []map[string]fgaTuple
 		for _, t := range st.tuples {
 			if filter.User != "" && t.User != filter.User || filter.Relation != "" && t.Relation != filter.Relation {

@@ -1700,13 +1700,28 @@ spec:
                                   maxLength: 65536
                                   minLength: 1
                                   type: string
+                                roles:
+                                  description: |-
+                                    Roles "handOver" has the platform keep, in the store, the roles each
+                                    person holds on the app: one tuple user:<realm>/<subject> holder
+                                    role:<name> per role, for user, admin and every role the profile
+                                    declares (spec.roles.declared), as the rights store answers them --
+                                    through positions, included roles and the base's administrators. The
+                                    positions they come through are not handed over. The model must
+                                    declare a type role whose relation holder users are written with; the
+                                    component's own key may not write a tuple about a role, and the
+                                    starting tuples name no role as their object. A role given or taken
+                                    in the console reaches the store within seconds.
+                                  enum:
+                                  - handOver
+                                  type: string
                                 tuples:
                                   description: |-
                                     Tuples are the store's starting tuples, written by the platform and
                                     held to the model when the profile is admitted. One the profile no
                                     longer names is taken out again; what the component wrote itself is
                                     never touched. A store that mirrors groups names no group as an
-                                    object here.
+                                    object here, and one that is handed roles no role.
                                   items:
                                     description: |-
                                       AuthorizationTuple is one relation between a user and an object, as
@@ -4419,13 +4434,28 @@ spec:
                                 maxLength: 65536
                                 minLength: 1
                                 type: string
+                              roles:
+                                description: |-
+                                  Roles "handOver" has the platform keep, in the store, the roles each
+                                  person holds on the app: one tuple user:<realm>/<subject> holder
+                                  role:<name> per role, for user, admin and every role the profile
+                                  declares (spec.roles.declared), as the rights store answers them --
+                                  through positions, included roles and the base's administrators. The
+                                  positions they come through are not handed over. The model must
+                                  declare a type role whose relation holder users are written with; the
+                                  component's own key may not write a tuple about a role, and the
+                                  starting tuples name no role as their object. A role given or taken
+                                  in the console reaches the store within seconds.
+                                enum:
+                                - handOver
+                                type: string
                               tuples:
                                 description: |-
                                   Tuples are the store's starting tuples, written by the platform and
                                   held to the model when the profile is admitted. One the profile no
                                   longer names is taken out again; what the component wrote itself is
                                   never touched. A store that mirrors groups names no group as an
-                                  object here.
+                                  object here, and one that is handed roles no role.
                                 items:
                                   description: |-
                                     AuthorizationTuple is one relation between a user and an object, as

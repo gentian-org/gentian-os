@@ -14,12 +14,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
 // PlatformTokenFile is where the operator's token for the platform path is
@@ -82,6 +85,22 @@ func (c *PlatformClient) call(ctx context.Context, method, path string, body, ou
 		return resp.StatusCode, json.NewDecoder(resp.Body).Decode(out)
 	}
 	return resp.StatusCode, nil
+}
+
+// ErrNotHanded is a store the arbiter's table does not (yet) hand roles to.
+var ErrNotHanded = errors.New("the store is not handed roles")
+
+// SetRoles states every person's roles on a tenant's app to its store;
+// ErrNotHanded when the arbiter's table does not hand that store roles.
+func (c *PlatformClient) SetRoles(ctx context.Context, tenant, component string, holdings []authz.RoleHolding) error {
+	if holdings == nil {
+		holdings = []authz.RoleHolding{}
+	}
+	code, err := c.call(ctx, http.MethodPut, "/v1/platform/roles/"+tenant+"/"+component, RolesRequest{Holdings: holdings}, nil)
+	if code == http.StatusNotFound {
+		return ErrNotHanded
+	}
+	return err
 }
 
 // Export is a store's model and tuples; ErrNoStore when none was made.

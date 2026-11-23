@@ -707,6 +707,7 @@ func main() {
 			Client:  mgr.GetClient(),
 			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
 			Graph:   graph,
+			Roles:   arbiterPlatform,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "AuthzProjection")
 			os.Exit(1)
