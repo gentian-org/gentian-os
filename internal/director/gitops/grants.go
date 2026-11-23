@@ -92,6 +92,24 @@ func (g *GitOps) SetAppGrant(ctx context.Context, tenant, app string, grant AppG
 		fmt.Sprintf("Set what %s may consume in tenant %s", app, tenant), meta)
 }
 
+// TenantAppGrants reads what each app of a tenant may consume, as the
+// tenant's patch declares it.
+func (g *GitOps) TenantAppGrants(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantAppGrant, error) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
+		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var doc grantsPatch
+	if err := g.readTenantPatch(ctx, tenant, GrantsFile, &doc); err != nil {
+		return nil, err
+	}
+	return doc.Spec.Grants, nil
+}
+
+// GrantedWithInstallReason is what a grant made with an app's install says.
+const GrantedWithInstallReason = "granted with the install of the app"
+
 // ClearAppGrant removes one, which withdraws everything it permitted.
 func (g *GitOps) ClearAppGrant(ctx context.Context, tenant, app string, meta Meta) (Result, error) {
 	if !gentianov1alpha1.ValidTenantName(tenant) || !ValidName(app) {
@@ -133,10 +151,23 @@ const CameTogetherReason = "pre-approved by the platform: the apps were installe
 // which. A contract the grant already names is left as it stands, so an
 // administrator's narrower grant is not widened back.
 func (g *GitOps) PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, reason string, meta Meta) (Result, error) {
+	return g.addConsume(ctx, tenant, app, contract, granted, meta.actor(), reason,
+		fmt.Sprintf("Pre-approve %s consuming %s in tenant %s", app, contract, tenant), meta)
+}
+
+// GrantConsumeWithInstall adds one contract an app may consume, with what of
+// it, to the app's grant, as the person who installed the app grants it with
+// the install. Like PreApproveConsume it leaves a contract the grant already
+// names as it stands, and a grant somebody wrote keeps their name on it.
+func (g *GitOps) GrantConsumeWithInstall(ctx context.Context, tenant, app, contract string, granted []string, meta Meta) (Result, error) {
+	return g.addConsume(ctx, tenant, app, contract, granted, meta.Subject, GrantedWithInstallReason,
+		fmt.Sprintf("Grant %s consuming %s in tenant %s with its install", app, contract, tenant), meta)
+}
+
+func (g *GitOps) addConsume(ctx context.Context, tenant, app, contract string, granted []string, grantedBy, reason, message string, meta Meta) (Result, error) {
 	if !gentianov1alpha1.ValidTenantName(tenant) || !ValidName(app) || !ValidName(contract) || len(granted) == 0 {
 		return Result{}, fmt.Errorf("%w: tenant %q app %q contract %q", ErrInvalidName, tenant, app, contract)
 	}
-	message := fmt.Sprintf("Pre-approve %s consuming %s in tenant %s", app, contract, tenant)
 	return g.editGrants(ctx, tenant, message, meta, func(byApp map[string]gentianov1alpha1.TenantAppGrant) bool {
 		entry, had := byApp[app]
 		for _, c := range entry.Consume {
@@ -150,7 +181,7 @@ func (g *GitOps) PreApproveConsume(ctx context.Context, tenant, app, contract st
 		// commit says what the platform added.
 		if !had {
 			now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
-			entry.GrantedBy, entry.GrantedAt, entry.Reason = meta.actor(), &now, reason
+			entry.GrantedBy, entry.GrantedAt, entry.Reason = grantedBy, &now, reason
 		}
 		byApp[app] = entry
 		return true

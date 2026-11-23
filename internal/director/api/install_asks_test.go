@@ -184,3 +184,121 @@ func TestWhatPolicyAnswersIsNotOfferedForApproval(t *testing.T) {
 		t.Errorf("with one trusted domain: %s", got)
 	}
 }
+
+// startConsuming is a director whose catalog offers a recorder that consumes
+// the tenant's files and comes with a relay. The relay consumes a contract of
+// the recorder, which the platform pre-approves among apps installed
+// together, and one that names no capability, which has nothing to grant.
+func startConsuming(t *testing.T) (*harness, string) {
+	t.Helper()
+	recorder := profileNamed("recorder", "one") + "  comesWith: [relay]\n" +
+		"  integrations:\n    - contract: file-store\n      asPerson: true\n      capabilities: [webdav:read, webdav:write]\n"
+	relay := profileNamed("relay", "one") +
+		"  integrations:\n    - contract: recordings\n      provider: recorder\n      capabilities: [read]\n" +
+		"    - contract: notes\n"
+	src := catalogues(t, served{"gentian": {"recorder": recorder, "relay": relay}})
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{
+			dt.ClaimPath: claimWith(gitops.CatalogueSource{Name: "gentian", URL: src.URL + "/gentian"}),
+		})
+	}, withFetcher(src))
+	return h, sha(recorder)
+}
+
+func ungrantedAsks(t *testing.T, out map[string]any) []string {
+	t.Helper()
+	var got []string
+	for _, raw := range out["integrations"].([]any) {
+		e := raw.(map[string]any)
+		got = append(got, fmt.Sprintf("%v %v %v", e["install"], e["contract"], e["capabilities"]))
+	}
+	return got
+}
+
+func grantsOf(t *testing.T, h *harness, tenant string) string {
+	t.Helper()
+	return dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/"+tenant+"/"+gitops.GrantsFile)
+}
+
+// The integrations a build consumes are said before it is installed, beside
+// its egress requests, with whether the caller may grant them. What the
+// platform answers itself is not offered.
+func TestWhatABuildConsumesIsSaidBeforeItIsInstalled(t *testing.T) {
+	h, digest := startConsuming(t)
+	code, out := h.do(t, "GET", asksPath(digest), h.token(t, "tenant-demo", "tom"), "")
+	if code != http.StatusOK {
+		t.Fatalf("asks = %d %v", code, out)
+	}
+	if got := strings.Join(ungrantedAsks(t, out), "|"); got != "recorder file-store [webdav:read webdav:write]" {
+		t.Fatalf("integrations: %s", got)
+	}
+	if out["mayGrant"] != true {
+		t.Errorf("the tenant's administrator is not told they may grant: %v", out["mayGrant"])
+	}
+	if first := out["integrations"].([]any)[0].(map[string]any); first["asPerson"] != true {
+		t.Errorf("the integration does not say it acts as the person: %v", first)
+	}
+	if code, out := h.do(t, "GET", asksPath(digest), h.token(t, "tenant-demo", "mia"), ""); code != http.StatusOK || out["mayGrant"] != false {
+		t.Errorf("a member: %d, mayGrant %v", code, out["mayGrant"])
+	}
+}
+
+// An install names the contracts its caller grants, and each is added to the
+// app's grant with exactly what the build asks of it, under the caller's
+// name. What was granted no longer waits.
+func TestAnInstallGrantsTheContractsItNames(t *testing.T) {
+	h, digest := startConsuming(t)
+	tom := h.token(t, "tenant-demo", "tom")
+	body := fmt.Sprintf(`{"coordinate":"gentian/recorder","digest":%q,"grant":[{"install":"recorder","contract":"file-store"}]}`, digest)
+	code, out := h.do(t, "POST", "/v1/tenants/demo/apps/recorder", tom, body)
+	if code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	if granted, _ := out["granted"].([]any); len(granted) != 1 {
+		t.Fatalf("granted = %v", out["granted"])
+	}
+	grants := grantsOf(t, h, "demo")
+	for _, want := range []string{"app: recorder", "contract: file-store", "- webdav:read", "- webdav:write", "grantedBy: tom", gitops.GrantedWithInstallReason} {
+		if !strings.Contains(grants, want) {
+			t.Errorf("the grant does not say %q:\n%s", want, grants)
+		}
+	}
+	if !strings.Contains(grants, "contract: recordings") {
+		t.Errorf("the contract among the apps installed together was not pre-approved:\n%s", grants)
+	}
+	if strings.Contains(grants, "contract: notes") {
+		t.Errorf("a contract that names no capability was granted:\n%s", grants)
+	}
+	if log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%B", "main"); !strings.Contains(log, "can_grant tenant:demo") {
+		t.Errorf("no commit names the authority the grant was given under:\n%s", log)
+	}
+	if _, out := h.do(t, "GET", asksPath(digest), tom, ""); len(ungrantedAsks(t, out)) != 0 {
+		t.Errorf("what was granted still waits: %v", out["integrations"])
+	}
+}
+
+// Granting with an install is whoever may grant's, and names what the build
+// consumes. Anything else refuses the install with nothing written.
+func TestAnInstallThatMayNotGrantInstallsNothing(t *testing.T) {
+	h, digest := startConsuming(t)
+	before := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")) + dt.RemoteFile(t, h.remote, dt.TenantPath("solo"))
+	install := func(tenant, token, grant string) (int, map[string]any) {
+		return h.do(t, "POST", "/v1/tenants/"+tenant+"/apps/recorder", token,
+			fmt.Sprintf(`{"coordinate":"gentian/recorder","digest":%q,"grant":[%s]}`, digest, grant))
+	}
+	own := `{"install":"recorder","contract":"file-store"}`
+	// tina administers solo and may not grant there.
+	if code, out := install("solo", h.token(t, "tenant-solo", "tina"), own); code != http.StatusForbidden {
+		t.Errorf("an install by somebody who may not grant: %d %v", code, out)
+	}
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, out := install("demo", tom, `{"install":"recorder","contract":"calendar-store"}`); code != http.StatusUnprocessableEntity {
+		t.Errorf("a grant of a contract the build does not consume: %d %v", code, out)
+	}
+	if code, out := install("demo", tom, `{"install":"recorder","contract":"Not A Name"}`); code != http.StatusBadRequest {
+		t.Errorf("a grant that names no contract: %d %v", code, out)
+	}
+	if after := dt.RemoteFile(t, h.remote, dt.TenantPath("demo")) + dt.RemoteFile(t, h.remote, dt.TenantPath("solo")); after != before {
+		t.Fatal("a refused install changed a tenant")
+	}
+}

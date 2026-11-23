@@ -304,7 +304,8 @@ status:
 ```
 
 What a consumer may use is narrowed by an `AppGrant`, which the tenant's
-administrator sets ([security/design.md](../security/design.md)). Capabilities are declared,
+administrator sets ([security/design.md](../security/design.md)), on the
+Integrations screen or with the install (§15). Capabilities are declared,
 not enforced at run time ([kernel.md §5](kernel.md)).
 
 ---
@@ -741,6 +742,17 @@ requests approved (`approve` in its body), and each is written as that
 person's grant once the app is installed. A request the build does not state
 refuses the install; so does an approval by somebody who is not the approver.
 An install without `approve` leaves the requests waiting.
+
+The same answer lists the contracts the build and those apps consume from the
+tenant's other apps (`integrations`): each with its capabilities, and whether
+the caller may grant them (`can_grant`). One the app's grant already names, and
+one among apps installed together, which the platform pre-approves, is not
+listed. The install names the contracts granted (`grant` in its body), and
+each is added to the app's `AppGrant` with exactly the capabilities the build
+asks for, under that person's name. A contract the build does not consume
+refuses the install, and so does a grant by somebody without `can_grant`. An
+install without `grant` leaves the integrations waiting for the tenant's
+administrator.
 
 ---
 

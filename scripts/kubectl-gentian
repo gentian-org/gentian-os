@@ -96,7 +96,7 @@
 #                                                the internet has them: present, pending, missing, or held by another record
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
-#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--positions <a,b>] [--approve-egress]
+#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--positions <a,b>] [--approve-egress] [--grant-integrations]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
 #   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...
@@ -995,7 +995,7 @@ cmd_apps_list() {
 # way the director fetches the bundle from the source and installs nothing
 # unless it hashes to the digest sent.
 _apps_install() {
-    local app="$1" t="$2" positions="$3" from="" digest="" approve="false"
+    local app="$1" t="$2" positions="$3" from="" digest="" approve="false" grant="false"
     shift 3
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1003,6 +1003,7 @@ _apps_install() {
             --digest) digest="${2:?}"; shift 2 ;;
             --positions) shift 2 ;;
             --approve-egress) approve="true"; shift ;;
+            --grant-integrations) grant="true"; shift ;;
             *) shift ;;
         esac
     done
@@ -1057,10 +1058,27 @@ _apps_install() {
             approving="$(printf '%s' "${asks}" | jq -c '[.egress[] | {install, privilege}]')"
         fi
     fi
+    # What it reaches of the tenant's other apps: said before the install,
+    # and granted with it under --grant-integrations by whoever may grant.
+    local ungranted granting="[]"
+    ungranted="$(printf '%s' "${asks}" | jq -r '.integrations // [] | length')"
+    if [[ "${ungranted}" != "0" ]]; then
+        echo "It consumes from the tenant's other apps:"
+        printf '%s' "${asks}" | jq -r '.integrations[] |
+            "  \(.install) \(.contract)  \(.capabilities | join(", "))" +
+            (if (.provider // "") != "" then "  from \(.provider)" else "" end) +
+            (if .asPerson then "  as the person" else "" end)'
+        if [[ "${grant}" == "true" ]]; then
+            [[ "$(printf '%s' "${asks}" | jq -r '.mayGrant')" == "true" ]] ||
+                die "--grant-integrations needs can_grant on ${t}; install without it, and the integrations wait for somebody who may grant"
+            granting="$(printf '%s' "${asks}" | jq -c '[.integrations[] | {install, contract}]')"
+        fi
+    fi
     local body answer status commit message
-    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --arg p "${positions}" --argjson a "${approving}" \
+    body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --arg p "${positions}" --argjson a "${approving}" --argjson g "${granting}" \
         '{coordinate: $c, digest: $d} + (if $p != "" then {positions: ($p | split(","))} else {} end) +
-         (if ($a | length) > 0 then {approve: $a} else {} end)')"
+         (if ($a | length) > 0 then {approve: $a} else {} end) +
+         (if ($g | length) > 0 then {grant: $g} else {} end)')"
     answer="$(_call POST "/v1/tenants/${t}/apps/${app}" "${body}")" || exit 1
     status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
     commit="$(printf '%s' "${answer}" | jq -r '.commit // "" | .[0:8]')"
@@ -1094,6 +1112,17 @@ _apps_install() {
                     echo "Approved ${approved} of ${waiting} requests; the rest wait: 'kubectl gentian apps approve <app> --tenant ${t}' lists them." >&2
                 else
                     echo "It waits for that approval: install with --approve-egress, or 'kubectl gentian apps approve <app> <kind>/<name> --tenant ${t}'."
+                fi
+            fi
+            if [[ "${ungranted}" != "0" ]]; then
+                local granted
+                granted="$(printf '%s' "${answer}" | jq -r '(.granted // []) | length')"
+                if [[ "${granted}" == "${ungranted}" ]]; then
+                    echo "Its integrations are granted, by you."
+                elif [[ "${grant}" == "true" ]]; then
+                    echo "Granted ${granted} of ${ungranted} integrations; the rest wait for a grant in the admin console's Integrations." >&2
+                else
+                    echo "They wait for a grant: install with --grant-integrations, or grant them in the admin console's Integrations."
                 fi
             fi ;;
     esac

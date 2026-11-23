@@ -167,8 +167,10 @@ type Repository interface {
 	TenantChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	TenantExposureChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
+	TenantAppGrants(ctx context.Context, tenant string) ([]gentianov1alpha1.TenantAppGrant, error)
 	SetAppGrant(ctx context.Context, tenant, app string, grant gitops.AppGrant, meta gitops.Meta) (gitops.Result, error)
 	PreApproveConsume(ctx context.Context, tenant, app, contract string, granted []string, reason string, meta gitops.Meta) (gitops.Result, error)
+	GrantConsumeWithInstall(ctx context.Context, tenant, app, contract string, granted []string, meta gitops.Meta) (gitops.Result, error)
 	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
 	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
 	EgressPolicy(ctx context.Context) (trustedDomains []string, err error)
@@ -1146,6 +1148,13 @@ type installRequest struct {
 	// It needs can_approve_privilege on the tenant, and a request the build
 	// does not state refuses the install.
 	Approve []approvedRequest `json:"approve,omitempty"`
+	// Grant names contracts this build, or the apps it comes with, consume
+	// that the caller grants with the install (install_asks.go): each is
+	// added to the app's grant by the caller, with exactly the capabilities
+	// the build asks for, once the app is installed. It needs can_grant on
+	// the tenant, and a contract the build does not consume refuses the
+	// install.
+	Grant []grantedContract `json:"grant,omitempty"`
 }
 
 // givenTo reads the positions an install names, each once, without user,
@@ -1290,6 +1299,11 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	if !ok {
 		return
 	}
+	// So are grants given with it, which are whoever may grant's.
+	granting, ok := s.mayGrantWithInstall(w, r, c, tenant, body.Grant)
+	if !ok {
+		return
+	}
 	// The profile itself (AD-3).
 	//
 	// Before the app entry, not after: an entry naming a profile the cluster
@@ -1362,8 +1376,8 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	// What the build asks for, read before the apps it comes with are
 	// written: an approval of something it does not state is refused with
 	// nothing of the tenant's changed.
-	var asks []askedEgress
-	if len(body.Approve) > 0 {
+	var asks buildAsks
+	if len(body.Approve) > 0 || len(body.Grant) > 0 {
 		origin := ""
 		if source != nil {
 			origin = source.origin(tenant)
@@ -1372,9 +1386,14 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			s.repoError(w, r, err)
 			return
 		}
-		if missing := notAsked(body.Approve, asks); missing != "" {
+		if missing := notAsked(body.Approve, asks.egress); missing != "" {
 			s.fail(w, r, http.StatusUnprocessableEntity, "the install approves "+approveSummary(body.Approve)+
 				", and this build and the apps it comes with do not ask for "+missing+". Nothing was installed")
+			return
+		}
+		if missing := notConsumed(body.Grant, asks.integrations); missing != "" {
+			s.fail(w, r, http.StatusUnprocessableEntity, "the install grants "+grantSummary(body.Grant)+
+				", and this build and the apps it comes with do not consume "+missing+". Nothing was installed")
 			return
 		}
 	}
@@ -1401,16 +1420,23 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	var approved []approvedRequest
 	if err == nil && len(body.Approve) > 0 {
-		approved = s.grantWithInstall(ctx, c, tenant, approving, body.Approve, asks)
+		approved = s.grantWithInstall(ctx, c, tenant, approving, body.Approve, asks.egress)
+	}
+	var granted []grantedContract
+	if err == nil && len(body.Grant) > 0 {
+		granted = s.grantIntegrationsWithInstall(ctx, c, tenant, granting, body.Grant, asks.integrations)
 	}
 	if err != nil || retry == nil {
-		if err == nil && (len(came) > 0 || len(body.Approve) > 0) {
+		if err == nil && (len(came) > 0 || len(body.Approve) > 0 || len(body.Grant) > 0) {
 			out := map[string]any{"status": res.Status}
 			if len(came) > 0 {
 				out["installedWith"] = came
 			}
 			if len(body.Approve) > 0 {
 				out["approved"] = approved
+			}
+			if len(body.Grant) > 0 {
+				out["granted"] = granted
 			}
 			if res.Changed {
 				out["commit"] = res.Commit
