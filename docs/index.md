@@ -67,6 +67,7 @@ How each part is designed and why, for architects, operators and app authors.
 | [control-plane.md](concepts/control-plane.md) | The programs of the control plane: what each holds and refuses |
 | [multi-tenancy.md](concepts/multi-tenancy.md) | Tenants, isolation, domains, tenancy modes |
 | [routing.md](concepts/routing.md) | The edge, routes, sign-in sessions, embedding |
+| [edge.md](concepts/edge.md) | Where traffic crosses the boundary, in and out, and who decides each crossing |
 | [networking.md](concepts/networking.md) | Network layers, policies, exposure, certificates, TURN |
 | [iam.md](concepts/iam.md) | Identity and access management, realms, roles, sign-in |
 | [authorization.md](concepts/authorization.md) | The authorization model: relations, roles, projections |
