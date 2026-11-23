@@ -123,6 +123,9 @@ type harness struct {
 	logged      *lockedBuffer
 	// rights is the operator as the registrar asks it about who holds what.
 	rights *fakeRights
+	// givers is the operator's list of position givers, empty until a test
+	// sets it.
+	givers *registrar.PositionGivers
 }
 
 // startWithIdentity is the registrar speaking for realms through ident.
@@ -152,9 +155,11 @@ func startWithTenants(t *testing.T, ident registrar.Identity, decides authz.Chec
 	decisions := &asked{Checker: decides}
 	invitations, clock, logged := newFakeInvitations(), newFakeClock(), &lockedBuffer{}
 	rights := newFakeRights()
+	givers := &registrar.PositionGivers{}
 	srv, err := registrar.New(registrar.Config{
-		Rights: rights,
-		Authn:  v, Authz: decisions, Cluster: dt.Cluster,
+		Rights:         rights,
+		PositionGivers: givers,
+		Authn:          v, Authz: decisions, Cluster: dt.Cluster,
 		Tenants:     tenants,
 		Identity:    ident,
 		Mailboxes:   mailboxes,
@@ -174,7 +179,7 @@ func startWithTenants(t *testing.T, ident registrar.Identity, decides authz.Chec
 		t.Fatal(err)
 	}
 	h := &harness{Server: httptest.NewServer(srv), issuer: is, asked: decisions,
-		registrar: srv, invitations: invitations, clock: clock, logged: logged, rights: rights}
+		registrar: srv, invitations: invitations, clock: clock, logged: logged, rights: rights, givers: givers}
 	t.Cleanup(h.Close)
 	return h
 }

@@ -1,28 +1,25 @@
 # Keycloak event listener
 
-Keycloak is the only place a group membership changes. OpenFGA holds a copy of
-it, and this provider is what keeps the copy current: whenever a user's groups
-may have changed, it states that user's **complete** group set to the director,
-signed. The director compares the statement with what it holds and writes the
-difference.
+Some of what happens to a person only the realm sees: that they arrived
+through an identity provider, that they made an account themselves, that
+they were removed. This provider states each of these to the operator's
+membership listener, signed, and the operator gives or takes what the
+tenant declares for it in the rights store.
 
 It holds a signing key and nothing else. It has no token, calls no API but the
-one endpoint it is configured with, and the director believes nothing from it
-beyond what a realm is entitled to say about its own tenant.
+one endpoint it is configured with, and the operator believes nothing from it
+beyond what a realm is entitled to say about its own people.
 
 ## What triggers a statement
 
 | Keycloak event | Statement |
 |---|---|
-| admin: `GROUP_MEMBERSHIP` create / delete | the user's groups |
-| admin: `USER` create | the user's groups (a user can be created with groups) |
-| admin: `GROUP` update (rename) | the groups of every member |
-| user: `LOGIN`, `REGISTER`, `IDENTITY_PROVIDER_FIRST_LOGIN` | the user's groups — default groups and federation mappers change membership without an admin event |
-| model: group removed | `group.deleted` |
+| user: `LOGIN`, `IDENTITY_PROVIDER_FIRST_LOGIN` through an identity provider | `user.entered`: the provider, and the person's id there (`providerUser`) when the realm holds the link |
+| user: `REGISTER` on the registration page (not through a provider) | `user.registered` |
 | model: user removed | `user.deleted` |
 
-Only top-level groups are stated. Statements are sent after the transaction
-commits, from one background thread, retried for about a minute.
+Statements are sent after the transaction commits, from one background
+thread, retried for about a minute.
 
 ## Wire format
 
@@ -30,8 +27,13 @@ commits, from one background thread, retried for about a minute.
 POST <director-url>
 X-Gentian-Signature: keyid=<key-id>,t=<unix seconds>,sig=<base64 Ed25519 over "<t>.<body>">
 
-{"id":"<uuid>","time":<ms>,"realm":"demo","type":"user.memberships","user":"<user id>","groups":["gentian:tenant:demo:admins"]}
+{"id":"<uuid>","time":<ms>,"realm":"shop","type":"user.entered","user":"<user id>","provider":"tenant-team","providerUser":"<id at the provider>"}
+{"id":"<uuid>","time":<ms>,"realm":"shop","type":"user.registered","user":"<user id>"}
+{"id":"<uuid>","time":<ms>,"realm":"shop","type":"user.deleted","user":"<user id>"}
 ```
+
+The operator's side is `internal/membership`; `WireFormatTest` and its
+tests hold the two to the same fields.
 
 ## Configuration
 

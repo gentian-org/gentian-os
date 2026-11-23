@@ -11,15 +11,24 @@ package io.gentianos.keycloak.events;
 
 import java.util.UUID;
 
-/** The two statements the platform understands, as JSON. */
+/** The statements the platform understands, as JSON. */
 final class Payload {
 
     private Payload() {
     }
 
-    static String userEntered(String realm, String user, String provider) {
-        return head("user.entered", realm).append(",\"user\":").append(quote(user))
-            .append(",\"provider\":").append(quote(provider)).append('}').toString();
+    /** providerUser is who the person is at the provider, or null when the realm does not say. */
+    static String userEntered(String realm, String user, String provider, String providerUser) {
+        StringBuilder out = head("user.entered", realm).append(",\"user\":").append(quote(user))
+            .append(",\"provider\":").append(quote(provider));
+        if (providerUser != null) {
+            out.append(",\"providerUser\":").append(quote(providerUser));
+        }
+        return out.append('}').toString();
+    }
+
+    static String userRegistered(String realm, String user) {
+        return head("user.registered", realm).append(",\"user\":").append(quote(user)).append('}').toString();
     }
 
     static String userDeleted(String realm, String user) {

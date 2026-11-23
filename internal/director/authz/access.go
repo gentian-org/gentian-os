@@ -356,6 +356,32 @@ func (c *OpenFGA) PositionsHeld(ctx context.Context, tenant, sub string) ([]stri
 	return names, nil
 }
 
+// HoldsAnyPosition reports whether the account sub holds one of the named
+// positions of tenant: given to them, or through a position given to them
+// that includes it.
+func HoldsAnyPosition(ctx context.Context, s Store, tenant, sub string, positions []string) (bool, error) {
+	user, err := User(sub)
+	if err != nil {
+		return false, err
+	}
+	if !ValidName(tenant) {
+		return false, fmt.Errorf("%w: %q", ErrInvalidID, tenant)
+	}
+	if len(positions) == 0 {
+		return false, nil
+	}
+	held, err := positionsHeld(ctx, s.Read, tenant, user)
+	if err != nil {
+		return false, err
+	}
+	for _, p := range positions {
+		if _, ok := held[Position(tenant, p)]; ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func personAccess(ctx context.Context, read readFunc, ask askFunc, cluster, tenant, sub string) (PersonAccess, error) {
 	user, err := User(sub)
 	if err != nil {

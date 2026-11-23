@@ -155,6 +155,9 @@ func (g *GitOps) DeclareTenant(ctx context.Context, imported ImportedTenant, met
 		// this cluster, deliberately, within this claim's bounds.
 		declared.Partners = nil
 		declared.PartnerCommissioners = nil
+		// Nor the components it let give its positions: a tenant and a
+		// component named elsewhere are not this cluster's.
+		declared.PositionGivers = nil
 		body, err := yaml.Marshal(map[string]any{
 			"apiVersion": "gentianos.io/v1alpha1",
 			"kind":       "Tenant",

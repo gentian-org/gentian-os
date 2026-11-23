@@ -28,9 +28,11 @@ SPDX-License-Identifier: MPL-2.0
 // ones the director served; a caller changes the address it calls and
 // nothing else.
 //
-// One caller is not a person: a component that vouches for people, which
-// presents the key the operator gave it and may read and take away the links
-// to itself, on two routes and no other (vouching.go).
+// Two callers are not a person, and present the key the operator gave them:
+// a component that vouches for people, which may read and take away the
+// links to itself (vouching.go), and a component a tenant lets give some of
+// its positions, which may give and take exactly those (position_givers.go).
+// Each on its own routes and no other.
 //
 // One thing it will not do for anybody: change who holds a platform role.
 // That rule lives in internal/registrar/identity/guard.go, on the way every
@@ -139,6 +141,11 @@ type Config struct {
 	// with none, no component is recognized by its key, and the people who
 	// may take a link away still can (vouching.go).
 	VouchingKeys *VouchingKeys
+	// PositionGivers is the list of components tenants let give some of
+	// their positions, each with the hash of its own key and what it may
+	// give where, as the operator writes it. Optional: with none, no
+	// component gives a position here (position_givers.go).
+	PositionGivers *PositionGivers
 	// Invitations is where a request to invite a tenant's administrator is
 	// kept until the tenant is ready (invitations.go). Optional: without it
 	// such a request is refused, and the administrator is activated by
@@ -423,6 +430,12 @@ func (s *Server) routes() {
 	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people", s.vouchingPeople)
 	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people/{id}", s.vouchingLinked)
 	s.linkHolders("DELETE /v1/tenants/{t}/vouching/{profile}/people/{id}", s.unlinkVouching)
+
+	// Positions a tenant lets a component give its people and take again
+	// (spec.positionGivers), by the component's own key and by nothing
+	// else (position_givers.go).
+	s.positionGiving("POST /v1/tenants/{t}/actions/give-position", true)
+	s.positionGiving("POST /v1/tenants/{t}/actions/take-position", false)
 
 	// A person's own device passwords (devicepasswords.go). Open to whoever
 	// may enter the tenant, about the caller and nobody else.

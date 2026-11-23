@@ -40,13 +40,25 @@ type TenantSignUp struct {
 	// Enabled opens the realm's registration page: anybody on the internet
 	// may make an account, with an e-mail address as the login, a message to
 	// that address to confirm it, and a proof-of-work check against scripted
-	// sign-ups. An account made that way is in none of the tenant's groups:
-	// it has no desktop, no rights on the platform, and is not counted as a
-	// user of the tenant. It is for a tenant whose apps serve the public --
-	// customers with accounts -- and not for a workspace, whose people are
-	// invited. Off by default; off, every account is made by an invitation.
+	// sign-ups. An account made that way holds the positions Positions names
+	// and nothing else: without user among them it has no desktop and is not
+	// counted as a user of the tenant. It is for a tenant whose apps serve
+	// the public -- customers with accounts -- and not for a workspace, whose
+	// people are invited. Off by default; off, every account is made by an
+	// invitation.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
+	// Positions are the positions of this tenant an account is given when
+	// the person made it themself on the registration page: user or a name
+	// of spec.positions, e.g. customer. Only with Enabled. An account that
+	// came in through an identity provider is not given them. The positions
+	// of the tenant's and of its apps' administrators are never given this
+	// way.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self.all(p, !(p in ['app-administrator', 'tenant-administrator']))",message="an administrator's position is not given at sign-up"
+	Positions []string `json:"positions,omitempty"`
 	// Home is where the people of such a tenant are sent instead of its
 	// desktop: the page of the app they made their account for, e.g. a
 	// website's account page. The tenant's bare domain redirects there, and
@@ -252,12 +264,62 @@ type TenantSignInFrom struct {
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:XValidation:rule="self.all(p, !(p in ['app-administrator', 'tenant-administrator']))",message="an administrator's position is not given by a sign-in"
 	Positions []string `json:"positions,omitempty"`
+
+	// Holding narrows who is given Positions: a person who, in the other
+	// tenant, holds one of these positions of that tenant -- given to them
+	// directly, or held through a position that includes it. Asked at every
+	// arrival: a person who holds none of them then is not given Positions,
+	// and what Positions names is taken from them. Unset, everybody who
+	// arrives from the other tenant is given Positions and nothing is taken.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Holding []string `json:"holding,omitempty"`
+}
+
+// TenantPositionGiver is a component of a tenant, this one or another, that
+// may give the people of this tenant some of its positions, and take them
+// again. The component presents its own key at the registrar, and is
+// admitted for exactly these positions of this tenant: nothing else of the
+// tenant is opened by it.
+type TenantPositionGiver struct {
+	// Tenant is the tenant the component runs in.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Tenant string `json:"tenant"`
+
+	// Component is the profile the component runs.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Component string `json:"component"`
+
+	// Positions are the positions of this tenant the component gives and
+	// takes: user or a name of spec.positions. The positions of the
+	// tenant's and of its apps' administrators are never given this way.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="self.all(p, !(p in ['app-administrator', 'tenant-administrator']))",message="an administrator's position is not given by a component"
+	Positions []string `json:"positions"`
 }
 
 // SignUpEnabled reports whether people make their own accounts in this
 // tenant's realm (spec.signUp.enabled); off unless the tenant says so.
 func (t *Tenant) SignUpEnabled() bool {
 	return t.Spec.SignUp != nil && t.Spec.SignUp.Enabled
+}
+
+// SignUpPositions are the positions an account made on the registration
+// page is given (spec.signUp.positions); none unless sign-up is enabled.
+func (t *Tenant) SignUpPositions() []string {
+	if !t.SignUpEnabled() {
+		return nil
+	}
+	return t.Spec.SignUp.Positions
 }
 
 // SignUpHome is where this tenant's people are sent instead of its desktop
@@ -358,6 +420,16 @@ type TenantSpec struct {
 	// +listType=map
 	// +listMapKey=tenant
 	SignInFrom []TenantSignInFrom `json:"signInFrom,omitempty"`
+
+	// PositionGivers are the components, of this tenant or another, that may
+	// give this tenant's people some of its positions and take them again;
+	// see TenantPositionGiver.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=map
+	// +listMapKey=tenant
+	// +listMapKey=component
+	PositionGivers []TenantPositionGiver `json:"positionGivers,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional

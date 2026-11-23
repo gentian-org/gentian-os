@@ -586,6 +586,17 @@ opens nothing: the target tenant has to name the component in `spec.partnerCommi
 an administrator writes in git. The director commits, the composition makes the identity
 provider, and the component holds no credential of the realm (docs/guides/identity-brokering.md).
 
+**A component that gives people positions** -- a checkout that makes a buyer a customer, a course
+catalog that makes a participant a student -- gives and takes them at the registrar
+(`POST /v1/tenants/<t>/actions/give-position` and `.../take-position`, body
+`{"person": "<id>", "position": "<name>"}`, with `RIGHTS_CHECK_KEY` as the bearer). The key is the
+one any component that holds a key has in its Secret `rights-check-<profile>`, and the registrar's
+address is `spec.package.valueMapping.platform.registrarUrlKey`. The key alone opens nothing: the
+tenant `<t>` names the component, by its tenant and profile, and the positions in
+`spec.positionGivers`, which an administrator writes in git. The registrar admits it for exactly
+those positions of that tenant, never an administrator's and no role; the person is one of `<t>`'s,
+and the operator records the component as who acted.
+
 **A component that calls apps of other clusters for the person**, or takes such calls, declares
 `spec.requires.services.partners` with `call` and `accept` (docs/guides/app-customization.md §1.1).
 
