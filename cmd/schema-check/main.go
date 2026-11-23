@@ -19,7 +19,7 @@ SPDX-License-Identifier: MPL-2.0
 // A deployments repository runs it in its CI against the image it is about
 // to be installed with:
 //
-//	docker run --rm -v "$PWD:/repo:ro" ghcr.io/gentian-org/gentian-os:develop /schema-check /repo
+//	docker run --rm --entrypoint /schema-check -v "$PWD:/repo:ro" ghcr.io/gentian-org/gentian-os:develop /repo
 package main
 
 import (
