@@ -157,6 +157,12 @@ func (c *OpenFGA) ReconcileApps(ctx context.Context, installed map[string][]Inst
 				apps[t.Object] = true
 			}
 		}
+		installedApps := map[string]bool{}
+		for _, t := range want {
+			if strings.HasPrefix(t.Object, "app:") {
+				installedApps[t.Object] = true
+			}
+		}
 		roles := map[string]bool{}
 		for object := range wantedRoles {
 			roles[object] = true
@@ -170,6 +176,13 @@ func (c *OpenFGA) ReconcileApps(ctx context.Context, installed map[string][]Inst
 				p := plain(t)
 				if p.Relation == "declared" && ofTenant(p.User, "role:", tenant) {
 					roles[p.User] = true
+				}
+				// What was derived on an app that is no longer installed
+				// goes with it: derivation reads installed apps only, and
+				// nobody else removes it.
+				if IsDerived(p.Relation) && !installedApps[object] {
+					deletes = append(deletes, p)
+					continue
 				}
 				if !appRelations[p.Relation] {
 					continue
