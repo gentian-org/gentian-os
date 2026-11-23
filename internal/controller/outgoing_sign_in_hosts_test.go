@@ -88,7 +88,7 @@ func TestTheLiaisonReachesTheSignInHostsOfItsTenantsGrantedBridges(t *testing.T)
 		signInComponent("tenant-acme", "waiting", "waiting"),
 		signInComponent("tenant-other", "elsewhere", "elsewhere", "egress/tools"),
 	)
-	got, err := signInHosts(context.Background(), c, liaisonProfileForTest(), liaison, tenant)
+	got, err := bridgeHosts(context.Background(), c, liaisonProfileForTest(), liaison, tenant)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,12 +98,12 @@ func TestTheLiaisonReachesTheSignInHostsOfItsTenantsGrantedBridges(t *testing.T)
 
 	// Any other component, and a liaison a catalog brought, reach none.
 	other := signInBridgeProfile("plaud", "https://mcp.plaud.ai")
-	if got, _ := signInHosts(context.Background(), c, other, signInComponent("tenant-acme", "plaud", "plaud"), tenant); got != nil {
+	if got, _ := bridgeHosts(context.Background(), c, other, signInComponent("tenant-acme", "plaud", "plaud"), tenant); got != nil {
 		t.Fatalf("a bridge reaches %v through the liaison's rule", got)
 	}
 	brought := liaisonProfileForTest()
 	brought.Annotations = map[string]string{profilebundle.OriginAnnotation: "cluster/shared", profilebundle.Annotation: "bundle"}
-	if got, _ := signInHosts(context.Background(), c, brought, liaison, tenant); got != nil {
+	if got, _ := bridgeHosts(context.Background(), c, brought, liaison, tenant); got != nil {
 		t.Fatalf("a liaison a catalog brought reaches %v", got)
 	}
 }
@@ -126,5 +126,80 @@ func TestABridgeWakesTheLiaisonOfItsTenant(t *testing.T) {
 	}
 	if got := liaisonsWokenBy(ctx, c, signInComponent("tenant-acme", "notes", "notes")); len(got) != 0 {
 		t.Fatalf("a component without a sign-in woke %v", got)
+	}
+}
+
+// outsideAgentBridge is an agent bridge to a tool server outside that runs
+// nothing of its own, asking to reach host.
+func outsideAgentBridge(name, host string, runsPods bool) *gentianov1alpha1.ComponentProfile {
+	p := &gentianov1alpha1.ComponentProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Annotations: map[string]string{
+			profilebundle.OriginAnnotation: "cluster/shared",
+			profilebundle.Annotation:       "bundle",
+		}},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge},
+			Bridge: &gentianov1alpha1.BridgeSpec{Ways: []gentianov1alpha1.BridgeWay{{
+				Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents,
+			}}},
+			Requires: &gentianov1alpha1.RequirementSpec{Privileges: &gentianov1alpha1.PrivilegeRequest{
+				Egress: []gentianov1alpha1.EgressRequest{{Name: "tools", Reason: "the tool server", Hosts: []string{host}}},
+			}},
+		},
+	}
+	if !runsPods {
+		p.Spec.Package.API = &gentianov1alpha1.APIIntegration{}
+	}
+	return p
+}
+
+// vouchingCaller is a component that may speak as a person: the caller of
+// the tenant's agent bridges.
+func vouchingCaller(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
+				Vouching: &gentianov1alpha1.VouchingRequirement{},
+			}},
+		},
+	}
+}
+
+// The caller of the tenant's agent bridges reaches the hosts granted to the
+// bridges that run nothing of their own, and no others: not an ungranted
+// bridge's, not one whose pods make their own calls, not another tenant's.
+func TestTheCallerReachesTheHostsOfTheOutsideBridgesItCalls(t *testing.T) {
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
+	chaperone := signInComponent("tenant-acme", "chaperone", "chaperone")
+	c := signInClient(t,
+		vouchingCaller("chaperone"),
+		outsideAgentBridge("plaud", "mcp.plaud.ai", false),
+		outsideAgentBridge("waiting", "mcp.waiting.example", false),
+		outsideAgentBridge("runs-pods", "api.runs-pods.example", true),
+		outsideAgentBridge("elsewhere", "mcp.elsewhere.example", false),
+		chaperone,
+		signInComponent("tenant-acme", "plaud", "plaud", "egress/tools"),
+		signInComponent("tenant-acme", "waiting", "waiting"),
+		signInComponent("tenant-acme", "runs-pods", "runs-pods", "egress/tools"),
+		signInComponent("tenant-other", "elsewhere", "elsewhere", "egress/tools"),
+	)
+	got, err := bridgeHosts(context.Background(), c, vouchingCaller("chaperone"), chaperone, tenant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"mcp.plaud.ai"}) {
+		t.Fatalf("the caller reaches %v, want only the granted outside bridge's host mcp.plaud.ai", got)
+	}
+
+	// A change to an outside bridge wakes the tenant's callers.
+	woken := liaisonsWokenBy(context.Background(), c, signInComponent("tenant-acme", "plaud", "plaud"))
+	want := []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: "tenant-acme", Name: "chaperone"}}}
+	if !slices.Equal(woken, want) {
+		t.Fatalf("an outside bridge woke %v, want %v", woken, want)
+	}
+	// A bridge that runs its own pods wakes nobody: its calls are its own.
+	if woken := liaisonsWokenBy(context.Background(), c, signInComponent("tenant-acme", "runs-pods", "runs-pods")); len(woken) != 0 {
+		t.Fatalf("a bridge with pods woke %v", woken)
 	}
 }

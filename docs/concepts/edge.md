@@ -122,9 +122,12 @@ requires:
   A domain taken off a list makes the requests it answered pending again.
 - **Profiles the platform ships.** Their requests by host are answered by the
   platform, with the release that ships them.
-- **The liaison.** The component that keeps people's sign-ins at outside
-  services asks for nothing. It reaches the sign-in hosts the tenant's
-  bridges name, each once that bridge's own requests are answered.
+- **Through a bridge.** Two components reach hosts without asking, each
+  once the bridge's own requests are answered. The liaison, which keeps
+  people's sign-ins at outside services, reaches the sign-in hosts the
+  tenant's bridges name. The caller of the tenant's agent bridges reaches
+  the hosts granted to a bridge that runs nothing of its own, a tool server
+  outside reached where it is.
 
 ### 3.4 The record
 

@@ -21,6 +21,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/hostnames"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -50,16 +51,24 @@ func signInIssuers(profile *gentianov1alpha1.ComponentProfile) []string {
 	return out
 }
 
-// signInHosts are the hosts outside the cluster the liaison of tenant
-// reaches: the hosts of the authorization servers the tenant's bridges name,
-// of each bridge whose own privileges are all answered. Approving a bridge is
-// what lets the liaison reach where its people sign in; nobody names those
-// hosts again for the liaison, and a bridge that goes, or loses a grant,
-// takes its hosts with it.
+// bridgeHosts are the hosts outside the cluster a component reaches for the
+// tenant's bridges, without naming them itself:
+//
+//   - the liaison reaches the hosts of the authorization servers the bridges
+//     name (signIn.oauth.issuer), where their people sign in;
+//   - a component that may speak as a person, the caller of the tenant's
+//     agent bridges, reaches the hosts granted to each agent bridge that
+//     runs nothing of its own (an api bridge to a tool server outside): the
+//     bridge is reached where it is, so its way out is its callers'.
+//
+// Each only for a bridge whose own privileges are all answered. Approving a
+// bridge is what opens these ways; nobody names the hosts again, and a
+// bridge that goes, or loses a grant, takes its hosts with it.
 //
 // For any other component there are none.
-func signInHosts(ctx context.Context, c client.Client, profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant) ([]string, error) {
-	if !isLiaison(profile) || comp == nil || tenant == nil {
+func bridgeHosts(ctx context.Context, c client.Client, profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	liaison, caller := isLiaison(profile), netpolicy.SpeaksAsPerson(profile)
+	if (!liaison && !caller) || comp == nil || tenant == nil {
 		return nil, nil
 	}
 	comps := &gentianov1alpha1.ComponentList{}
@@ -67,10 +76,11 @@ func signInHosts(ctx context.Context, c client.Client, profile *gentianov1alpha1
 		return nil, err
 	}
 	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
+	now := time.Now()
 	var out []string
 	for i := range comps.Items {
 		bridge := &comps.Items[i]
-		if !bridge.DeletionTimestamp.IsZero() {
+		if !bridge.DeletionTimestamp.IsZero() || bridge.Name == comp.Name {
 			continue
 		}
 		name := bridge.Spec.ProfileRef.Name
@@ -85,15 +95,19 @@ func signInHosts(ctx context.Context, c client.Client, profile *gentianov1alpha1
 			}
 			profiles[name] = bp
 		}
-		issuers := signInIssuers(bp)
-		if len(issuers) == 0 {
+		var issuers []string
+		if liaison {
+			issuers = signInIssuers(bp)
+		}
+		outsideBridge := caller && netpolicy.IsAgentBridge(bp) && !netpolicy.DeploysPods(bp)
+		if len(issuers) == 0 && !outsideBridge {
 			continue
 		}
 		answered, err := answeredEgress(ctx, c, bp, tenant)
 		if err != nil {
 			return nil, err
 		}
-		if len(security.PendingPrivilegesUnder(bp, bridge, time.Now(), answered)) > 0 {
+		if len(security.PendingPrivilegesUnder(bp, bridge, now, answered)) > 0 {
 			continue
 		}
 		for _, issuer := range issuers {
@@ -102,6 +116,9 @@ func signInHosts(ctx context.Context, c client.Client, profile *gentianov1alpha1
 			if u, err := url.Parse(issuer); err == nil && u.Scheme == "https" && u.Host != "" {
 				out = append(out, u.Host)
 			}
+		}
+		if outsideBridge {
+			out = append(out, security.GrantedEgressHostsUnder(bp, bridge, now, answered)...)
 		}
 	}
 	return out, nil
@@ -116,23 +133,43 @@ func liaisonOfBridge(c client.Client) handler.EventHandler {
 	})
 }
 
-// liaisonsWokenBy are the liaisons liaisonOfBridge wakes for obj.
+// liaisonsWokenBy are the components liaisonOfBridge wakes for obj: the
+// liaison, for a bridge that names where people sign in, and the callers of
+// the tenant's agent bridges, for an agent bridge that runs nothing of its
+// own.
 func liaisonsWokenBy(ctx context.Context, c client.Client, obj client.Object) []reconcile.Request {
 	bridge, ok := obj.(*gentianov1alpha1.Component)
 	if !ok || bridge.Spec.ProfileRef.Name == liaisonProfile {
 		return nil
 	}
 	bp := &gentianov1alpha1.ComponentProfile{}
-	if err := c.Get(ctx, client.ObjectKey{Name: bridge.Spec.ProfileRef.Name}, bp); err != nil || len(signInIssuers(bp)) == 0 {
+	if err := c.Get(ctx, client.ObjectKey{Name: bridge.Spec.ProfileRef.Name}, bp); err != nil {
+		return nil
+	}
+	signIn := len(signInIssuers(bp)) > 0
+	outside := netpolicy.IsAgentBridge(bp) && !netpolicy.DeploysPods(bp)
+	if !signIn && !outside {
 		return nil
 	}
 	comps := &gentianov1alpha1.ComponentList{}
 	if err := c.List(ctx, comps, client.InNamespace(bridge.Namespace)); err != nil {
 		return nil
 	}
+	callers := map[string]bool{}
+	if outside {
+		profiles := &gentianov1alpha1.ComponentProfileList{}
+		if err := c.List(ctx, profiles); err == nil {
+			for i := range profiles.Items {
+				if netpolicy.SpeaksAsPerson(&profiles.Items[i]) {
+					callers[profiles.Items[i].Name] = true
+				}
+			}
+		}
+	}
 	var out []reconcile.Request
 	for i := range comps.Items {
-		if comps.Items[i].Spec.ProfileRef.Name == liaisonProfile {
+		name := comps.Items[i].Spec.ProfileRef.Name
+		if (signIn && name == liaisonProfile) || callers[name] {
 			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&comps.Items[i])})
 		}
 	}
