@@ -63,22 +63,6 @@ func answeredEgress(ctx context.Context, c client.Client, profile *gentianov1alp
 	return security.TrustedEgress(profile, append(append([]string(nil), trusted...), security.TenantTrustedDomains(tenant)...)), nil
 }
 
-// mergeAnswered is the union of two sets of answered requests, nil when
-// both are empty.
-func mergeAnswered(a, b map[string]struct{}) map[string]struct{} {
-	if len(a) == 0 && len(b) == 0 {
-		return nil
-	}
-	out := make(map[string]struct{}, len(a)+len(b))
-	for ref := range a {
-		out[ref] = struct{}{}
-	}
-	for ref := range b {
-		out[ref] = struct{}{}
-	}
-	return out
-}
-
 // componentsAskingForEgressPrivileges wakes every Component whose profile
 // asks for egress when the PlatformSecurityPolicy changes: a domain added to
 // its trusted domains lets a waiting install go on, and one removed takes
