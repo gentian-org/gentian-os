@@ -96,7 +96,7 @@ func TestMailboxTokenSignInIsServedWhereTheTenantHasMailboxes(t *testing.T) {
 		{"mail on a server outside the cluster", withMode(""), "external", false},
 		{"no mail", withMode(""), "none", false},
 		{"a cluster that cannot answer yet", withMode(""), "", false},
-		{"the name the mode had before", withMode(""), "system", false},
+		{"the name the mode had before, still the own mail server (#1338)", withMode(""), "system", true},
 		{"the name it had before that", withMode(""), "kernel", false},
 		{"the tenant that adopts the kernel realm", platformTenantFixture(), "internal", false},
 	} {

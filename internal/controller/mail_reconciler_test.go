@@ -527,12 +527,14 @@ func TestDovecotDeployed(t *testing.T) {
 		// while skipping a present one fails IMAP visibly and is fixed by
 		// setting the value. Of the two, prefer the loud one.
 		{"", false},
-		// Anything unrecognized is not the cluster's own stack. A typo must
-		// not provision -- and neither must "system" or "kernel", the values
-		// this was called before: a claim that still says one means nothing
-		// now, and "no mail stack here" is the safe reading of nothing.
+		// "system", the name internal had, is still internal: a cluster's
+		// config says it until the claim is moved with the install run that
+		// brings this operator (#1338).
+		{"system", true},
+		// Anything else unrecognized is not the cluster's own stack. A typo
+		// must not provision -- and neither must "kernel", the name before
+		// that, which no claim has carried since.
 		{"Internal", false},
-		{"system", false},
 		{"kernel", false},
 		{"selfhosted", false},
 	} {
@@ -569,10 +571,11 @@ func TestDefaultTenantMailMode(t *testing.T) {
 		// Unset is not internal, same as the Dovecot gate: defaulting to a stack
 		// that may not exist is the failure this whole change is about.
 		{"", gentianov1alpha1.MailModeTransportOnly},
-		// A typo must not provision the cluster's own mail stack, and neither
-		// must the values this used to be called.
+		// "system", the name internal had, is internal (#1338). A typo must
+		// not provision the cluster's own mail stack, and neither must
+		// "kernel", the name before that.
+		{"system", gentianov1alpha1.MailModeSelfhosted},
 		{"Internal", gentianov1alpha1.MailModeTransportOnly},
-		{"system", gentianov1alpha1.MailModeTransportOnly},
 		{"kernel", gentianov1alpha1.MailModeTransportOnly},
 	} {
 		r := &controller.TenantReconciler{MailServiceMode: tc.mode}

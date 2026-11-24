@@ -147,8 +147,20 @@ const (
 // separate: the claim said the cluster ran its own mail while the operator,
 // reading only its Helm value, said it relayed and skipped Dovecot
 // provisioning entirely.
+//
+// "system", the name internal had, is read as internal: a claim stored under
+// it is moved to internal together with the install run that brings this
+// operator, and until then the cluster's config still says system (#1338).
 func clusterMailServiceMode(ctx context.Context, c client.Reader, fallback string) string {
-	return clusterConfigValueOr(ctx, c, clusterConfigMailModeKey, fallback)
+	return canonicalMailServiceMode(clusterConfigValueOr(ctx, c, clusterConfigMailModeKey, fallback))
+}
+
+// canonicalMailServiceMode is a mail mode by its present name.
+func canonicalMailServiceMode(mode string) string {
+	if mode == "system" {
+		return mailServiceModeInternal
+	}
+	return mode
 }
 
 // clusterExternalIMAP is where mail is read on a cluster whose mail is on a

@@ -2512,7 +2512,9 @@ spec:
             omitted clientSecretSecretRef would have Keycloak generate a new one
             and IMAP would stop validating tokens.
             */}}
-            {{- if eq (dig "mail.serviceMode" "" $ccData) "internal" }}
+            {{- /* "system" is what internal was called, and what the cluster's
+                 config says until its claim is moved (#1338). */}}
+            {{- if has (dig "mail.serviceMode" "" $ccData) (list "internal" "system") }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: Client

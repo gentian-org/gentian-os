@@ -5,8 +5,9 @@
 # it, until its claim is edited, and it has a mail stack with mailboxes in it.
 #
 # What this asserts: it renders as `internal` does. system-mail and
-# system-mail-dmz stay composed, and gentian-cluster-config says internal,
-# which is what the operator and the tenants' Composition read.
+# system-mail-dmz stay composed, and gentian-cluster-config keeps the claim's
+# word, system, which an operator older than this Composition reads as its own
+# mail; the operator and the tenants' Composition read it as internal (#1338).
 apiVersion: gentianos.io/v1alpha1
 kind: XCluster
 metadata:
