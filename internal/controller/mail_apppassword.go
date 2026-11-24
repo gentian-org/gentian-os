@@ -339,8 +339,9 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	// glob and the passdbs chain with result_failure = continue, so a file per
 	// tenant needs no configuration change and cannot overwrite another's.
 	if err := r.upsertSecret(ctx, dovecotAppPasswordsSecret, dovecotNamespace, map[string][]byte{
-		mailAppPasswordFile(mailAppPasswordApp, name) + ".users": []byte(lines.String()),
-		mailAppPasswordFile(mailAppPasswordApp, name) + ".conf":  passdbInclude(mailAppPasswordFile(mailAppPasswordApp, name)),
+		mailAppPasswordFile(mailAppPasswordApp, name) + ".users":                []byte(lines.String()),
+		mailAppPasswordFile(mailAppPasswordApp, name) + dovecotPassdbIncludeExt: passdbInclude(mailAppPasswordFile(mailAppPasswordApp, name)),
+		mailAppPasswordFile(mailAppPasswordApp, name) + dovecotLegacyPassdbConf: nil,
 	}); err != nil {
 		return err
 	}
@@ -357,7 +358,8 @@ func mailPasswdFileKeys(tenant string) []string {
 	for _, app := range []string{mailAppPasswordApp, mailSubmissionApp, mailAppSubmissionApp} {
 		keys = append(keys,
 			mailAppPasswordFile(app, tenant)+".users",
-			mailAppPasswordFile(app, tenant)+".conf")
+			mailAppPasswordFile(app, tenant)+dovecotPassdbIncludeExt,
+			mailAppPasswordFile(app, tenant)+dovecotLegacyPassdbConf)
 	}
 	return keys
 }
@@ -367,14 +369,24 @@ func mailAppPasswordFile(app, tenant string) string {
 	return app + "-" + tenant
 }
 
-// passdbInclude renders the Dovecot passdb block that reads one such file.
+// The extension of a passdb block Dovecot includes, and the one Dovecot 2.3
+// included. A 2.3 still running while the operator is already new includes
+// every *.conf, and must not read a 2.4 block; the operator removes the .conf
+// it wrote before.
+const (
+	dovecotPassdbIncludeExt = ".inc"
+	dovecotLegacyPassdbConf = ".conf"
+)
+
+// passdbInclude renders the Dovecot passdb block that reads one such file,
+// named after it: in Dovecot 2.4 every passdb has a name of its own.
 //
 // result_failure = continue so a user present in one app's file and absent from
 // another's is not rejected by the first file that lacks them; the empty
 // passwd-file Dovecot includes last is still the final deny.
 func passdbInclude(file string) []byte {
 	return []byte(fmt.Sprintf(
-		"passdb {\n  driver = passwd-file\n  args = /etc/dovecot/apppw/%s.users\n"+
+		"passdb %[1]s {\n  driver = passwd-file\n  passwd_file_path = /etc/dovecot/apppw/%[1]s.users\n"+
 			"  result_failure = continue\n  result_internalfail = continue\n}\n",
 		file))
 }
@@ -698,18 +710,30 @@ func (r *TenantReconciler) keycloakRealmHolders(ctx context.Context, realm strin
 }
 
 func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {
+	created := map[string][]byte{}
+	for k, v := range data {
+		if v != nil {
+			created[k] = v
+		}
+	}
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: ns,
 			Labels: map[string]string{managedByLabel: managedByValue},
 		},
-		Data: data,
+		Data: created,
 	}
 	return ensureObject(ctx, r.Client, desired, func(sec *corev1.Secret) bool {
 		if sec.Data == nil {
 			sec.Data = map[string][]byte{}
 		}
+		// A nil value removes the key: what an older operator wrote
+		// under another name.
 		for k, v := range data {
+			if v == nil {
+				delete(sec.Data, k)
+				continue
+			}
 			sec.Data[k] = v
 		}
 		return true

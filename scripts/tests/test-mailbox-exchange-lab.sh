@@ -16,11 +16,11 @@
 # declare it.
 #
 # Then the chain a call takes: the person's token, exchanged by the chaperone
-# for the bridge, exchanged by the bridge for "mailbox", introspected by the
-# mail server as gentian-dovecot -- and every shortcut refused. Last, Dovecot
-# itself, with the oauth2 passdb the mail reconciler writes
-# (dovecotRealmAuthFiles), signs the person in over IMAP with that token, and
-# refuses the token one step before it.
+# for the bridge, exchanged by the bridge for "mailbox" -- and every shortcut
+# refused. Last, Dovecot itself, with the oauth2 block and the realm's keys the
+# mail reconciler writes (dovecotOAuth2Conf, dovecotRealmKeys), checks the
+# token locally, signs the person in over IMAP with it, and refuses the token
+# one step before it and another person's mailbox.
 #
 # Needs docker, curl, jq, openssl and python3. Not part of CI: it pulls and
 # boots Keycloak and Dovecot.
@@ -40,14 +40,14 @@ done
 
 PINNED="$(awk '/^keycloakx:/{kc=1; next} kc && /^[^ #]/{kc=0} kc && /^  image:/{img=1; next} img && /^  [^ ]/{img=0} img && /^    tag:/{gsub(/"/, "", $2); print $2; exit}' kernel/services/keycloak-idp/manifests/values.yaml)"
 [[ -n "${PINNED}" ]] || { echo "No keycloakx.image.tag in kernel/services/keycloak-idp/manifests/values.yaml" >&2; exit 1; }
-DOVECOT="$(awk '/^image:/{img=1; next} img && /^[^ ]/{img=0} img && /^  repository:/{r=$2} img && /^  tag:/{gsub(/"/, "", $2); t=$2} END{print r ":" t}' kernel/services/dovecot/manifests/values.yaml)"
-[[ "${DOVECOT}" == *:* && "${DOVECOT}" != ":" ]] || DOVECOT="dovecot/dovecot:2.3.21"
+# The image the chart's Deployment runs.
+DOVECOT="$(awk '$1 == "image:" && $2 ~ /^dovecot\// {print $2; exit}' kernel/services/dovecot/manifests/templates/deployment.yaml)"
+[[ -n "${DOVECOT}" ]] || { echo "No dovecot image in kernel/services/dovecot/manifests/templates/deployment.yaml" >&2; exit 1; }
 PORT="${MAILBOX_LAB_PORT:-28082}"
 IMAP_PORT="${MAILBOX_LAB_IMAP_PORT:-28143}"
 KC="http://127.0.0.1:${PORT}/auth"
-# One issuer whichever address a token is fetched or checked at, as in the
-# cluster: the tokens are fetched here and introspected by Dovecot at the
-# container's name.
+# One issuer whichever address a token is fetched at, as in the cluster: the
+# tokens are fetched here, and Dovecot accepts the issuer the realm names.
 FRONTEND="https://id.example.org/auth"
 NET="mbx-lab"
 REALM="lab"
@@ -145,7 +145,7 @@ exchange() { # <client> <secret> <subject token> <scope> — the whole answer
         -d requested_token_type=urn:ietf:params:oauth:token-type:access_token \
         --data-urlencode "scope=$4"
 }
-introspect() { # <token> — what the mail server is told
+introspect() { # <token> — what Keycloak says of it to gentian-dovecot: the audience the mail server requires
     curl -s -X POST "${TOKEN_URL}/introspect" -u "gentian-dovecot:${DOVECOT_SECRET}" --data-urlencode "token=$1"
 }
 claims() {
@@ -200,53 +200,74 @@ echo "${DOVECOT}: IMAP with the token"
 echo ""
 
 # dovecot.conf: the chart's mail layout, reduced to what a sign-in needs, and
-# the passdb and settings dovecotRealmAuthFiles writes for a realm.
+# the oauth2 settings and validation keys the mail reconciler writes
+# (dovecotOAuth2Conf, dovecotValidationKeys): Dovecot checks the token itself,
+# against the realm's published keys, filed under the app the token was
+# issued to.
 mkdir -p "${WORK}/realms"
 cat >"${WORK}/dovecot.conf" <<'CONF'
+dovecot_config_version = 2.4.0
+dovecot_storage_version = 2.4.0
 protocols = imap
 listen = *
 ssl = no
-disable_plaintext_auth = no
-auth_mechanisms = xoauth2
+auth_allow_cleartext = yes
+auth_mechanisms = plain
 auth_debug = yes
 log_path = /dev/stderr
-mail_location = maildir:/srv/mail/%d/%n
+mail_driver = maildir
+mail_home = /srv/mail/%{user | domain}/%{user | username}
+mail_path = ~
 mail_uid = 1000
 mail_gid = 1000
 first_valid_uid = 1000
-userdb {
-  driver = static
-  args = uid=1000 gid=1000 home=/srv/mail/%d/%n allow_all_users=yes
+userdb static {
+  fields {
+    uid = 1000
+    gid = 1000
+    home = /srv/mail/%{user | domain}/%{user | username}
+  }
+  userdb_static_allow_all_users = yes
 }
-!include_try /etc/dovecot/realms/*.conf
+passdb passwd-file {
+  passwd_file_path = /etc/dovecot/users
+}
+!include_try /etc/dovecot/realms/oauth2.inc
 service imap-login {
   inet_listener imap {
     port = 143
   }
 }
 CONF
-cat >"${WORK}/realms/${REALM}.conf" <<CONF
-passdb {
-  driver = oauth2
-  mechanisms = xoauth2
-  args = /etc/dovecot/realms/${REALM}.oauth2.ext
-  result_failure = continue
-  result_internalfail = continue
+: >"${WORK}/users"
+cat >"${WORK}/realms/oauth2.inc" <<CONF
+auth_mechanisms {
+  xoauth2 = yes
+  oauthbearer = yes
+}
+oauth2 {
+  introspection_mode = local
+  client_id = gentian-dovecot
+  client_secret = ${DOVECOT_SECRET}
+  username_attribute = email
+  scope = mailbox
+  issuers = ${FRONTEND}/realms/${REALM}
+  oauth2_local_validation {
+    dict file {
+      dict_file_path = /etc/dovecot/realms/validation-keys
+    }
+  }
 }
 CONF
-cat >"${WORK}/realms/${REALM}.oauth2.ext" <<CONF
-introspection_mode = post
-introspection_url = http://gentian-dovecot:${DOVECOT_SECRET}@mbx-keycloak:8080/auth/realms/${REALM}/protocol/openid-connect/token/introspect
-client_id = gentian-dovecot
-client_secret = ${DOVECOT_SECRET}
-username_attribute = email
-active_attribute = active
-active_value = true
-scope = mailbox
-CONF
+# The realm's signing keys, once for each app that may be given "mailbox":
+# the key Dovecot looks up is shared/<the token's azp>/<alg>/<kid>.
+curl -sf "${KC}/realms/${REALM}/protocol/openid-connect/certs" \
+    | jq -r --arg azp "${BRIDGE}" '.keys[] | select(.use == "sig") | "shared/\($azp)/\(.alg)/\(.kid)", (. | tojson)' \
+    >"${WORK}/realms/validation-keys"
 chmod -R a+rX "${WORK}"
 docker run -d --name mbx-dovecot --network "${NET}" -p "127.0.0.1:${IMAP_PORT}:143" \
     -v "${WORK}/dovecot.conf:/etc/dovecot/dovecot.conf:ro" -v "${WORK}/realms:/etc/dovecot/realms:ro" \
+    -v "${WORK}/users:/etc/dovecot/users:ro" \
     "${DOVECOT}" >/dev/null
 for _ in $(seq 1 30); do
     python3 -c "import socket; socket.create_connection(('127.0.0.1', ${IMAP_PORT}), 2).close()" 2>/dev/null && break
@@ -277,8 +298,8 @@ check "the mail server signs the person in with the bridge's mailbox token" '[[ 
     "  ${GOT}
 $(docker logs --tail 20 mbx-dovecot 2>&1)"
 GOT="$(imap_login bob@example.org "${MAILBOX}")"
-check "and not into another person's mailbox" '[[ "${GOT}" != ok ]]' "  ${GOT}"
+check "and not into another person's mailbox" '[[ "${GOT}" == refused:* ]]' "  ${GOT}"
 GOT="$(imap_login ada@example.org "${APP}")"
-check "the token the bridge is handed is refused" '[[ "${GOT}" != ok ]]' "  ${GOT}"
+check "the token the bridge is handed is refused" '[[ "${GOT}" == refused:* ]]' "  ${GOT}"
 
 finish

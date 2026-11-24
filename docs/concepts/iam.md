@@ -759,9 +759,10 @@ that is shown instead of mailed does not, so that account's address stays
 unverified.
 
 **Token introspection checks the audience.** From 26.6 a client may introspect
-only tokens that name it in `aud`. Dovecot validates an XOAUTH2 token by
-introspecting it as `gentian-dovecot`, so a mailbox opens only for a token that
-names `gentian-dovecot`, and which tokens do is declared:
+only tokens that name it in `aud`. The mail server does not introspect: Dovecot
+checks an XOAUTH2 token itself, against the realm's keys, and requires `gentian-dovecot` in `aud`
+(`client_id`), so a mailbox opens only for a token that names
+`gentian-dovecot`, and which tokens do is declared:
 
 - Each tenant realm on a cluster with its own mail server has the client scope
   `mailbox`. Its one mapper adds `gentian-dovecot` to the audience of an access

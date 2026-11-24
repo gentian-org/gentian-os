@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -18,9 +19,13 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"net/url"
+	"io"
+	"maps"
+	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -51,9 +56,10 @@ const (
 	mailPostfixVirtualDomainsConfigMap = "mail-postfix-virtual-domains"
 	mailDovecotDomainsConfigMap        = "mail-dovecot-domains"
 
-	// dovecotRealmAuthSecret holds Dovecot's XOAUTH2 configuration, two files per
-	// Keycloak realm whose users have mailboxes. A Secret rather than a ConfigMap
-	// because the files carry the introspection client secret.
+	// dovecotRealmAuthSecret holds Dovecot's token check: each Keycloak realm
+	// whose users have mailboxes, and the oauth2 block and validation keys
+	// written from them (ensureDovecotRealmAuth). A Secret rather than a
+	// ConfigMap because the block carries gentian-dovecot's secret.
 	//
 	// It replaces dovecot-tenant-oidc-values, which held a single values.yaml key
 	// rewritten by every tenant reconcile — so the last tenant to reconcile owned
@@ -640,11 +646,10 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 			return false, fmt.Errorf("register Dovecot domain config: %w", err)
 		}
 
-		// 5. Wait for gentian-dovecot in the tenant realm, which IMAP XOAUTH2
-		//    introspection authenticates as. tenant-default composes the client;
-		//    this only waits for it, because steps 6 and 7 configure Dovecot to
-		//    introspect with it and would otherwise point at a client that does
-		//    not exist yet.
+		// 5. Wait for gentian-dovecot in the tenant realm, the audience Dovecot
+		//    requires of a token. tenant-default composes the client; this only
+		//    waits for it, because the mapper that adds it to a token's audience
+		//    leaves it out while the client does not exist.
 		if ready, err := r.dovecotTenantClientReady(ctx, tenant); err != nil {
 			return false, fmt.Errorf("check Dovecot tenant OIDC client: %w", err)
 		} else if !ready {
@@ -653,7 +658,11 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 
 		// 6. Add this tenant's realm to Dovecot's XOAUTH2 configuration. Additive, so a
 		//    second tenant does not displace the first — see ensureDovecotRealmAuth.
-		if err := r.ensureDovecotRealmAuth(ctx, keycloakRealmName(tenant)); err != nil {
+		clients, err := r.mailboxTokenClients(ctx, tenant)
+		if err != nil {
+			return false, fmt.Errorf("list the apps that open mailboxes with a token: %w", err)
+		}
+		if err := r.ensureDovecotRealmAuth(ctx, keycloakRealmName(tenant), clients); err != nil {
 			return false, fmt.Errorf("configure Dovecot realm auth: %w", err)
 		}
 	}
@@ -1257,8 +1266,8 @@ const kernelMailRegistryKey = "_kernel"
 //
 // Everything else in this file is driven by a Tenant, so on a cluster with no
 // tenants none of it runs: the kernel domain was never a virtual mailbox domain,
-// the kernel realm never appeared in Dovecot's auth config, and the introspection
-// client was only ever created in tenant realms. The cluster admin lives in the
+// the kernel realm never appeared in Dovecot's auth config, and gentian-dovecot
+// was only ever created in tenant realms. The cluster admin lives in the
 // kernel realm with an address at the kernel domain, so all three are needed
 // before that mailbox works — and none of them depend on a tenant existing.
 func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
@@ -1279,7 +1288,7 @@ func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
 		return nil
 	}
 
-	// 2. The introspection client in the kernel realm, which cluster-default
+	// 2. gentian-dovecot in the kernel realm, which cluster-default
 	//    composes. Not Ready yet is not an error; the next operator start or
 	//    tenant event picks it up.
 	if ready, err := r.kernelDovecotClientReady(ctx); err != nil {
@@ -1289,7 +1298,9 @@ func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
 	}
 
 	// 3. Kernel realm in Dovecot's XOAUTH2 configuration, then reload if changed.
-	if err := r.ensureDovecotRealmAuth(ctx, r.KernelRealm); err != nil {
+	// No app of the kernel realm is given "mailbox" (tenantHasTokenMailboxes),
+	// so the realm brings its issuer and no keys.
+	if err := r.ensureDovecotRealmAuth(ctx, r.KernelRealm, nil); err != nil {
 		return fmt.Errorf("configure kernel realm auth: %w", err)
 	}
 	return r.ensureDovecotAuthReload(ctx)
@@ -1356,72 +1367,218 @@ func (r *TenantReconciler) ensureDovecotDomainConfig(ctx context.Context, tenant
 	return r.Update(ctx, cm)
 }
 
-// dovecotRealmAuthFiles renders the two Dovecot files that let one Keycloak realm
-// authenticate IMAP.
+// Dovecot checks a mailbox token itself (Dovecot 2.4, oauth2 local
+// validation): the signature against the realm's published keys, the issuer
+// among the realms registered here, gentian-dovecot in the audience, the scope
+// "mailbox", and the expiry. The mailbox opened is the one of the token's email
+// claim, and the name the mail program gave has to be that address.
 //
-// Dovecot's oauth2 passdb takes a single introspection URL, so multi-realm support
-// is multiple passdb blocks rather than one parameterized block. Each realm gets a
-// `<realm>.conf` holding the passdb and a `<realm>.oauth2.ext` holding its
-// settings; dovecot.conf includes only *.conf, so the .ext files are read via the
-// passdb args and never included as configuration themselves.
+// Dovecot 2.4 has one oauth2 configuration for the whole server, not one per
+// realm, so what each realm adds is kept in entries of its own and the two
+// files Dovecot reads are written from all of them:
 //
-// result_failure = continue is what makes several realms work at all. Dovecot
-// stops at the first passdb that answers definitively, so without it a token from
-// the second realm would be rejected by the first realm's introspection and never
-// reach its own.
+//   - <realm>.issuer  the realm's issuer, as its discovery document names it;
+//   - <realm>.keys    the realm's signing keys, in Dovecot's dict-file format;
+//   - oauth2.inc      the oauth2 block, every registered issuer in it;
+//   - validation-keys every realm's keys, the dict Dovecot looks keys up in.
 //
-// scope is the second of two gates. Keycloak answers active only for a token
-// whose audience names gentian-dovecot, and the mail server then also wants
-// the scope "mailbox" among the token's scopes: both arrive only on a token
-// that an app with the scope asked for by name (mailbox_token_signin.go). The
-// mailbox opened is the one of the token's email claim, and the name the mail
-// program gave has to be that address -- neither changed here.
+// Dovecot looks a key up as shared/<azp>/<alg>/<kid>: under the app the token
+// was issued to. So each key is written once for every app of the realm that
+// may be given "mailbox" (requires.services.mail.imap.tokenSignIn). The app
+// adds nothing to the check -- the audience and the scope are what only such
+// an app's tokens carry -- it is only where Dovecot looks.
 //
-// The client's name and secret are in the introspection address itself.
-// Dovecot 2.3 authenticates an introspection only with what that address
-// carries: client_id and client_secret are for its password grant, and an
-// introspection without the URL's user is sent with no credential, which
-// Keycloak answers 401 -- every token refused
-// (scripts/tests/test-mailbox-exchange-lab.sh).
-func dovecotRealmAuthFiles(realmName, keycloakURL, clientSecret string) (passdbConf string, ext string) {
-	passdbConf = fmt.Sprintf(`# Realm %[1]s — generated by the gentian-os mail reconciler. Do not edit.
-passdb {
-  driver = oauth2
-  mechanisms = xoauth2
-  args = %[2]s/%[1]s.oauth2.ext
-  result_failure = continue
-  result_internalfail = continue
-}
-`, realmName, dovecotRealmAuthMountPath)
+// oauth2.inc, not oauth2.conf: Dovecot 2.3 included every *.conf in this
+// directory, and a 2.3 still running while the operator is already new must
+// not read a 2.4 block.
+//
+// What is lost against introspection: Dovecot no longer asks Keycloak whether
+// a token is still active, so a person disabled or signed out keeps mail access
+// until the token in hand expires (minutes).
+const (
+	dovecotOAuth2Include   = "oauth2.inc"
+	dovecotValidationKeys  = "validation-keys"
+	dovecotRealmIssuerExt  = ".issuer"
+	dovecotRealmKeysExt    = ".keys"
+	dovecotLegacyRealmExt  = ".oauth2.ext"
+	dovecotLegacyRealmConf = ".conf"
+)
 
-	introspection := strings.TrimSuffix(keycloakURL, "/") + "/realms/" + realmName + "/protocol/openid-connect/token/introspect"
-	if u, err := url.Parse(introspection); err == nil {
-		u.User = url.UserPassword(dovecotOIDCClientID, clientSecret)
-		introspection = u.String()
+// realmSigningKey is one key of a realm's JWKS, as published.
+type realmSigningKey struct {
+	Kid string
+	Alg string
+	JWK string // the key's JSON, compact
+}
+
+// fetchRealmSigning reads a realm's issuer and signing keys from Keycloak at
+// the address the operator reaches it at. A variable so that tests answer
+// for Keycloak.
+var fetchRealmSigning = func(ctx context.Context, keycloakURL, realm string) (string, []realmSigningKey, error) {
+	base := strings.TrimSuffix(keycloakURL, "/") + "/realms/" + realm
+	var doc struct {
+		Issuer string `json:"issuer"`
 	}
-	ext = fmt.Sprintf(`introspection_mode = post
-introspection_url = %s
-client_id = %s
-client_secret = %s
-username_attribute = email
-active_attribute = active
-active_value = true
-scope = %s
-`, introspection, dovecotOIDCClientID, clientSecret, mailboxScopeName)
-	return passdbConf, ext
+	if err := getRealmJSON(ctx, base+"/.well-known/openid-configuration", &doc); err != nil {
+		return "", nil, err
+	}
+	if doc.Issuer == "" {
+		return "", nil, fmt.Errorf("realm %s: the discovery document names no issuer", realm)
+	}
+	var set struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+	if err := getRealmJSON(ctx, base+"/protocol/openid-connect/certs", &set); err != nil {
+		return "", nil, err
+	}
+	keys, err := signingKeys(set.Keys)
+	return doc.Issuer, keys, err
 }
 
-// ensureDovecotRealmAuth adds one realm's XOAUTH2 configuration to the shared
-// Dovecot auth Secret, keyed by realm.
+func getRealmJSON(ctx context.Context, address string, into any) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", address, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("read %s: %d", address, resp.StatusCode)
+	}
+	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(into)
+}
+
+// signingKeys are the keys of a JWKS that sign: a key that says it is for
+// encryption, or names no key id or algorithm, is left out.
+func signingKeys(raw []json.RawMessage) ([]realmSigningKey, error) {
+	var keys []realmSigningKey
+	for _, one := range raw {
+		var head struct {
+			Kid string `json:"kid"`
+			Alg string `json:"alg"`
+			Use string `json:"use"`
+		}
+		if err := json.Unmarshal(one, &head); err != nil {
+			return nil, fmt.Errorf("a key of the realm's set: %w", err)
+		}
+		if head.Kid == "" || head.Alg == "" || (head.Use != "" && head.Use != "sig") {
+			continue
+		}
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, one); err != nil {
+			return nil, err
+		}
+		keys = append(keys, realmSigningKey{Kid: head.Kid, Alg: strings.ToUpper(head.Alg), JWK: compact.String()})
+	}
+	return keys, nil
+}
+
+// dovecotRealmKeys is a realm's part of the validation dict: each key under
+// each app that may be given "mailbox". Sorted, so that the same realm always
+// writes the same bytes.
+func dovecotRealmKeys(clients []string, keys []realmSigningKey) string {
+	clients = slices.Clone(clients)
+	slices.Sort(clients)
+	clients = slices.Compact(clients)
+	keys = slices.Clone(keys)
+	slices.SortFunc(keys, func(a, b realmSigningKey) int { return strings.Compare(a.Kid+a.Alg, b.Kid+b.Alg) })
+	var b strings.Builder
+	for _, azp := range clients {
+		for _, key := range keys {
+			// The dict-file format: a line with the key, a line with the
+			// value. Dovecot escapes a "/" in azp and kid as %2f, and "%" as
+			// %25; JSON compacted has no line break to escape.
+			fmt.Fprintf(&b, "shared/%s/%s/%s\n%s\n", dictPathPart(azp), key.Alg, dictPathPart(key.Kid), key.JWK)
+		}
+	}
+	return b.String()
+}
+
+func dictPathPart(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "%", "%25"), "/", "%2f")
+}
+
+// dovecotOAuth2Conf is the oauth2 block for every registered realm.
+// client_id is what the audience must name; Dovecot wants a secret beside
+// it, and it is gentian-dovecot's, though local validation sends nothing.
+func dovecotOAuth2Conf(issuers []string, clientSecret string) string {
+	issuers = slices.Clone(issuers)
+	slices.Sort(issuers)
+	issuers = slices.Compact(issuers)
+	return fmt.Sprintf(`# Generated by the gentian-os mail reconciler. Do not edit.
+# The token mechanisms come with the block they need: listed without it,
+# Dovecot's auth process does not start.
+auth_mechanisms {
+  xoauth2 = yes
+  oauthbearer = yes
+}
+oauth2 {
+  introspection_mode = local
+  client_id = %s
+  client_secret = %s
+  username_attribute = email
+  scope = %s
+  issuers = %s
+  oauth2_local_validation {
+    dict file {
+      dict_file_path = %s/%s
+    }
+  }
+}
+`, dovecotOIDCClientID, clientSecret, mailboxScopeName, strings.Join(issuers, " "),
+		dovecotRealmAuthMountPath, dovecotValidationKeys)
+}
+
+// dovecotRealmAuthData is the Secret's data after one realm's entries are set:
+// the realm's own entries, the two files written from every realm's, and the
+// realm files of Dovecot 2.3 gone.
+func dovecotRealmAuthData(existing map[string][]byte, realm, issuer, keys, clientSecret string) map[string][]byte {
+	data := map[string][]byte{}
+	for k, v := range existing {
+		if strings.HasSuffix(k, dovecotLegacyRealmExt) ||
+			(strings.HasSuffix(k, dovecotLegacyRealmConf) && k != dovecotOAuth2Include) {
+			continue
+		}
+		data[k] = v
+	}
+	data[realm+dovecotRealmIssuerExt] = []byte(issuer)
+	data[realm+dovecotRealmKeysExt] = []byte(keys)
+
+	var names []string
+	for k := range data {
+		if strings.HasSuffix(k, dovecotRealmIssuerExt) {
+			names = append(names, strings.TrimSuffix(k, dovecotRealmIssuerExt))
+		}
+	}
+	slices.Sort(names)
+	var issuers []string
+	var all strings.Builder
+	for _, name := range names {
+		issuers = append(issuers, string(data[name+dovecotRealmIssuerExt]))
+		all.Write(data[name+dovecotRealmKeysExt])
+	}
+	data[dovecotOAuth2Include] = []byte(dovecotOAuth2Conf(issuers, clientSecret))
+	data[dovecotValidationKeys] = []byte(all.String())
+	return data
+}
+
+// ensureDovecotRealmAuth sets one realm's entries in the shared Dovecot auth
+// Secret and writes the two files Dovecot reads from all of them. clients are
+// the apps of the realm that may be given "mailbox", by client id.
 //
-// A Secret, not a ConfigMap, because the files carry the client secret Dovecot
-// authenticates to Keycloak with.
+// A Secret, not a ConfigMap, because oauth2.inc carries gentian-dovecot's
+// secret.
 //
 // Keyed by realm, because the object this replaced held a single "values.yaml" and
 // rewrote it on every tenant reconcile — so with two tenants the last one to
 // reconcile owned the only introspection target and the other tenant's users could
 // not log in. Its shape assumed one tenant.
-func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName string) error {
+func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName string, clients []string) error {
 	if realmName == "" {
 		return fmt.Errorf("realm name is empty")
 	}
@@ -1434,10 +1591,10 @@ func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName
 	if err != nil {
 		return fmt.Errorf("read Dovecot OIDC client secret: %w", err)
 	}
-
-	passdbConf, ext := dovecotRealmAuthFiles(realmName, keycloakURL, clientSecret)
-	confKey := realmName + ".conf"
-	extKey := realmName + ".oauth2.ext"
+	issuer, keys, err := fetchRealmSigning(ctx, keycloakURL, realmName)
+	if err != nil {
+		return fmt.Errorf("read realm %s's signing keys: %w", realmName, err)
+	}
 
 	secret := &corev1.Secret{}
 	err = r.Get(ctx, types.NamespacedName{Name: dovecotRealmAuthSecret, Namespace: mailNamespace}, secret)
@@ -1448,21 +1605,41 @@ func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName
 				Namespace: mailNamespace,
 				Labels:    map[string]string{managedByLabel: managedByValue},
 			},
-			StringData: map[string]string{confKey: passdbConf, extKey: ext},
+			Data: dovecotRealmAuthData(nil, realmName, issuer, dovecotRealmKeys(clients, keys), clientSecret),
 		})
 	}
 	if err != nil {
 		return err
 	}
-	if string(secret.Data[confKey]) == passdbConf && string(secret.Data[extKey]) == ext {
+	want := dovecotRealmAuthData(secret.Data, realmName, issuer, dovecotRealmKeys(clients, keys), clientSecret)
+	if maps.EqualFunc(secret.Data, want, bytes.Equal) {
 		return nil
 	}
-	if secret.Data == nil {
-		secret.Data = make(map[string][]byte)
-	}
-	secret.Data[confKey] = []byte(passdbConf)
-	secret.Data[extKey] = []byte(ext)
+	secret.Data = want
 	return r.Update(ctx, secret)
+}
+
+// mailboxTokenClients are the client ids of the tenant's apps that may be
+// given "mailbox": the apps whose sign-in tokens the mail server is to accept
+// (mailboxTokenSignIn, which renders the scope onto their clients).
+func (r *TenantReconciler) mailboxTokenClients(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	if !tenantHasTokenMailboxes(tenant, clusterMailServiceMode(ctx, r.Client, ""), r.KernelRealm) {
+		return nil, nil
+	}
+	var clients []string
+	for _, app := range tenant.Spec.Apps {
+		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
+		}
+		if declaresMailboxTokenSignIn(profile) {
+			clients = append(clients, profile.Services().Identity.OIDC.ClientID)
+		}
+	}
+	return clients, nil
 }
 
 // ensureDovecotAuthReload makes Dovecot pick up a realm that was just added.
@@ -1486,8 +1663,15 @@ func (r *TenantReconciler) ensureDovecotAuthReload(ctx context.Context) error {
 		return err
 	}
 
+	// The validation keys are left out: Dovecot reads that dict again when
+	// the file changes, so a new app or a new key of a realm needs no restart.
+	// A key the realm stopped publishing stays in Dovecot's memory until the
+	// next restart.
 	keys := make([]string, 0, len(secret.Data))
 	for k := range secret.Data {
+		if k == dovecotValidationKeys || strings.HasSuffix(k, dovecotRealmKeysExt) {
+			continue
+		}
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -1633,8 +1817,9 @@ func (r *TenantReconciler) registerSubmissionIdentity(ctx context.Context, app, 
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
+	_, legacy := sec.Data[file+dovecotLegacyPassdbConf]
 	if argon2idLineMatches(string(sec.Data[file+".users"]), password) &&
-		string(sec.Data[file+".conf"]) == string(passdbInclude(file)) {
+		string(sec.Data[file+dovecotPassdbIncludeExt]) == string(passdbInclude(file)) && !legacy {
 		return nil
 	}
 	line, err := argon2idPasswdLine(user, password)
@@ -1642,8 +1827,9 @@ func (r *TenantReconciler) registerSubmissionIdentity(ctx context.Context, app, 
 		return err
 	}
 	return r.upsertSecret(ctx, dovecotAppPasswordsSecret, dovecotNamespace, map[string][]byte{
-		file + ".users": []byte(line + "\n"),
-		file + ".conf":  passdbInclude(file),
+		file + ".users":                []byte(line + "\n"),
+		file + dovecotPassdbIncludeExt: passdbInclude(file),
+		file + dovecotLegacyPassdbConf: nil,
 	})
 }
 

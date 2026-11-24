@@ -18,12 +18,11 @@ import (
 
 // Opening a mailbox with a sign-in token is a declared requirement.
 //
-// The mail server validates a token by asking Keycloak's introspection
-// endpoint as the client gentian-dovecot, and Keycloak (26.6 on) answers
-// "active" only for a token that names the asking client in its audience. No
-// token does unless something puts it there, so which apps' tokens open
-// mailboxes is decided by who is given the audience -- and that is the apps
-// whose profile declares requires.services.mail.imap.tokenSignIn.
+// The mail server checks a token itself, against the realm's keys, and
+// accepts it only when its audience names gentian-dovecot. No token does
+// unless something puts it there, so which apps' tokens open mailboxes is
+// decided by who is given the audience -- and that is the apps whose profile
+// declares requires.services.mail.imap.tokenSignIn.
 //
 // Three objects carry it, and this file writes none of them:
 //
@@ -32,8 +31,8 @@ import (
 //     (tenant-default.yaml, beside the gentian-dovecot client);
 //   - that scope as an OPTIONAL scope of the declaring app's own sign-in
 //     client (apprender), from the fact this file puts on the render;
-//   - "scope = mailbox" in the mail server's check of each realm
-//     (dovecotRealmAuthFiles), so the audience alone is not enough.
+//   - "scope = mailbox" in the mail server's check (dovecotOAuth2Conf), so the
+//     audience alone is not enough.
 //
 // Optional, so a token carries the scope and the audience only when the app
 // asked for "mailbox" at that sign-in. The token the app holds for its own
