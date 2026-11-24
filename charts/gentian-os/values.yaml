@@ -240,6 +240,12 @@ director:
   # openbao.address; empty there, it reads no credential.
   vaultRole: gentian-os-director
   vaultAudience: vault://gentian-os-director
+  # How often the mover looks for newer builds, and how long a fetched
+  # catalog index is reused, as Go durations ("30s"). Empty is five minutes
+  # each. A development cluster that follows a develop channel shortens both,
+  # so that a published build arrives within a minute.
+  updaterEvery: ""
+  catalogueCache: ""
 
   committer:
     name: gentian-director

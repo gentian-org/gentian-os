@@ -43,6 +43,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
@@ -153,6 +154,10 @@ type Fetcher struct {
 	// kept as an OCI artifact is read with. Nil is a director that reads no
 	// such catalogue.
 	Registries Registries
+	// CacheFor is how long a fetched index, or a pulled artifact, is reused.
+	// Zero is indexTTL. A development cluster that follows a channel
+	// published many times a day shortens it.
+	CacheFor time.Duration
 	// indexCache holds each source's index between fetches. See index.go.
 	indexCache
 	// ociCache holds each pulled artifact for as long. See oci.go.

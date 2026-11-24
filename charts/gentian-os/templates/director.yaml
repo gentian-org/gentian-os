@@ -230,6 +230,16 @@ spec:
           env:
             - name: DIRECTOR_LISTEN
               value: ":8080"
+            {{- with .Values.director.updaterEvery }}
+            # How often the mover looks for newer builds (updater.go).
+            - name: DIRECTOR_UPDATER_EVERY
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.director.catalogueCache }}
+            # How long a fetched catalog index is reused (catalogue/index.go).
+            - name: DIRECTOR_CATALOGUE_CACHE
+              value: {{ . | quote }}
+            {{- end }}
             # Identity comes from the issuer and from nowhere else. The public
             # URL is what tokens carry; the in-cluster one is where keys are
             # fetched, which is not the same address from inside.
