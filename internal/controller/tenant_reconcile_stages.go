@@ -127,6 +127,11 @@ type tenantReconcileState struct {
 	// first administrator does not hold the position yet.
 	firstAdministratorResult ctrl.Result
 
+	// waits is what each app is still waiting for in the kernel, as the
+	// data-plane stage found it: an app here is held back, the others go on
+	// (appWaits).
+	waits appWaits
+
 	// statusAtEntry is the Tenant status as this reconcile found it, so a
 	// short-circuit can tell a write that changes something from one that
 	// changes nothing. Set by runTenantReconcileStages before any stage runs:
@@ -137,6 +142,8 @@ type tenantReconcileState struct {
 
 func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *tenantReconcileState) (ctrl.Result, error) {
 	state.statusAtEntry = state.tenant.Status.DeepCopy()
+	// Before any stage: an uninstall waits for nothing a stage can wait for.
+	r.pruneUninstalledComponents(ctx, state.tenant)
 	stages := []struct {
 		stage ReconcileStage
 		run   func(context.Context, *tenantReconcileState) (ctrl.Result, error)
@@ -338,61 +345,69 @@ func (r *TenantReconciler) reconcileTenantStageBootstrap(ctx context.Context, st
 	return ctrl.Result{}, nil
 }
 
+// reconcileTenantStageDataPlane makes the tenant's kernel resources: its
+// realm and the apps' clients in it, and each app's PostgreSQL, MariaDB,
+// bucket and cache.
+//
+// What the whole tenant needs -- the realm, its groups, its first
+// administrator -- ends the reconcile while it is not there, as before. What
+// one app needs does not: it is recorded in state.waits, that app is held back
+// in the apps stage, and the reconcile goes on for every other app. The
+// results are kept, and finalize asks to run again while any of them waits.
+// An error still ends the reconcile: it is not a wait.
 func (r *TenantReconciler) reconcileTenantStageDataPlane(ctx context.Context, state *tenantReconcileState) (ctrl.Result, error) {
 	tenant := state.tenant
+	waits := appWaits{}
+	state.waits = waits
 
-	identityResult, err := r.ensureIdentity(ctx, tenant)
+	identityResult, err := r.ensureIdentityFor(ctx, tenant, waits)
 	if err != nil {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.identityResult = identityResult
-	if identityResult.RequeueAfter > 0 {
+	if identityResult.RequeueAfter > 0 && len(waits) == 0 {
+		// The tenant's own identity, not one app's client.
 		return identityResult, nil
 	}
 
-	databaseResult, err := r.ensureDatabase(ctx, tenant)
+	databaseResult, err := r.ensureDatabase(ctx, tenant, waits)
 	if err != nil {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.databaseResult = databaseResult
-	if databaseResult.RequeueAfter > 0 {
-		return databaseResult, nil
-	}
 
-	mariadbResult, err := r.ensureMariaDB(ctx, tenant)
+	mariadbResult, err := r.ensureMariaDB(ctx, tenant, waits)
 	if err != nil {
 		r.setCondition(tenant, conditionMariaDBReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.mariadbResult = mariadbResult
-	if mariadbResult.RequeueAfter > 0 {
-		return mariadbResult, nil
-	}
 
-	storageResult, err := r.ensureStorage(ctx, tenant)
+	storageResult, err := r.ensureStorage(ctx, tenant, waits)
 	if err != nil {
 		r.setCondition(tenant, conditionStorageReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.storageResult = storageResult
-	if storageResult.RequeueAfter > 0 {
-		return storageResult, nil
-	}
 
-	cacheResult, err := r.ensureCache(ctx, tenant)
+	cacheResult, err := r.ensureCache(ctx, tenant, waits)
 	if err != nil {
 		r.setCondition(tenant, conditionCacheReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.cacheResult = cacheResult
-	return cacheResult, nil
+	if len(waits) > 0 {
+		log.FromContext(ctx).Info("apps held back for their kernel resources; the tenant's other apps go on",
+			"tenant", tenant.Name, "waiting", waits.describe())
+	}
+	return ctrl.Result{}, nil
 }
 
 func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, state *tenantReconcileState) (ctrl.Result, error) {
@@ -416,7 +431,7 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 		return ctrl.Result{}, fmt.Errorf("ensure tenant drop-ins: %w", err)
 	}
 
-	appsResult, err := r.reconcileTenantApps(ctx, tenant)
+	appsResult, err := r.reconcileTenantApps(ctx, tenant, state.waits)
 	if err != nil {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)

@@ -687,6 +687,15 @@ func (r *TenantReconciler) Placements(ctx context.Context) (placement.Answer, er
 // those: the label says which ones are installs. Uninstalling is a commit
 // that removes the entry, and this is where the cluster follows it.
 func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	return r.ensureAppComponentsHolding(ctx, tenant, nil)
+}
+
+// ensureAppComponentsHolding is ensureAppComponents holding back the apps in
+// waits: one whose kernel resources are not there yet gets no Component, and
+// one that has its Component keeps it as it is -- not moved to another build,
+// not given other add-ons -- until they are. It stays wanted, so it is not
+// removed. Every other app is made and changed as usual.
+func (r *TenantReconciler) ensureAppComponentsHolding(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) error {
 	wanted := map[string]struct{}{}
 	for _, app := range tenant.Spec.Apps {
 		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
@@ -694,15 +703,22 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 			return err
 		}
 		wanted[profileName] = struct{}{}
+		for _, addon := range app.Addons {
+			if addon != "" {
+				wanted[addon] = struct{}{}
+			}
+		}
+		if waits.holds(profileName) {
+			continue
+		}
 		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Digest, app.Addons, activePins(app), app.Config,
 			moveRecord{at: app.MovedAt, by: app.MovedBy}); err != nil {
 			return err
 		}
 		for _, addon := range app.Addons {
-			if addon == "" {
+			if addon == "" || waits.holds(addon) {
 				continue
 			}
-			wanted[addon] = struct{}{}
 			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, app.PinOf(addon), nil, nil, nil, moveRecord{}); err != nil {
 				return err
 			}

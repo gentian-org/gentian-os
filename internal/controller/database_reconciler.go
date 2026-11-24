@@ -50,7 +50,7 @@ var cnpgClusterName = envvar.Or("CNPG_CLUSTER_NAME", "postgres")
 
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.
-func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) (ctrl.Result, error) {
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -73,6 +73,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 		if !roleJobDone {
 			allDone = false
 			pendingJobs = append(pendingJobs, roleJobName(tenant.Name, appName))
+			waits.add(appName, "its PostgreSQL role")
 			continue
 		}
 
@@ -82,6 +83,7 @@ func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov
 		}
 		if !dbReady {
 			allDone = false
+			waits.add(appName, "its PostgreSQL database")
 		}
 	}
 
