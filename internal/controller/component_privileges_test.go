@@ -316,3 +316,79 @@ func TestThePlatformAnswersTheRequestsOfAProfileItShips(t *testing.T) {
 		t.Fatalf("hosts nobody named do not wait: %v", pending)
 	}
 }
+
+// A grant withdrawn while the component runs closes its way at once: the
+// component waits for the request again, and its policy no longer opens what
+// the grant opened.
+func TestAWithdrawnGrantLeavesTheNetworkPolicyAtOnce(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	_ = networkingv1.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	tenant := acmeTenantFixture()
+	profile := profileRequestingEgress("nextcloud")
+	comp := &gentianov1alpha1.Component{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "nextcloud", Namespace: tenantNamespaceName(tenant),
+			Finalizers: []string{componentFinalizer},
+		},
+		Spec: gentianov1alpha1.ComponentSpec{
+			ProfileRef: gentianov1alpha1.ProfileRef{Name: "nextcloud"},
+			Class:      gentianov1alpha1.ComponentClassApp,
+			Privileges: []gentianov1alpha1.PrivilegeGrant{{
+				Privilege: "egress/smtp-relay", Approver: "u-tom",
+				ApprovedAt: metav1.Now(), Reason: "agreed in the security review",
+			}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(tenant.DeepCopy(), profile, comp).
+		WithStatusSubresource(&gentianov1alpha1.Component{}).Build()
+	r := &ComponentReconciler{Client: c, Scheme: scheme}
+	ctx := context.Background()
+	key := client.ObjectKeyFromObject(comp)
+	opens := func() bool {
+		t.Helper()
+		np := &networkingv1.NetworkPolicy{}
+		err := c.Get(ctx, types.NamespacedName{Name: componentNetworkPolicyName(comp), Namespace: comp.Namespace}, np)
+		if err != nil {
+			return false
+		}
+		for _, rule := range np.Spec.Egress {
+			for _, to := range rule.To {
+				if to.IPBlock != nil && to.IPBlock.CIDR == "203.0.113.0/24" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatal(err)
+	}
+	if !opens() {
+		t.Fatal("the granted rule is not in the policy")
+	}
+
+	got := &gentianov1alpha1.Component{}
+	if err := c.Get(ctx, key, got); err != nil {
+		t.Fatal(err)
+	}
+	got.Spec.Privileges = nil
+	if err := c.Update(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Get(ctx, key, got); err != nil {
+		t.Fatal(err)
+	}
+	if ready := componentReadyCondition(got); ready == nil || ready.Reason != "PrivilegesPending" {
+		t.Fatalf("Ready = %+v, want PrivilegesPending once the grant is withdrawn", ready)
+	}
+	if opens() {
+		t.Fatal("the withdrawn rule is still in the policy while the component waits")
+	}
+}

@@ -512,6 +512,17 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	comp.Status.OutgoingHosts, _ = splitOwnHosts(granted, own)
 	if len(comp.Status.PendingPrivileges) > 0 {
+		// The policy follows the live grants while the component waits, too:
+		// a grant withdrawn or run out closes its way now, not once whatever
+		// is pending was answered. Written from the grants alone, it only
+		// ever narrows what a running pod reaches.
+		models, err := modelAccessFor(ctx, r.Client, comp, profile, tenant)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
+			return ctrl.Result{}, fmt.Errorf("network policy while waiting: %w", err)
+		}
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
 			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
 			componentRequeue)
