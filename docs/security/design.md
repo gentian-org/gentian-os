@@ -704,17 +704,18 @@ told it is the only thing there is.
 
 ### 2.16 Who may open a mailbox with a sign-in token
 
-Only on a cluster whose `mail.serviceMode` is `system`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). For a token, four things have to hold, and each is checked by a different party:
+Only on a cluster whose `mail.serviceMode` is `system`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). A token with the scope `mailbox` comes from one of two places: a sign-in at which an app's own client asked for it, or, for an agent bridge, an exchange of the token the chaperone hands the bridge for one call. For a token, four things have to hold, and each is checked by a different party:
 
 | Check | By | What makes it true |
 | --- | --- | --- |
-| The token names `gentian-dovecot` in its audience | Keycloak, when Dovecot introspects as `gentian-dovecot` | the realm's client scope `mailbox`, whose mapper adds that audience to an access token |
+| The token names `gentian-dovecot` in its audience | Keycloak, when Dovecot introspects as `gentian-dovecot` (the client's name and secret are in the introspection address, the one credential Dovecot 2.3 sends with an introspection) | the realm's client scope `mailbox`, whose mapper adds that audience to an access token |
 | The token carries the scope `mailbox` | Dovecot (`scope = mailbox`) | the client asked for `mailbox` at that sign-in, and has the scope |
-| The client has the scope | Keycloak, at sign-in (`invalid_scope` otherwise) | the app's profile declares `requires.services.mail.imap.tokenSignIn`; the scope is an optional scope of that app's own client and of no other |
+| The client has the scope | Keycloak, at sign-in or exchange (`invalid_scope` otherwise) | the profile declares `requires.services.mail.imap.tokenSignIn`; the scope is an optional scope of that profile's own client and of no other |
 | The mailbox is the person's | Dovecot | the user is the token's `email` claim, and the address the mail program gave has to equal it |
 
 So an app that declares it can open the mailbox of a person who signed in to it, with the token of the sign-in at which it asked for `mailbox`, for as long as that token is valid. It cannot open anybody else's, and its other tokens -- the ones it holds for its own session or relays to what it calls -- open none. An app that does not declare it cannot obtain such a token at all, and a token of another realm is introspected by a realm that does not know it.
 
+- **An agent bridge gets the token by exchange, one call at a time.** A bridge has no sign-in: the chaperone hands it the person's token made out to the bridge's profile name, after the rights check and, for a run, under the person's mandate. A bridge that declares `tokenSignIn` has a client of its own that only exchanges (standard token exchange; no flow, no redirect, `fullScopeAllowed` off), named after the profile so that it is in that token's audience, and confidential (admission holds it to all three). It exchanges that token for `mailbox`, uses the result for the call and keeps nothing. Keycloak exchanges only a token that names the asking client, and grants `mailbox` only to a client that has it: the token the bridge is handed opens no mailbox, another bridge cannot exchange it, and a bridge that does not declare it gets no `mailbox` token (`scripts/tests/test-mailbox-exchange-lab.sh`, against the pinned Keycloak and Dovecot). The gate in front of the exchange is the chaperone's: the person's rights, and their mandate for a run.
 - **The declaration is a grant, so it is explicit.** `mail.imap: {}` alone means the app reads mail and is given the server's address; it does not make its tokens mailbox keys.
 - **Withdrawn with the declaration.** A profile that stops declaring it keeps its optional scopes without `mailbox`; tokens already issued stay valid until they expire.
 - **A token with the scope is a mailbox key wherever it travels.** An app should ask for `mailbox` in a sign-in of its own for mail and not relay that token.
@@ -929,7 +930,7 @@ the code does.
 | Address names the platform keeps | `internal/hostnames`, asked by the director and the operator (§2.11) |
 | Default profiles the installer places | Written only when the file hashes to the digest its catalog's index lists, or to a pin, with its bundle and origin (§2.11). The index is not signed. The operator holds the Component it creates for a default profile to the bundle recorded with the profile; nothing apart from the profile states that digest |
 | Mail: one proxy faces the internet, the mail servers do not | `kernel/services/mail-edge`, in `system-mail-dmz`: PROXY protocol, TLS passed through, limits per client address (§2.8). Egress from `system-mail` is open |
-| A mailbox opened with a sign-in token | Only for an app that declares `requires.services.mail.imap.tokenSignIn`, by the scope `mailbox` (§2.16) |
+| A mailbox opened with a sign-in token | Only for a profile that declares `requires.services.mail.imap.tokenSignIn`, by the scope `mailbox`: an app at a sign-in of its own, an agent bridge by exchange of the chaperone's token for one call (§2.16) |
 | A catalog kept as an OCI artifact | Read with the credential of a repository its owner declared, the registry held to the address rules, manifest and layer to their digests (§2.17) |
 | Sign-in sidecar | Only from a cluster catalog's bundle pinned by digest, never in the kernel realm (§2.12). It can become anybody in its app |
 | The rights check for a component (`requires.services.rights`) | A key per component for one question at the bouncer -- may this person use that app of my tenant -- instead of the store's key (`rights_check.go`, `internal/bouncer/check.go`). Platform-trust profiles only |

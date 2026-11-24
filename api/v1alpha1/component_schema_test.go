@@ -596,7 +596,18 @@ spec:
 		"    - {name: tools, caller: agents, callee: app, protocol: mcp, speaksAs: person, endpoint: {service: tools, port: 8765, path: /mcp}}\n"
 	toOutside := "  bridge:\n    ways:\n    - {name: tools, caller: agents, callee: outside, protocol: mcp, speaksAs: person}\n"
 	toPartner := "  bridge:\n    ways:\n    - {name: tools, caller: agents, callee: partner, protocol: mcp, speaksAs: person, endpoint: {service: tools, port: 8765, path: /mcp}}\n"
+	toPlatform := "  bridge:\n    ways:\n    - {name: tools, caller: agents, callee: platform, protocol: mcp, speaksAs: person, endpoint: {service: tools, port: 8765, path: /mcp}}\n"
 	partners := "  requires:\n    services:\n      partners: {call: [store]}\n"
+	mailbox := func(clientID, accessType, redirect string) string {
+		client := "clientId: " + clientID
+		if accessType != "" {
+			client += ", accessType: " + accessType
+		}
+		if redirect != "" {
+			client += ", redirectUris: [\"" + redirect + "\"]"
+		}
+		return "  requires:\n    services:\n      identity: {oidc: {" + client + "}}\n      mail: {imap: {tokenSignIn: true}}\n"
+	}
 	for _, c := range []struct{ name, spec, want string }{
 		{"an agent bridge to an app of the tenant", toApp + chart, ""},
 		{"an agent bridge told the app's add-ons", toApp + "    addonsValuesPath: tools.active\n" + chart, ""},
@@ -613,6 +624,15 @@ spec:
 		{"an endpoint on a way from a device", "  bridge:\n    app: {profile: nextcloud}\n    ways:\n" +
 			"    - {name: files, caller: device, callee: app, protocol: webdav, speaksAs: person, paths: [/dav/], endpoint: {service: x, port: 80, path: /}}\n" + chart, "only for a way whose caller is agents"},
 		{"add-ons told without an app", toOutside + "    addonsValuesPath: tools.active\n" + api, "it needs spec.bridge.app"},
+
+		// A bridge that opens mailboxes has a client of its own, which only
+		// exchanges the token made out to the profile's name.
+		{"an agent bridge with a client that exchanges", toApp + chart + mailbox("x", "CONFIDENTIAL", ""), ""},
+		{"an agent bridge to a service of the platform", toPlatform + chart + mailbox("x", "CONFIDENTIAL", ""), ""},
+		{"a bridge's client under another name", toApp + chart + mailbox("tools", "CONFIDENTIAL", ""), "only exchanges the chaperone's token"},
+		{"a bridge's public client", toApp + chart + mailbox("x", "PUBLIC", ""), "only exchanges the chaperone's token"},
+		{"a bridge's client of no access type", toApp + chart + mailbox("x", "", ""), "only exchanges the chaperone's token"},
+		{"a bridge's client with a redirect", toApp + chart + mailbox("x", "CONFIDENTIAL", "https://x.example/cb"), "only exchanges the chaperone's token"},
 	} {
 		expect(t, c.name, v.check(t, head+c.spec, ""), c.want)
 	}

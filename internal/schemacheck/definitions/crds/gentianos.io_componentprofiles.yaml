@@ -35,6 +35,10 @@ spec:
         description: |-
           ComponentProfile is a catalog entry for a system service, an app or an
           agent. The cluster holds only the profiles something installed refers to.
+
+          A bridge's own client signs nobody in: it only exchanges the token the
+          chaperone hands the bridge, whose audience is the profile's name, so the
+          client has to be called that, confidential and without a redirect.
         properties:
           apiVersion:
             description: |-
@@ -409,6 +413,7 @@ spec:
                           - agents
                           - outside
                           - partner
+                          - platform
                           type: string
                         caller:
                           description: Caller is who opens the calls.
@@ -5931,6 +5936,15 @@ spec:
             || !has(self.spec.requires.services.identity.oidc.audiences) || self.spec.requires.services.identity.oidc.audiences.all(a,
             a.startsWith(self.metadata.name + ''-'') && size(a) > size(self.metadata.name)
             + 1)'
+        - message: 'a bridge''s requires.services.identity.oidc is a client that only
+            exchanges the chaperone''s token: clientId is the profile''s name, accessType
+            CONFIDENTIAL, no redirectUris'
+          rule: '!has(self.spec.bridge) || !has(self.spec.requires) || !has(self.spec.requires.services)
+            || !has(self.spec.requires.services.identity) || !has(self.spec.requires.services.identity.oidc)
+            || (self.spec.requires.services.identity.oidc.clientId == self.metadata.name
+            && has(self.spec.requires.services.identity.oidc.accessType) && self.spec.requires.services.identity.oidc.accessType
+            == ''CONFIDENTIAL'' && (!has(self.spec.requires.services.identity.oidc.redirectUris)
+            || size(self.spec.requires.services.identity.oidc.redirectUris) == 0))'
     served: true
     storage: true
     subresources:
