@@ -1159,6 +1159,12 @@ app's cookie does not work on it, and `apex` entries cannot use it.
 `basic`, `bearer`, `jwt` and `signature` are refused on a perimeter entry:
 the platform verifies no password, token or signature there.
 
+An entry that the cluster's own pods reach and the internet does not is
+`surface: inside`, `authMode: app`, with a `subDomain`; the ways the app
+reaches out are `requires.privileges.egress`. Which to declare for what the
+app needs, with an example of each:
+[custom-catalogs.md §4.1c](custom-catalogs.md#41c-reaching-the-app-and-letting-it-reach-out).
+
 **Behind sign-in: the `Authorization` header as the app's own.** A gateway
 entry may ask for one thing of the same approver:
 
@@ -1188,7 +1194,7 @@ changes an approved entry from `none` to `app`, or adds
 `clientAuthorization`, is a request again until it is approved as that.
 
 **Address names an app cannot take.** No entry of an app or an add-on, on
-either surface, may use one of the platform's names as its `subDomain` (or as
+any surface, may use one of the platform's names as its `subDomain` (or as
 the component's name, where it states none): `desktop`, `admin`, `store`,
 `console`, `platform`, `id`, `auth`, `login`, `signin`, `sign-in`, `sso`,
 `account`, `accounts`, `sync`, or anything below one (`x.admin`). `desktop`, `admin`

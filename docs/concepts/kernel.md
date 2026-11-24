@@ -165,7 +165,7 @@ composition against it. The decisions behind the layout are AD-7 to AD-11
 | `system-<function>` | one engine per namespace, named by the function a component's `requires.services` entry asks for: `system-postgresql`, `system-mariadb`, `system-cache` (Valkey), `system-s3` (SeaweedFS), `system-authorization` (the app instance of OpenFGA and the arbiter), `system-mail` (Postfix with the DKIM signer and the per-tenant keys, Dovecot), `system-llm`; no public route | the Cluster claim; the unconditional ones on every cluster, the rest on demand (§7) | platform administrator | other system functions; every tenant boundary |
 | `system-<function>-dmz` | the internet-facing edge of a system service whose protocol needs one: a stateless listener holding one credential to its backend and no data. `system-mail-dmz` is a proxy on `:25`, `:587` and `:993` (`kernel/services/mail-edge`) in front of Postfix and Dovecot; `system-turn-dmz` is the TURN relay, all edge, no inner part | the Cluster claim | platform administrator | the service's backend; every tenant |
 | `tenant-<t>` | the tenant's instances of class `app` and `bridge`, its desktop and administration console, and what the operator creates around them: quota, network policies, Services, ExternalSecrets, Jobs, HTTPRoutes | the operator, per tenant | tenant administrator through the director | every other tenant; the kernel; system services beyond declared requirements |
-| `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry a perimeter approver has enabled ([app-catalog.md §17.5](app-catalog.md)) | the operator, from the tenant's enabled entries | perimeter approver through the director ([security/design.md §2.14](../security/design.md)) | the tenant's own instances |
+| `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` or `surface: inside` entry a perimeter approver has enabled ([app-catalog.md §17.5](app-catalog.md)) | the operator, from the tenant's enabled entries | perimeter approver through the director ([security/design.md §2.14](../security/design.md)) | the tenant's own instances |
 
 `shared-<app>` is the namespace of a `shared-app` instance, a planned class not
 yet implemented ([app-catalog.md §13.5](app-catalog.md)).
@@ -184,7 +184,16 @@ A Gateway is a **kernel resource**, in `kernel-edge`: created and reconciled by
 the operator, configured from the Cluster claim. A tenant gets *listeners* on
 it and owns `HTTPRoute`s only; under merged Gateways listener uniqueness is
 class-wide, so a tenant that could create a Gateway could claim another
-tenant's hostname ([routing.md §2.1](routing.md)).
+tenant's hostname ([routing.md §2.1](routing.md)). The `inside` Gateway and
+the `outgoing-<n>` Gateways in the same namespace are kernel resources of the
+same kind, each of a class of its own ([edge.md](edge.md)).
+
+A kernel namespace's egress is set by the inventory
+(`internal/kernel/kernelnet/inventory.yaml`, field `egress`): `open` for the
+namespaces whose components reach the internet (gitops, provisioning,
+authentication, control, edge, admission, observability), `cluster` for those
+that reach only the cluster, DNS and the API server (secrets, seal, data,
+authorization; [networking.md §3](networking.md)).
 
 ### 6.2 Rules
 

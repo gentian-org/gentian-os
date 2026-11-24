@@ -2,7 +2,7 @@
 # step: A-05-envoy-gateway
 # phase: control-plane
 # requires: A-01-namespaces
-# provides: Envoy Gateway controller answering for the kernel's GatewayClass name, and the Gateway API CRDs, in the edge namespace
+# provides: Envoy Gateway controller answering for the kernel's GatewayClass name, and the Gateway API CRDs, in the edge namespace; the GatewayClasses gentian-envoy-out (outgoing connections, EnvoyProxy gentian-outgoing) and gentian-envoy-inside (inside entries, EnvoyProxy gentian-inside, a ClusterIP Service only)
 # mutates: the edge namespace, Gateway API CRDs, cluster-scoped RBAC
 # pins: envoy-gateway
 

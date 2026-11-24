@@ -363,7 +363,8 @@ The approver of an `app` entry is told that the platform does not know who calls
 removed person's app password works until the app revokes it; cookies pass in neither direction
 and the rate per client address is lower. `basic`, `bearer`, `jwt` and `signature` are refused on
 a perimeter entry: the platform verifies none of them. An approval is for the kind of entry
-it was given for; a profile that changes an approved entry's kind is a request again.
+it was given for; a profile that changes an approved entry's kind is a request again. An entry
+that only the cluster's own pods reach is `surface: inside` (§4.1c).
 `apex: true` asks for the cluster's main address, for the user tenant of a single-tenancy cluster
 only, with the approver's acknowledgement. Limits, reserved paths and the rule for such a website:
 [app-customization.md §2.10](app-customization.md).
@@ -842,6 +843,79 @@ versions that are never reused.
 `defaultForTenants`, `defaultForPlatform`, `defaultWhereStoreOffered` and the
 `gentianos.io/requires-capability` annotation are what catalogs said before `placement`; they are
 read as the placement they meant for one more release, and are then removed.
+
+### 4.1c Reaching the app and letting it reach out
+
+A profile states every way into the app (`spec.expose[]`) and every way out of the tenant
+(`spec.requires.privileges.egress[]`). Nothing else is open: a pod of a tenant reaches the
+cluster's DNS, the API server and what its declarations open, and nothing outside
+([edge.md](../concepts/edge.md)).
+
+| The app needs | The profile declares | Who decides |
+|---|---|---|
+| People use it in the browser, signed in | `expose[]`: `surface: gateway`, `authMode: oidc` | nobody: always on |
+| Pages for anyone on the internet | `surface: perimeter`, `authMode: none` | the tenant's perimeter approver |
+| Clients on the internet with a credential the app issued (sync, API keys, webhooks) | `surface: perimeter`, `authMode: app` | the tenant's perimeter approver |
+| Other components of the cluster call it with a credential the app issued; nothing outside | `surface: inside`, `authMode: app`, a `subDomain` | the tenant's perimeter approver |
+| A program acts as a person with a token of the tenant's realm (`trustTier: platform`, class `app`, at most one) | `surface: gateway`, `authMode: bearer`, a `subDomain` | the tenant's perimeter approver |
+| Hosts outside whose names the profile knows | `egress[]` with `hosts` | the tenant's perimeter approver, or a trusted domain |
+| Hosts outside that each installation chooses | `egress[]` with `hostsAtApproval: true` | the tenant's perimeter approver, who names the hosts |
+| A protocol that names no host, or an address chosen at run time | `egress[]` with `rule` | the tenant's perimeter approver, shown the addresses |
+
+One example per row:
+
+```yaml
+expose:
+  - {name: web, surface: gateway, authMode: oidc, backend: {service: notes, port: 8080}}
+  - {name: site, surface: perimeter, authMode: none, subDomain: notes-public, paths: ["/public/"], backend: {service: notes, port: 8080}}
+  - {name: dav, surface: perimeter, authMode: app, subDomain: dav, paths: ["/dav/"], backend: {service: notes, port: 8080}}
+  - {name: api, surface: inside, authMode: app, subDomain: notes-api, paths: ["/api/"], backend: {service: notes, port: 8080}}
+  # trustTier: platform only:
+  - {name: tokens, surface: gateway, authMode: bearer, subDomain: notes-mcp, backend: {service: notes, port: 8080}}
+requires:
+  privileges:
+    egress:
+      - name: graph
+        hosts: [graph.microsoft.com, login.microsoftonline.com]
+        reason: "Reads the calendars of people who connected their Microsoft account."
+      - name: erp
+        hostsAtApproval: true
+        reason: "Sends approved invoices to the ERP this installation names."
+      - name: smtp
+        rule:
+          to: [{ipBlock: {cidr: 203.0.113.25/32}}]
+          ports: [{protocol: TCP, port: 587}]
+        reason: "Submits mail to the relay at 203.0.113.25, which has no name the app could use."
+```
+
+Choosing the form of an egress request:
+
+- **The names are known: `hosts`.** One name each, lower case, `:port` where it is not 443; a
+  pattern is not a host. All of a profile's hosts are one request, answered once. The connection is
+  TLS that opens with the host's name, and passes the outgoing gateway, which records it.
+- **The installation chooses: `hostsAtApproval: true`.** The approver names the hosts
+  (`kubectl gentian apps approve <app> egress/<name> --tenant <t> --host <host>`), and the grant
+  opens those alone. No trusted domain answers such a request, and an install does not approve it.
+- **Chosen at run time, or no host name: `rule`.** A `NetworkPolicyEgressRule` by address. The
+  approver sees addresses and ports, nothing passes the gateway, and nothing records it. Never a
+  rule when the names are known.
+- **Exactly one form per request**, and a `reason` (ten characters at least) that tells the
+  approver what is reached and why, in words they can judge.
+- **A host the cluster serves itself** (another tenant's app, an inside entry) is declared under
+  `hosts` like any other. It is not carried by the gateway: the cluster's DNS gives the edge's or
+  the inside Gateway's address, and the grant opens that fleet's pods. An inside entry is reached
+  only this way.
+- **An agent bridge to a tool server outside** (packaged as `api` with a `baseUrl`) declares the
+  egress its callers use: once its requests are answered, the components that call agent bridges
+  reach those hosts.
+- **Sign-ins at outside services** (`bridge.ways[].outside.signIn.oauth.issuer`) go through the
+  liaison, which reaches those hosts once the bridge's own requests are answered. The bridge
+  declares no egress for them.
+
+The tenant's perimeter approver then answers each request in the Admin Console or with
+`kubectl gentian apps approve <app> egress/<name> --tenant <t>`, and each entry with
+`kubectl gentian exposures approve <app instance> <entry> --tenant <t>`. Operating both:
+[edge.md](edge.md).
 
 ### 4.2 Generate the index
 

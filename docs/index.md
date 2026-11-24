@@ -34,6 +34,7 @@ How to do one thing, for operators, tenant administrators and app authors.
 | [deployment.md](guides/deployment.md) | Deployment environments, promotion and release numbering |
 | [app-customization.md](guides/app-customization.md) | Customizing an installed app along the customization ladder |
 | [custom-catalogs.md](guides/custom-catalogs.md) | Publishing a catalog of your own |
+| [edge.md](guides/edge.md) | Using the edge: each way in and out, what to declare, approve and check |
 | [identity-brokering.md](guides/identity-brokering.md) | People of another realm signing in to a tenant |
 | [tenant-backup.md](guides/tenant-backup.md) | Backing up and recovering a workspace, as a tenant administrator |
 | [recovery.md](guides/recovery.md) | Recovering after a loss of a cluster, a tenant or a key |

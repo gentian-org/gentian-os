@@ -210,6 +210,20 @@ kubectl wait --for=condition=Ready pod -n kernel-edge \
   -l gateway.envoyproxy.io/owning-gateway-name=authenticated --timeout=300s
 ```
 
+The fleets for outgoing connections and for inside entries, where a grant or an
+approved inside entry has started one, are Deployments of their own in
+`kernel-edge`, spread over the nodes the same way. While one has
+no Ready replica, tenant apps reach no granted host outside, or no inside
+entry answers. Drain their replicas one at a time too, and wait for each by
+its class:
+
+```bash
+kubectl wait --for=condition=Ready pod -n kernel-edge \
+  -l gateway.envoyproxy.io/owning-gatewayclass=gentian-envoy-out --timeout=300s
+kubectl wait --for=condition=Ready pod -n kernel-edge \
+  -l gateway.envoyproxy.io/owning-gatewayclass=gentian-envoy-inside --timeout=300s
+```
+
 ### 5.2 OpenBao unseals itself
 
 No manual unseal step is needed. `openbao-transit` carries a `postStart` hook that

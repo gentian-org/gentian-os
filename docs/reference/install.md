@@ -337,7 +337,7 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
 | `GENTIAN_OPERATOR_OBJECTS_WAIT_SECS` | How long `E-05` waits for the catalog and every tenant declared in git to be synced -- their Argo CD Applications are asked again when a sync failed, as on a fresh install, where they first run before the operator's CRDs exist -- before it fails naming each with Argo CD's message. 600 by default. |
 | `GENTIAN_REQUIRE_SECRET_ENCRYPTION` | `true` makes pre-flight refuse a cluster whose Secrets are not encrypted at rest; unset or `false`, it warns. See *Secrets at rest* below. |
-| `KERNEL_NETWORK_POLICIES` | **On by default.** Step `A-01` first checks that the CNI enforces NetworkPolicy and stops if it does not, then gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, and the namespaces whose pods need no internet reach only the cluster, DNS and the API server, whose endpoints the step writes into that rule ([security/design.md §2.13](../security/design.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything but `true` removes them: §9. |
+| `KERNEL_NETWORK_POLICIES` | **On by default.** Step `A-01` first checks that the CNI enforces NetworkPolicy and stops if it does not, then gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, and the namespaces whose pods need no internet reach only the cluster, DNS and the API server, whose endpoints the step reads from the `kubernetes` EndpointSlice in `default` and writes into that rule, failing when it can read none ([security/design.md §2.13](../security/design.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything but `true` removes them: §9. |
 | `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([security/design.md §2.7](../security/design.md)). |
 | `GENTIAN_NO_EXTRA_SERVICES` | `1` leaves the extra services out of the default profiles, and the store's vendor out of the tenants' partners, as `--no-extra-services` does, takes away the ones an earlier run placed, and records `spec.catalogue.extraServices: false` on the Cluster claim so a later run keeps them out; `0` brings them back and removes the record. Unset keeps what the claim says. The operator removes the Components it placed of them once their profiles leave the catalog. |
 | `GENTIAN_USAGE_STATISTICS_URL` | Where the usage statistics report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
@@ -1113,3 +1113,16 @@ look first, by symptom:
 | "failed calling webhook" on any apply | not these rules: every webhook port admits any source. Check the webhook's pod |
 | A pod in `kernel-secrets`, `kernel-seal`, `kernel-data` or `kernel-authorization` times out reaching the API server or an outside address | that namespace's `kernel-egress` policy: the API server's endpoints it was applied with (`kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes`), or a flow outside the cluster the inventory's `egress: cluster` does not allow |
 
+
+**A tenant's app cannot reach a host outside, or an inside entry.** These
+connections pass fleets that step `A-05` installs the classes for:
+`gentian-envoy-out` for the outgoing gateway and `gentian-envoy-inside` for
+inside entries ([edge.md](../concepts/edge.md)). Where a class is
+missing, `./install.sh --only A-05` installs it.
+
+| Symptom | What to check |
+|---|---|
+| The Component waits with reason `OutgoingGatewayPending` | `kubectl get gatewayclass gentian-envoy-out` and `kubectl get gateway -n kernel-edge`: the listener for the granted host is not programmed yet |
+| A granted host times out | `status.outgoingHosts` on the Component, and the fleet's record: `kubectl -n kernel-edge logs <outgoing Envoy pod> -c envoy`, one JSON line per connection |
+| A host the Component did not get a grant for times out | the grant: `kubectl gentian apps approve <app> --tenant <t>` lists what waits |
+| An inside entry's host does not resolve from a pod | the entry's approval (`kubectl gentian exposures requests --tenant <t>`), the `inside` Gateway in `kernel-edge`, and the `# BEGIN gentian-hairpin` block of CoreDNS ([routing.md §10](../concepts/routing.md#10-in-cluster-dns-hairpin)) |

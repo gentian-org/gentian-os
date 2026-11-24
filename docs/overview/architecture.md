@@ -407,6 +407,12 @@ Multiple tenants share one cluster:
 - **Publishing without sign-in** is a `surface: perimeter` entry, served by a
   proxy in the tenant's DMZ namespace only after the tenant's perimeter
   approver approved it ([app-customization.md §2.10](../guides/app-customization.md)).
+  A `surface: inside` entry is served the same way to the cluster's own pods
+  alone.
+- **Ways out are asked for.** A tenant's pod reaches the cluster's DNS, the
+  API server and what its declarations open. A host outside is reached
+  through the outgoing gateway once its request was answered, a protocol
+  that names no host by a rule by address ([edge.md](../concepts/edge.md)).
 - **Database isolation:** each app within each tenant gets its own database
   user with grants limited to its own database.
 

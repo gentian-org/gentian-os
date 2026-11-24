@@ -18,8 +18,8 @@ decides each crossing. This page is the map. The ways in are detailed in
 | In, from inside only | the Gateway `inside`, an Envoy fleet with a cluster-internal address | `kernel-edge` | HTTP(S) to inside entries | a profile's entry and the tenant's perimeter approver |
 | In | the mail edge | `system-mail-dmz` | SMTP, submission, IMAP | the Cluster claim |
 | In | the TURN edge | `system-turn-dmz` | real-time media | a profile's `requires.services.turn` |
-| Out | the Gateway `outgoing`, an Envoy fleet of its own | `kernel-edge` | TLS and HTTP to hosts named in a grant | a profile's request and the tenant's perimeter approver, a trusted domain, or the platform for a profile it ships |
-| Out | a rule by address | the caller's own NetworkPolicy | what names no host or is not yet converted: mail to other servers, a database protocol, addresses chosen at run time | the same approver, shown as an address |
+| Out | the Gateways `outgoing-<n>`, an Envoy fleet of its own | `kernel-edge` | TLS to hosts named in a grant, passed on by the server name | a profile's request and the tenant's perimeter approver, a trusted domain, or the platform for a profile it ships |
+| Out | a rule by address | the caller's own NetworkPolicy | what names no host or is chosen at run time: mail to other servers, a database protocol, addresses chosen at run time | the same approver, shown as an address |
 | Out | the kernel's own policies | each kernel namespace | what the kernel's components fetch | the kernel's inventory |
 
 Envoy Gateway runs the three fleets. They share a controller and a namespace
@@ -68,8 +68,8 @@ address and a port, with no host to read.
 A component connects to an outside host as it always does. It is given no
 proxy address and reads no setting.
 
-- **A listener per host.** Each granted host has a listener of its own on the
-  `outgoing` Gateway, on a port of its own, and a Service that maps the
+- **A listener per host.** Each granted host has a listener of its own on one of the
+  `outgoing-<n>` Gateways, on a port of its own, and a Service that maps the
   host's port to it. The listener passes a connection on only when the TLS
   server name is that host. The fleet resolves the host itself and connects
   to the address it found, so a caller cannot steer a connection by the name
@@ -109,9 +109,8 @@ requires:
 
 - **A host is one name.** Port 443 unless the entry says otherwise. A pattern
   is not a host.
-- **One answer per request.** The hosts of one request are answered together
-  by the tenant's perimeter approver. A change to them waits for a new
-  answer.
+- **One answer per request.** A profile names all its hosts in one request,
+  and they are answered together by the tenant's perimeter approver.
 - **Hosts named at approval.** A request marked `hostsAtApproval` names no
   hosts of its own: its installation chooses them, such as the operator's
   own ERP. The approver names them, and the grant opens those and no others.

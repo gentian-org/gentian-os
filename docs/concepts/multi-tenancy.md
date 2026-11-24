@@ -16,7 +16,8 @@ type: concept
 A **tenant** is an organization. Each tenant gets:
 
 - A dedicated Kubernetes namespace (`tenant-{name}`), and a second one
-  (`tenant-{name}-dmz`) for what the tenant publishes to the internet.
+  (`tenant-{name}-dmz`) for what the tenant publishes to the internet, or
+  inside the cluster alone (an inside entry, [edge.md §2](edge.md)).
 - A dedicated Keycloak realm with its own user pool, branding, and
   password policy.
 - Per-app PostgreSQL/MariaDB databases with isolated users.
