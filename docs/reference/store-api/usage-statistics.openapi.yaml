@@ -278,7 +278,9 @@ components:
         users:
           type: [integer, "null"]
           minimum: 0
-          description: The number of enabled accounts holding a role on the app, as the cluster's rights store names them. `null` when they could not be counted.
+          description: >-
+            The number of enabled accounts holding a role on the app, as the
+            cluster's rights store names them. `null` when they could not be counted.
         addons:
           type: array
           description: |
