@@ -1251,6 +1251,32 @@ refused "--grant-integrations by somebody who may not grant installs nothing"
 is "... and asks the director for no write" "$(writes)" ""
 unset ASKS
 
+# A build whose entry keeps the app's own Authorization header says so
+# before it is installed, and --approve-authorization sends the approval
+# with the install.
+ASKS_EXPOSE='"egress":[],"exposures":[{"install":"notes","exposure":"web","kind":"signInAppAuthorization"}]'
+ASKS="{${ASKS_EXPOSE},\"mayExpose\":true}"
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef"}'
+gentian apps install notes --tenant acme
+has "an install says the app keeps its own header" "${OUT}" "notes entry web"
+has "... and that it waits, with the way to approve" "${OUT}" "install with --approve-authorization"
+lacks "... and approves nothing unasked" "$(writes)" "expose"
+
+fresh; apps_catalogue
+reply POST /v1/tenants/acme/apps/notes 202 '{"status":"installed","commit":"0123456789abcdef","exposed":[{"install":"notes","exposure":"web"}]}'
+gentian apps install notes --tenant acme --approve-authorization
+is "--approve-authorization sends what was listed with the install" \
+    "$(writes | sed 's/^POST [^ ]* //' | jq -c '.expose')" '[{"install":"notes","exposure":"web"}]'
+has "... and says it is approved" "${OUT}" "Its own Authorization header is approved, by you."
+
+ASKS="{${ASKS_EXPOSE},\"mayExpose\":false}"
+fresh; apps_catalogue
+gentian apps install notes --tenant acme --approve-authorization
+refused "--approve-authorization by somebody who is not the perimeter approver installs nothing"
+is "... and asks the director for no write" "$(writes)" ""
+unset ASKS
+
 # An entry the catalog leaves to the store (me or ee) is not in the
 # listing, only counted, so by name it is not installed from here: the store
 # is the route. Once a tenant has it, the update report moves it like any

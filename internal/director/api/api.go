@@ -1155,6 +1155,13 @@ type installRequest struct {
 	// the tenant, and a contract the build does not consume refuses the
 	// install.
 	Grant []grantedContract `json:"grant,omitempty"`
+	// Expose names entries of this build, or of the apps it comes with, that
+	// keep the app's own Authorization header and that the caller approves
+	// with the install (install_exposures.go): each is recorded as the
+	// perimeter approver's approval, by the caller, once the app is
+	// installed. It needs can_expose on the tenant, and an entry the build
+	// does not ask for refuses the install.
+	Expose []exposedEntry `json:"expose,omitempty"`
 }
 
 // givenTo reads the positions an install names, each once, without user,
@@ -1304,6 +1311,11 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	if !ok {
 		return
 	}
+	// And the app's own Authorization header, the perimeter approver's.
+	exposing, ok := s.mayExposeWithInstall(w, r, c, tenant, body.Expose)
+	if !ok {
+		return
+	}
 	// The profile itself (AD-3).
 	//
 	// Before the app entry, not after: an entry naming a profile the cluster
@@ -1377,7 +1389,7 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	// written: an approval of something it does not state is refused with
 	// nothing of the tenant's changed.
 	var asks buildAsks
-	if len(body.Approve) > 0 || len(body.Grant) > 0 {
+	if len(body.Approve) > 0 || len(body.Grant) > 0 || len(body.Expose) > 0 {
 		origin := ""
 		if source != nil {
 			origin = source.origin(tenant)
@@ -1394,6 +1406,12 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		if missing := notConsumed(body.Grant, asks.integrations); missing != "" {
 			s.fail(w, r, http.StatusUnprocessableEntity, "the install grants "+grantSummary(body.Grant)+
 				", and this build and the apps it comes with do not consume "+missing+". Nothing was installed")
+			return
+		}
+		if missing := notExposureAsked(body.Expose, asks.exposures); missing != "" {
+			s.fail(w, r, http.StatusUnprocessableEntity, "the install approves "+exposeSummary(body.Expose)+
+				", and this build and the apps it comes with do not ask for "+missing+
+				" to keep the app's own Authorization header. Nothing was installed")
 			return
 		}
 	}
@@ -1426,8 +1444,12 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	if err == nil && len(body.Grant) > 0 {
 		granted = s.grantIntegrationsWithInstall(ctx, c, tenant, granting, body.Grant, asks.integrations)
 	}
+	var exposed []exposedEntry
+	if err == nil && len(body.Expose) > 0 {
+		exposed = s.exposeWithInstall(ctx, c, tenant, exposing, body.Expose, asks.exposures)
+	}
 	if err != nil || retry == nil {
-		if err == nil && (len(came) > 0 || len(body.Approve) > 0 || len(body.Grant) > 0) {
+		if err == nil && (len(came) > 0 || len(body.Approve) > 0 || len(body.Grant) > 0 || len(body.Expose) > 0) {
 			out := map[string]any{"status": res.Status}
 			if len(came) > 0 {
 				out["installedWith"] = came
@@ -1437,6 +1459,9 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			}
 			if len(body.Grant) > 0 {
 				out["granted"] = granted
+			}
+			if len(body.Expose) > 0 {
+				out["exposed"] = exposed
 			}
 			if res.Changed {
 				out["commit"] = res.Commit

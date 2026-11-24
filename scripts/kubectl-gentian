@@ -96,7 +96,7 @@
 #                                                the internet has them: present, pending, missing, or held by another record
 #
 #   kubectl gentian apps list --tenant <tenant> [--available]
-#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--positions <a,b>] [--approve-egress] [--grant-integrations]
+#   kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--positions <a,b>] [--approve-egress] [--grant-integrations] [--approve-authorization]
 #   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
 #   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
 #   kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...
@@ -995,7 +995,7 @@ cmd_apps_list() {
 # way the director fetches the bundle from the source and installs nothing
 # unless it hashes to the digest sent.
 _apps_install() {
-    local app="$1" t="$2" positions="$3" from="" digest="" approve="false" grant="false"
+    local app="$1" t="$2" positions="$3" from="" digest="" approve="false" grant="false" expose="false"
     shift 3
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -1004,6 +1004,7 @@ _apps_install() {
             --positions) shift 2 ;;
             --approve-egress) approve="true"; shift ;;
             --grant-integrations) grant="true"; shift ;;
+            --approve-authorization) expose="true"; shift ;;
             *) shift ;;
         esac
     done
@@ -1074,11 +1075,27 @@ _apps_install() {
             granting="$(printf '%s' "${asks}" | jq -c '[.integrations[] | {install, contract}]')"
         fi
     fi
+    # Entries that keep the app's own Authorization header: said before the
+    # install, and approved with it under --approve-authorization by whoever
+    # may approve the tenant's entries (can_expose).
+    local unexposed exposing="[]"
+    unexposed="$(printf '%s' "${asks}" | jq -r '.exposures // [] | length')"
+    if [[ "${unexposed}" != "0" ]]; then
+        echo "It keeps its own Authorization header behind sign-in (its pages call the app with a token of the app's):"
+        printf '%s' "${asks}" | jq -r '.exposures[] | "  \(.install) entry \(.exposure)"'
+        if [[ "${expose}" == "true" ]]; then
+            [[ "$(printf '%s' "${asks}" | jq -r '.mayExpose')" == "true" ]] ||
+                die "--approve-authorization is the perimeter approver's of ${t}; install without it, and the app waits for their answer"
+            exposing="$(printf '%s' "${asks}" | jq -c '[.exposures[] | {install, exposure}]')"
+        fi
+    fi
     local body answer status commit message
     body="$(jq -n --arg c "${from}/${app}" --arg d "${digest}" --arg p "${positions}" --argjson a "${approving}" --argjson g "${granting}" \
+        --argjson x "${exposing}" \
         '{coordinate: $c, digest: $d} + (if $p != "" then {positions: ($p | split(","))} else {} end) +
          (if ($a | length) > 0 then {approve: $a} else {} end) +
-         (if ($g | length) > 0 then {grant: $g} else {} end)')"
+         (if ($g | length) > 0 then {grant: $g} else {} end) +
+         (if ($x | length) > 0 then {expose: $x} else {} end)')"
     answer="$(_call POST "/v1/tenants/${t}/apps/${app}" "${body}")" || exit 1
     status="$(printf '%s' "${answer}" | jq -r '.status // ""')"
     commit="$(printf '%s' "${answer}" | jq -r '.commit // "" | .[0:8]')"
@@ -1123,6 +1140,17 @@ _apps_install() {
                     echo "Granted ${granted} of ${ungranted} integrations; the rest wait for a grant in the admin console's Integrations." >&2
                 else
                     echo "They wait for a grant: install with --grant-integrations, or grant them in the admin console's Integrations."
+                fi
+            fi
+            if [[ "${unexposed}" != "0" ]]; then
+                local exposed
+                exposed="$(printf '%s' "${answer}" | jq -r '(.exposed // []) | length')"
+                if [[ "${exposed}" == "${unexposed}" ]]; then
+                    echo "Its own Authorization header is approved, by you."
+                elif [[ "${expose}" == "true" ]]; then
+                    echo "Approved ${exposed} of ${unexposed} entries; the rest wait: 'kubectl gentian exposures requests --tenant ${t}' lists them." >&2
+                else
+                    echo "Until it is approved the header is removed and the app's own calls are refused: install with --approve-authorization, or 'kubectl gentian exposures approve <app> <entry> --tenant ${t}'."
                 fi
             fi ;;
     esac
