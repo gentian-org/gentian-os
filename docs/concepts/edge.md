@@ -110,7 +110,10 @@ requires:
 - **A host is one name.** Port 443 unless the entry says otherwise. A pattern
   is not a host.
 - **One answer per request.** A profile names all its hosts in one request,
-  and they are answered together by the tenant's perimeter approver.
+  and they are answered together by the tenant's perimeter approver. The
+  grant records what it answered: the hosts, or the digest of a rule. Hosts
+  or a rule beyond what was answered wait for a new answer, and what was
+  answered stays open.
 - **Hosts named at approval.** A request marked `hostsAtApproval` names no
   hosts of its own: its installation chooses them, such as the operator's
   own ERP. The approver names them, and the grant opens those and no others.

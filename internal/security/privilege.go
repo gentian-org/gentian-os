@@ -167,22 +167,6 @@ func TenantGrants(tenant *gentianov1alpha1.Tenant, install string) []gentianov1a
 	return out
 }
 
-// EgressRulesFor are the egress rules of the privileges in granted, in the
-// profile's own order.
-func EgressRulesFor(profile *gentianov1alpha1.ComponentProfile, granted map[string]struct{}) []networkingv1.NetworkPolicyEgressRule {
-	if profile == nil || profile.Privileges() == nil {
-		return nil
-	}
-	var out []networkingv1.NetworkPolicyEgressRule
-	for i := range profile.Privileges().Egress {
-		e := &profile.Privileges().Egress[i]
-		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok && e.Rule != nil {
-			out = append(out, *e.Rule)
-		}
-	}
-	return out
-}
-
 // PendingPrivileges is what the profile asks for and no live grant answers,
 // in RequestedPrivileges' order. While this is non-empty the install waits.
 //
@@ -232,77 +216,25 @@ func GrantedEgressRules(profile *gentianov1alpha1.ComponentProfile, comp *gentia
 
 // GrantedEgressRulesUnder is GrantedEgressRules with the requests the
 // cluster's policy answers (trusted domains, a profile the platform ships)
-// counted as granted.
+// counted as granted: GrantedEgress's rules.
 func GrantedEgressRulesUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []networkingv1.NetworkPolicyEgressRule {
-	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
-		return nil
-	}
-	granted := GrantedPrivileges(comp, now)
-	if granted == nil {
-		granted = map[string]struct{}{}
-	}
-	for ref := range policy {
-		granted[ref] = struct{}{}
-	}
-	return EgressRulesFor(profile, granted)
-}
-
-// EgressHostsFor are the hosts of the egress requests in granted, as the
-// profile wrote them, in the profile's own order.
-func EgressHostsFor(profile *gentianov1alpha1.ComponentProfile, granted map[string]struct{}) []string {
-	if profile == nil || profile.Privileges() == nil {
-		return nil
-	}
-	var out []string
-	for i := range profile.Privileges().Egress {
-		e := &profile.Privileges().Egress[i]
-		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok {
-			out = append(out, e.Hosts...)
-		}
-	}
-	return out
+	return GrantedEgress(profile, componentGrants(comp), now, policy).Rules
 }
 
 // GrantedEgressHostsUnder are the hosts outside the cluster a component was
-// granted: those of its egress requests by host that a person granted or the
-// cluster's policy answers, and, for a request whose hosts are named at
-// approval, those its live grant names. The counterpart of
-// GrantedEgressRulesUnder for the requests that name hosts.
+// granted: those of its egress requests by host that a person answered or
+// the cluster's policy answers, and, for a request whose hosts are named at
+// approval, those its live grant names. GrantedEgress's hosts.
 func GrantedEgressHostsUnder(profile *gentianov1alpha1.ComponentProfile, comp *gentianov1alpha1.Component, now time.Time, policy map[string]struct{}) []string {
-	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
-		return nil
-	}
-	granted := GrantedPrivileges(comp, now)
-	if granted == nil {
-		granted = map[string]struct{}{}
-	}
-	for ref := range policy {
-		granted[ref] = struct{}{}
-	}
-	out := EgressHostsFor(profile, granted)
-	if comp == nil {
-		return out
-	}
-	for i := range profile.Privileges().Egress {
-		e := &profile.Privileges().Egress[i]
-		if e.HostsAtApproval {
-			out = append(out, ApprovalHosts(comp.Spec.Privileges, PrivilegeRef(PrivilegeEgress, e.Name), now)...)
-		}
-	}
-	return out
+	return GrantedEgress(profile, componentGrants(comp), now, policy).Hosts
 }
 
-// ApprovalHosts are the hosts the live grant of ref names, for a request
-// whose hosts are named at approval.
-func ApprovalHosts(grants []gentianov1alpha1.PrivilegeGrant, ref string, now time.Time) []string {
-	for i := range grants {
-		g := &grants[i]
-		if g.Privilege != ref || (g.ExpiresAt != nil && !now.Before(g.ExpiresAt.Time)) {
-			continue
-		}
-		return g.Hosts
+// componentGrants are the grants comp carries, none for no component.
+func componentGrants(comp *gentianov1alpha1.Component) []gentianov1alpha1.PrivilegeGrant {
+	if comp == nil {
+		return nil
 	}
-	return nil
+	return comp.Spec.Privileges
 }
 
 // TrustedEgress are the egress requests of profile that trusted domains

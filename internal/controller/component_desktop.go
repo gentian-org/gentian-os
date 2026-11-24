@@ -44,6 +44,7 @@ import (
 	gentianmeta "github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 // The desktop is the one component the OS ships itself (admin-console.md
@@ -965,9 +966,10 @@ func tenantPrivilegeGrants(tenant *gentianov1alpha1.Tenant, install string) []ge
 
 // replacedGrants are the privileges the Component carries an approval for
 // that the Tenant has approved again for other terms: another digest (the
-// definitions changed and were approved as they are now) or another expiry
-// (a renewal). Pressing the button again for the same terms is not one; that
-// approval stays as stored.
+// definitions changed and were approved as they are now), another expiry
+// (a renewal), or another record of what an egress grant answered (other
+// hosts, another rule's digest). Pressing the button again for the same
+// terms is not one; that approval stays as stored.
 func replacedGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []string {
 	have := make(map[string]gentianov1alpha1.PrivilegeGrant, len(stored))
 	for _, g := range stored {
@@ -976,14 +978,23 @@ func replacedGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []string 
 	var out []string
 	for _, g := range desired {
 		kept, ok := have[g.Privilege]
-		if !ok {
+		if !ok || sameApproval(&kept, &g) {
+			// The same approval with its record or expiry filled in or
+			// changed is written in place (keepStoredGrants): the Component's
+			// API refuses only a change of approver or approvedAt.
 			continue
 		}
-		if kept.Digest != g.Digest || !equalOptionalTime(kept.ExpiresAt, g.ExpiresAt) {
+		if !security.SameRecord(&kept, &g) || !equalOptionalTime(kept.ExpiresAt, g.ExpiresAt) {
 			out = append(out, g.Privilege)
 		}
 	}
 	return out
+}
+
+// sameApproval reports whether two grants are one approval: the same
+// approver at the same time.
+func sameApproval(a, b *gentianov1alpha1.PrivilegeGrant) bool {
+	return a.Approver == b.Approver && a.ApprovedAt.Equal(&b.ApprovedAt)
 }
 
 func equalOptionalTime(a, b *metav1.Time) bool {
@@ -1014,6 +1025,12 @@ func keepStoredGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []genti
 	out := make([]gentianov1alpha1.PrivilegeGrant, 0, len(desired))
 	for _, g := range desired {
 		if kept, ok := have[g.Privilege]; ok {
+			if sameApproval(&kept, &g) {
+				// The same approval: what the Tenant now records for it --
+				// what it answered, until when -- is taken over in place.
+				out = append(out, g)
+				continue
+			}
 			out = append(out, kept)
 			continue
 		}

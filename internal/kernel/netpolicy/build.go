@@ -41,10 +41,9 @@ func egressGrantedBy(grants []gentianov1alpha1.TenantPrivilegeGrant, install str
 	if profile == nil {
 		return nil
 	}
-	granted := security.GrantedSet(security.TenantGrants(
+	return security.GrantedEgress(profile, security.TenantGrants(
 		&gentianov1alpha1.Tenant{Spec: gentianov1alpha1.TenantSpec{Privileges: grants}},
-		install), time.Now())
-	return security.EgressRulesFor(profile, granted)
+		install), time.Now(), nil).Rules
 }
 
 // BuildInput collects tenant state for MAC policy generation.

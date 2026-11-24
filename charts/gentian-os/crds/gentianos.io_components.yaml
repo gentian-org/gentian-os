@@ -360,10 +360,12 @@ spec:
                       type: string
                     digest:
                       description: |-
-                        Digest pins an apiExtensions grant to the definitions it approved:
-                        sha256 of the request as the approver read it
-                        (security.APIExtensionDigest). A request whose definitions changed is
-                        not answered by it, and the install waits for a new approval.
+                        Digest pins a grant to what it approved: for apiExtensions, sha256 of
+                        the request as the approver read it (security.APIExtensionDigest); for
+                        an egress request by address, sha256 of its rule
+                        (security.EgressRuleDigest). A request whose definitions or rule
+                        changed is not answered by it, and the install waits for a new
+                        approval.
                       pattern: ^sha256:[0-9a-f]{64}$
                       type: string
                     expiresAt:
@@ -374,9 +376,12 @@ spec:
                       type: string
                     hosts:
                       description: |-
-                        Hosts are the hosts an egress grant opens, for a request whose hosts
-                        are named at approval (hostsAtApproval): each one name, lower case,
-                        with a port where it is not 443. Ignored for any other request.
+                        Hosts are the hosts an egress grant answered, each one name, lower
+                        case, with a port where it is not 443: for a request by host, its
+                        hosts as the approver read them; for a request whose hosts are named
+                        at approval (hostsAtApproval), the hosts the approver named. The grant
+                        opens those the request still names; a host the request adds waits
+                        for a new approval.
                       items:
                         maxLength: 259
                         pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$

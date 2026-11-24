@@ -264,9 +264,12 @@ kubectl gentian approvals list                                       # everythin
 - A decline commits nothing: the request stays pending, and the app shows who
   declined and why.
 - An approval is committed to the tenant's `spec.privileges` in git
-  (`privileges.yaml`), with the approver, time, reason, expiry and, for
-  `hostsAtApproval`, `hosts`. The operator copies it to the Component's
+  (`privileges.yaml`), with the approver, time, reason, expiry and what it
+  answered: `hosts` (the request's, or those named for `hostsAtApproval`) or,
+  for a rule, `digest`. The operator copies it to the Component's
   `spec.privileges`.
+- A later build whose request names a host or a rule the grant did not answer
+  waits for a new approval; what the grant answered stays open.
 - `apps install <app> --tenant <t> --approve-egress` approves the build's
   `hosts` and `rule` requests with the install, for the tenant's perimeter
   approver.

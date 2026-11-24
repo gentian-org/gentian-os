@@ -739,6 +739,9 @@ grant carries them in `hosts`), or `rule` (a NetworkPolicy egress rule, for a
 protocol that names no host or an address chosen at run time). The first two
 pass the outgoing gateway; a rule is opened in the component's own policy
 ([edge.md §3](edge.md)).
+A grant records what it answered (`hosts`, or for a rule its `digest`); a
+later build that asks for more waits for a new approval, and what was
+answered stays open.
 
 A request by `hosts` whose every host is in or under a trusted domain, the
 cluster's (`PlatformSecurityPolicy.spec.trustedDomains`) or the tenant's own

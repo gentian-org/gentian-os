@@ -152,43 +152,58 @@ func APIExtensionDigest(req *gentianov1alpha1.APIExtensionRequest) (string, erro
 }
 
 // LiveGrants are the grants that answer the profile's requests now: live
-// (GrantedSet), naming hosts where the request's hosts are named at
-// approval, and, for an API extension, pinned to the request as it is. An
-// approval of definitions that have since changed answers nothing, so the
-// install waits for somebody to approve what the profile now asks.
+// (GrantedSet), for an API extension pinned to the request as it is, and for
+// an egress request answering what it asks now (GrantedEgress). An approval
+// of definitions that have since changed answers nothing, nor does an egress
+// grant whose record does not cover the request, so the install waits for
+// somebody to approve what the profile now asks.
 func LiveGrants(profile *gentianov1alpha1.ComponentProfile, grants []gentianov1alpha1.PrivilegeGrant, now time.Time) map[string]struct{} {
 	out := map[string]struct{}{}
 	digests := map[string]string{}
-	atApproval := map[string]bool{}
 	if p := profile.Privileges(); p != nil {
 		for i := range p.APIExtensions {
 			if d, err := APIExtensionDigest(&p.APIExtensions[i]); err == nil {
 				digests[PrivilegeRef(PrivilegeAPIExtensions, p.APIExtensions[i].Name)] = d
 			}
 		}
-		for i := range p.Egress {
-			if p.Egress[i].HostsAtApproval {
-				atApproval[PrivilegeRef(PrivilegeEgress, p.Egress[i].Name)] = true
-			}
-		}
 	}
+	egress := GrantedEgress(profile, grants, now, nil).Answered
 	for i := range grants {
 		g := &grants[i]
 		if g.ExpiresAt != nil && !now.Before(g.ExpiresAt.Time) {
 			continue
 		}
-		if kind, _ := SplitPrivilegeRef(g.Privilege); kind == PrivilegeAPIExtensions {
+		switch kind, _ := SplitPrivilegeRef(g.Privilege); kind {
+		case PrivilegeAPIExtensions:
 			if want, ok := digests[g.Privilege]; !ok || g.Digest != want {
 				continue
 			}
-		}
-		// A request whose hosts are named at approval is answered by a
-		// grant that names them; one that names none opens nothing, and the
-		// install waits for an approval that does.
-		if atApproval[g.Privilege] && len(g.Hosts) == 0 {
-			continue
+		case PrivilegeEgress:
+			// A request the profile no longer makes is answered by
+			// nothing and opens nothing; it is counted as a grant all the
+			// same, as any other kind's is.
+			if _, asked := egressRequestNamed(profile, g.Privilege); asked {
+				if _, ok := egress[g.Privilege]; !ok {
+					continue
+				}
+			}
 		}
 		out[g.Privilege] = struct{}{}
 	}
 	return out
+}
+
+// egressRequestNamed is the profile's egress request ref names.
+func egressRequestNamed(profile *gentianov1alpha1.ComponentProfile, ref string) (*gentianov1alpha1.EgressRequest, bool) {
+	kind, name := SplitPrivilegeRef(ref)
+	p := profile.Privileges()
+	if kind != PrivilegeEgress || p == nil {
+		return nil, false
+	}
+	for i := range p.Egress {
+		if p.Egress[i].Name == name {
+			return &p.Egress[i], true
+		}
+	}
+	return nil, false
 }

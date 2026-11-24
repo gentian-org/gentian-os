@@ -241,17 +241,22 @@ type PrivilegeGrant struct {
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 
-	// Digest pins an apiExtensions grant to the definitions it approved:
-	// sha256 of the request as the approver read it
-	// (security.APIExtensionDigest). A request whose definitions changed is
-	// not answered by it, and the install waits for a new approval.
+	// Digest pins a grant to what it approved: for apiExtensions, sha256 of
+	// the request as the approver read it (security.APIExtensionDigest); for
+	// an egress request by address, sha256 of its rule
+	// (security.EgressRuleDigest). A request whose definitions or rule
+	// changed is not answered by it, and the install waits for a new
+	// approval.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	Digest string `json:"digest,omitempty"`
 
-	// Hosts are the hosts an egress grant opens, for a request whose hosts
-	// are named at approval (hostsAtApproval): each one name, lower case,
-	// with a port where it is not 443. Ignored for any other request.
+	// Hosts are the hosts an egress grant answered, each one name, lower
+	// case, with a port where it is not 443: for a request by host, its
+	// hosts as the approver read them; for a request whose hosts are named
+	// at approval (hostsAtApproval), the hosts the approver named. The grant
+	// opens those the request still names; a host the request adds waits
+	// for a new approval.
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=64
