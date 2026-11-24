@@ -543,7 +543,7 @@ validate_tsig_secret() {
     fi
     body="${secret%%=*}"
     pad=$(( ${#secret} - ${#body} ))
-    bytes=$(( ${#secret} / 4 * 3 - pad ))
+    bytes=$(( ${#secret} * 3 / 4 - pad ))
     if (( bytes < 16 )); then
         _v_fail "the TSIG secret" "too short" \
             "it decodes to ${bytes} bytes; a TSIG key is at least 16"
