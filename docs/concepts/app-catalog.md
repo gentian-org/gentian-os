@@ -146,6 +146,10 @@ spec:
     - contract: file-store
       capabilities: [webdav:read, webdav:write]
 
+  roles:                          # user and admin every app has; iam.md §1.2
+    declared:
+      - { name: project-manager, title: Project manager }
+
   secrets:
     generated:                    # made per tenant, stored in OpenBao
       - name: admin_password
@@ -183,7 +187,7 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 
 | | Fields | Takes effect |
 |---|---|---|
-| **Plain** | `package.chart`, `valueMapping`, `extraValues`, `requires.services`, `provides`, `integrations`, `secrets`, a gateway entry in `expose` with a tile | At install |
+| **Plain** | `package.chart`, `valueMapping`, `extraValues`, `requires.services`, `provides`, `integrations`, `roles` ([app-customization.md §1.2](../guides/app-customization.md)), `secrets`, a gateway entry in `expose` with a tile | At install; who holds a role is given in the tenant, never by the profile |
 | **Needs an approval on the tenant** | `requires.privileges` (pod-security waivers, egress, cluster roles); an `expose` entry for the internet; `clientAuthorization: app` | Only once approved; until then the Component waits or the entry is an ordinary one ([security/design.md §2.14](../security/design.md)) |
 | **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching`; `valueMapping.platform` `directorUrlKey`, `usherUrlKey`, `custodianUrlKey`, `registrarUrlKey`, `storeUrlKey`, `desktopUrlKey` | Refused by the schema otherwise. The annotation `gentianos.io/kernel-egress-namespaces` is ignored below this tier |
 | **Needs a pinned install from a cluster-wide catalog** | `package.composition` (the bundle's own Composition, which also needs `trustTier: platform`), `identity.sidecar` | Otherwise the operator renders the app, or the Component is held |
@@ -322,12 +326,13 @@ sequenceDiagram
     participant OP as operator
     participant XP as Crossplane
 
-    U->>D: install {catalogue/profile, digest}
+    U->>D: install {catalogue/profile, digest, positions}
     D->>D: may this person install here? (can_install_app)
     D->>C: fetch the bundle
     D->>D: bytes hash to the digest, bundle checks
-    D->>Git: commit profile bundle + entry in Tenant.spec.apps
+    D->>Git: commit profile bundle + entry in Tenant.spec.apps (with its positions)
     AC->>OP: sync ComponentProfile and Tenant
+    OP->>OP: rights store: the app, its roles, the positions given it
     OP->>OP: Component; database, storage, identity, secrets
     OP->>XP: rendered ExternalSecret + helm Release + realm client
     XP->>XP: providers reconcile them
@@ -575,7 +580,7 @@ steps, two people: the platform administrator installs the component with
 `class: shared-app` into `shared-<app>` and **offers** it to tenants, one
 `shared_instance:<p>#offered_to@tenant:<t>` tuple each, under
 `can_grant_shared`; nothing is visible to anyone yet. The tenant administrator
-then installs the app and gets its own `app` object, group, OIDC client in its
+then installs the app and gets its own `app` object, roles, OIDC client in its
 own realm, route and tile. Only the backend is shared.
 
 ```
@@ -1115,6 +1120,12 @@ spec:
   integrations:
     - contract: central-navigation
       provider: desktop
+
+  roles:                         # app-customization.md §1.2
+    user:  {inApp: [member]}
+    admin: {inApp: [admin]}
+    declared:
+      - {name: project-manager, title: Project manager, inApp: [project_admin]}
 
   secrets:
     generated: [...]

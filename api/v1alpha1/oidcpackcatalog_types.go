@@ -77,17 +77,16 @@ type OIDCPackSpec struct {
 	// ServiceClient provisions a confidential client for a backend service
 	// rather than an application users log in to.
 	//
-	// The default pack shape assumes a user-facing app: a client scope, protocol
-	// mappers, a client role, and an entitlement group that grants it. A service
-	// that only validates other clients' tokens — kernel Dovecot introspecting
-	// XOAUTH2 access tokens is the case this exists for — needs none of that. It
-	// needs client credentials and nothing else, and giving it a scope and an
-	// entitlement group would put an empty role in every realm and imply users
-	// can be granted access to it.
+	// The default pack shape assumes a user-facing app: a client scope,
+	// protocol mappers and a client role. A service that only validates other
+	// clients' tokens — kernel Dovecot introspecting XOAUTH2 access tokens is
+	// the case this exists for — needs none of that. It needs client
+	// credentials and nothing else, and giving it a scope and a role would put
+	// an empty role in every realm and imply people can be given access to it.
 	//
 	// When true, scopeName, clientRole and entitlementGroup are ignored (and may
-	// be empty), the browser flow is disabled on the client, and no scope, mapper,
-	// role or group mapping is created. publicClient must stay false: a service
+	// be empty), the browser flow is disabled on the client, and no scope, mapper
+	// or role is created. publicClient must stay false: a service
 	// client with no secret cannot authenticate to the introspection endpoint.
 	// +optional
 	ServiceClient bool `json:"serviceClient,omitempty"`
@@ -103,15 +102,18 @@ type OIDCPackSpec struct {
 	// +optional
 	ScopeDescription string `json:"scopeDescription,omitempty"`
 
-	// ClientRole is the Keycloak client role mapped from the entitlement group.
+	// ClientRole is the Keycloak client role made on the pack's client. Nobody
+	// is given it: who may use the app is the rights store's to say, and the
+	// app reads a person's roles from the token's roles claim.
 	// Required unless serviceClient is true.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=255
 	ClientRole string `json:"clientRole,omitempty"`
 
-	// EntitlementGroup is the Keycloak group name mapped to the pack client role.
-	// Required unless serviceClient is true.
+	// EntitlementGroup is read by nothing: no group is made and none is
+	// mapped to the client role, since no group of the realm carries a
+	// right. Still required unless serviceClient is true.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=255

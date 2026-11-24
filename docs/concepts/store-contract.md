@@ -982,7 +982,7 @@ so removing an app never takes its data with it by accident.
 | Cache | **kept**: the app's user in the shared instance | the app's user is **removed**; the keys it wrote are not (see the limits below) |
 | Stored credentials — the app's vault paths, and its extensions' | **kept** | **destroyed**, every version |
 | Sign-in (OIDC) client | **removed** | — (already gone) |
-| Access group, and who is in it | **kept**: the app installed again is open to the people it was open to | **destroyed**: the group, and with it every membership; likewise the group of each extension |
+| Who holds a role on it, in the rights store | **kept**: the app installed again is open to the people it was open to | **destroyed**: every entry on the app and on each extension |
 
 An app that is uninstalled and still holds data is **retained**. `GET
 /apps/retained` lists the tenant's retained apps, relayed by the usher from
@@ -1041,7 +1041,7 @@ If one of these fails the answer is `503`, and nothing was destroyed.
 Once admitted, it destroys kind by kind in the platform's one teardown order —
 the order provisioning makes things in, reversed, which the deletion of a
 tenant follows too ([data-lifecycle.md](data-lifecycle.md) §2): files, cache user,
-object storage, database, access group, stored credentials, and last the
+object storage, database, the rights store's entries (`accessGroup`), stored credentials, and last the
 provisioning records. The first step that fails ends it: the answer is `500`
 and says which step failed, what had already been destroyed and what was not
 attempted. Nothing is rolled back; every step is safe to repeat, and asking
@@ -1056,9 +1056,8 @@ The answer of a purge that completed:
   "destroyed": ["files", "cache", "objectStorage", "database", "accessGroup", "credentials", "provisioningRecords"] }
 ```
 
-The access group is removed from the tenant's own realm —
-`spec.isolation.keycloakRealm` when the tenant names one, as the platform
-tenant does, and otherwise the realm called after the tenant.
+`accessGroup` is the kind's name in the answer: what is removed is every
+entry the rights store holds on the app, who was given a role on it.
 
 Limits that remain:
 

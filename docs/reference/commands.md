@@ -101,7 +101,8 @@ whether anybody may make an account in its realm themselves
 (`--self-sign-up`, `spec.signUp.enabled`). The command says what that opens
 before it asks the director: a registration page at the cluster's identity
 provider, an e-mail confirmation and a proof-of-work check, and accounts that
-are in none of the tenant's groups and so have nothing of the platform's. For
+hold only the positions `spec.signUp.positions` names, none by default, and
+so have nothing of the platform's otherwise. For
 a tenant whose apps serve the public, not for a workspace
 ([iam.md §1.1b](../concepts/iam.md)):
 
@@ -522,8 +523,8 @@ did.
 
 **Uninstalling** removes the app from the tenant: its workloads and its
 sign-in client go, and everything it stored stays — its database, its object
-storage, its cache user, its files, its stored credentials, and the access
-group with everybody who is in it. The app is then *retained*: uninstalled,
+storage, its cache user, its files, its stored credentials, and who holds a
+role on it in the rights store. The app is then *retained*: uninstalled,
 data retained. Installing it again in the same tenant finds all of it.
 A backup taken after the uninstall goes on holding that data, as an
 uninstalled app's; a backup asked for some apps only names the ones it left
@@ -1051,10 +1052,9 @@ kubectl gentian tenants activate-admin <tenant> [--recovery-email <address>]
 ./install.sh --activate-admin                        # the platform admin
 ```
 
-The first asks the registrar, which changes nothing about a member of a
-group that holds a platform role or a person of the platform tenant who
-holds one by name, and answers 403 for the platform admin's
-account. That account's link comes from the install host, with the installer's
+The first asks the registrar, which changes nothing about a person of the
+platform tenant the Cluster claim names a role holder, and answers 403 for
+the platform admin's account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 
 ### Cluster roles held by name
@@ -1104,7 +1104,8 @@ The director's routes, all on the Cluster claim:
 | `DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | | `202` or `200 unchanged`, as above |
 
 Who holds a role over the cluster is reviewed on an interval. `review` shows
-the group members and the holders, refuses a list the registrar could not read
+the platform tenant's holders as the kernel realm knows them and the holders
+as the claim names them, refuses a list the registrar could not read
 in full, and records the review once you type `reviewed`: the claim's
 `spec.platformAccess.accessReview` keeps who reviewed, when, and when the next
 one is due (a quarter later unless `--next` names a date within the year), and
@@ -1121,11 +1122,14 @@ The holders answer carries `"accessReview": {"reviewedAt","reviewedBy","nextRevi
 The candidates are the registrar's: `GET /v1/clusters/{c}/role-candidates`,
 `can_configure`, answers `200 {"cluster", "complete", "tenants": [{"tenant","displayName","realm","platform","people": [...],"unavailable"}]}`.
 
-The members of the `admin` and `breakGlass` groups are the registrar's to read, from the
-kernel realm, and Keycloak's to change: `GET /v1/clusters/{c}/platform-role-members`,
-`can_audit`, answers `200 {"cluster", "complete", "roles": [{"role","group","members": [{"id","username","email",...}],
-"unavailable"}]}`; a group that could not be read has `members: null`,
-`unavailable: true` and makes `complete` false.
+The platform tenant's role holders, as the kernel realm knows them now, are
+the registrar's to read: `GET /v1/clusters/{c}/platform-role-members`,
+`can_audit`, answers `200 {"cluster", "complete", "roles": [{"role","members": [{"id","username","email",...}],
+"unavailable"}]}`, one line per role the claim names a holder of the platform
+tenant for. A holder the realm could not be asked about, or no longer knows,
+is listed as the claim names them, with `unavailable: true` on the role and
+`complete` false. Who holds a role is changed on the claim only (`holders
+add`/`remove`).
 
 The other way round, a tenant's administrators may let the platform's
 administrators sign in to their tenant: the switch is the tenant's own, off by
@@ -1197,8 +1201,8 @@ bao login -method=oidc -path=oidc role=cluster-admin   # opens a browser; sign i
 export BAO_TOKEN="$(bao print token)"
 ```
 
-The `cluster-admin` role admits the platform administrators' group and may
-read and write `secret/gentian-os/kernel/*`. After the handover this is the
+The `cluster-admin` role admits a token whose `gentian_cluster_roles` names
+`admin`, the cluster's administrators, and may read and write `secret/gentian-os/kernel/*`. After the handover this is the
 only way in: the installer's own token is revoked by `E-03`.
 `scripts/recovery.sh --from-vault` and the `bao kv get` examples in §11 and
 in [reference/install.md](install.md) §4 assume `BAO_ADDR` and

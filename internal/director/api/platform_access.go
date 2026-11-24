@@ -75,8 +75,9 @@ func (s *Server) roleHolders(w http.ResponseWriter, r *http.Request, _ call) {
 		"accessReview": review, "reviewDue": review.Due(time.Now())})
 }
 
-// reviewedMembers are the registrar's answer for the groups behind admin
-// and breakGlass, as the reviewer was shown it.
+// reviewedMembers are the registrar's answer for the platform tenant's role
+// holders, as the kernel realm knows them, as the reviewer was shown it. The
+// registrar sends no group; Group stays empty.
 type reviewedMembers struct {
 	Role    string `json:"role"`
 	Group   string `json:"group"`
@@ -92,9 +93,9 @@ type reviewedMembers struct {
 const defaultReviewInterval = 90 * 24 * time.Hour
 
 // reviewAccess records that the caller reviewed who holds a role over the
-// cluster: the holders the claim names, read here, and the members of the
-// role groups the caller was shown, from the registrar. One commit, whose
-// body lists both.
+// cluster: the holders the claim names, read here, and the platform
+// tenant's holders as the kernel realm knows them, which the caller was
+// shown, from the registrar. One commit, whose body lists both.
 func (s *Server) reviewAccess(w http.ResponseWriter, r *http.Request, c call) {
 	var body struct {
 		Members      []reviewedMembers `json:"members"`

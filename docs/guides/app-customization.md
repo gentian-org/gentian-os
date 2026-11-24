@@ -357,9 +357,12 @@ An app that decides on its own roles adds `roles: handOver` beside the
 model, declares `type role` with `define holder: [user]`, and gives its
 objects to `role:<name>#holder`. The platform then keeps one tuple
 `user:<realm>/<subject> holder role:<name>` per role each person holds on
-the app (`user`, `admin` and those in `spec.roles.declared`); the app writes
-none of them (403) and never sees positions
+the app (`user`, `admin` and those in `spec.roles.declared`), written by the
+operator after each projection through the arbiter's platform route
+`PUT /v1/platform/roles/{tenant}/{component}`. The app writes none of them
+(a write of a role tuple is `403`) and never sees positions
 ([app-authorization.md](../concepts/app-authorization.md) §2.6).
+`groups: mirror` is accepted and does nothing; remove it from a profile.
 
 **Never substitute an endpoint into `extraValues`.** A literal hostname comes with
 no credential — an app wired that way can only attempt unauthenticated access,
@@ -393,18 +396,66 @@ spec:
 ```
 
 - `user` and `admin` are roles every app has; `declared` are the roles
-  between them. `admin` holds them all.
-- The app reads two claims from its sign-in token: `claim`, the in-app names
-  of the roles the person holds, and `<claim>_mapped`, every in-app name the
-  profile lists. It gives the first, takes the rest of the second, and
-  leaves alone what is in neither.
-- An add-on declares its own roles; they reach the token of the app it is
+  between them. `admin` holds them all, and `includes` makes a declared
+  role's holders holders of another.
+- An add-on declares its own roles; they reach the claim of the app it is
   activated in.
-- An app that cannot read a token is told through its sync Job
-  (`spec.hooks.provisioning.syncJob`) or the sign-in sidecar (§2.3a).
+- Who holds a role is given in the tenant, through positions
+  ([iam.md §1.2](../concepts/iam.md)), never by the profile. A new install
+  is open only to the positions it is given and to All apps.
+- A declared role a new build removes or renames takes its holders with it:
+  a renamed role starts with nobody, and the positions that held the old
+  name are given the new one in the tenant. Removing it ends no session, so
+  a token already written keeps the old role until the next sign-in.
+
+**`gentian_app_roles`** is an array of strings, written by the platform's
+mapper from the rights store at every token (never cached in the realm).
+What it holds depends on who the token is for:
+
+| Token | Claim | Holds |
+|---|---|---|
+| The app's own OIDC client, where its profile or an activated add-on gives at least one role an `inApp` name | `claim` (default `gentian_app_roles`) and `<claim>_mapped` | the in-app names of the roles held, on the app and its add-ons; and every in-app name the profile lists. The app gives the first, takes the rest of the second, and leaves alone what is in neither |
+| The app's own OIDC client, where none does | none | no roles claim at all: read the exchanged token, or use another way below |
+| The token the front door exchanges for the app (`expose[].exchangeToken`) | `gentian_app_roles` | the platform's names: `user`, `admin`, declared roles, and an add-on's as `<add-on>/<role>` |
+
+The profile above, for a person holding `sales-manager`, gives:
+
+```json
+{ "gentian_app_roles": ["base.group_user", "sales_team.group_sale_manager",
+    "sales_team.group_sale_salesman"],
+  "gentian_app_roles_mapped": ["base.group_system", "base.group_user",
+    "sales_team.group_sale_manager", "sales_team.group_sale_salesman"] }
+```
+
+The same person's exchanged token carries
+`"gentian_app_roles": ["sales-manager", "salesperson", "user"]` (an add-on
+role would read `odoo-sales-ce/admin`): a declared role uses its app, so its
+holders hold `user` too, and `admin` holds every role. A role without an
+`inApp` name is left out of the app's own claim.
+
+**Which way does my app learn roles?** One of four:
+
+| Way | Declare | Use it when |
+|---|---|---|
+| Token claim | `spec.roles` with `inApp` names, or `exchangeToken` on the entry | the app signs people in with OIDC and maps a claim to its own groups or roles at each sign-in. The default |
+| Hand-over | `requires.services.authorization` with `roles: handOver` (§1.1) | the app decides per record in its own OpenFGA model and needs who holds each role there, kept current without a sign-in |
+| Sync Job | `spec.hooks.provisioning.privilegedRole` and `syncJob` | the app keeps its own administrator flag and reads no claim. Admin and user lists only, no declared roles |
+| Sign-in sidecar | `requires.services.identity.sidecar` (§2.3a) | the app speaks neither OIDC nor SAML; the handler is told `person.appAdmin` from the app's `admin` role |
+
+**The sync Job contract.** The operator runs the profile's script as the
+Job `<app>-privilege-sync` in the tenant's namespace whenever who holds a
+role on the app changes, and again after a failure. It mounts the Secret
+`<app>-app-admins` at `/etc/gentian/app-admins` and sets
+`GENTIAN_APP_ADMINS_FILE` (`members.json`: the holders of `admin`, and for
+an add-on its base's administrators), `GENTIAN_APP_USERS_FILE` (`users.json`:
+everyone holding any role on the app, administrators included), `GENTIAN_PRIVILEGED_ROLE` (`privilegedRole.name`), `GENTIAN_TENANT` and
+`GENTIAN_APP`. Each file is a JSON array of `{"id", "username", "email"}`,
+sorted by `id`; `email` is the workspace address the app sees in tokens.
+The script converges the app to exactly those lists; how to write it is
+the app profile guide's §6 in `gentian-apps`.
 
 How the token is written and what happens when a role is taken away is in
-[iam.md §1.8](../concepts/iam.md).
+[iam.md §1.8](../concepts/iam.md); testing all of this is §9.1.
 
 ---
 
@@ -1925,6 +1976,61 @@ ServiceNow and SAP shops build after the damage is done, and that Gentian can bu
 | "Tenant-specific SMTP sender name" | any | **L0/S0** | pure value, one tenant | `Tenant.spec.apps[].config.extraValues` |
 | "Propagate tenant header through OIDC logout" | upstream app (D) | **L5** | no extension point; must change request handling | build repo `patches/`, DEP-3, forwarded upstream |
 | "Odoo without the enterprise-addon nag" | Odoo | **L3** | already solved as an addon (`hide_enterprise_modules`) — **never** L5 | `odoo-modules/` |
+
+### 9.1 Integrate rights, and test them
+
+The app `acme-notes` of [custom-catalogs.md §4.1](custom-catalogs.md), in
+tenant `acme`, with the declared role `editor`:
+
+1. **Declare the roles** in the profile (`spec.roles`, §1.2) and pick the
+   way the app learns them (§1.2's table).
+2. **Install it for positions.** Nobody can open a new install until a
+   position is given it:
+
+   ```bash
+   kubectl gentian apps install acme-notes --tenant acme --positions all-apps
+   ```
+
+   A declared role is reached through a position of the tenant's own that
+   holds it (`Tenant.spec.positions`, e.g.
+   `{name: writers, roles: [{app: acme-notes, role: editor}]}`).
+3. **Give a test person the position**, in the administration console's
+   person matrix or at the registrar as a person who manages people
+   (`POST /v1/tenants/acme/actions/give`, `{"person": "<id>", "position":
+   "writers"}`, [iam.md §1.2a](../concepts/iam.md#12a-the-registrars-rights-routes)).
+   What they hold, and through what, is on the console's *Access* screen.
+4. **Check what the app is told**, after the person signs in again:
+   - token claim: decode the ID or access token the app's client receives;
+     `gentian_app_roles` lists `notes-editor` (and `notes-admin` for an
+     administrator), `gentian_app_roles_mapped` both;
+   - hand-over: read the app's store through the arbiter with the app's
+     key, `POST $AUTHORIZATION_URL/v1/read` with
+     `{"tuple_key": {"object": "role:editor"}}`; one
+     `user:<realm>/<subject> holder role:editor` per holder;
+   - sync Job: `kubectl -n tenant-acme logs job/acme-notes-privilege-sync`
+     and the lists in the Secret `acme-notes-app-admins`.
+5. **Take it again** and check that the person is signed out of the realm
+   and the app, and that the next token no longer names the role.
+
+**An app's own model** is tested before it ships, with OpenFGA's CLI and a
+test file beside the profile: `fga model test --tests tests.fga.yaml`, whose
+tuples write `role:<name>#holder` as the hand-over would. On a cluster, the
+same checks run through the arbiter with the app's key (`POST /v1/write`
+for the app's own tuples, `POST /v1/check`); a role tuple is refused there
+(`403`), so give the role to a test person instead.
+
+**A position giver** is tested from inside the component's pod, with its
+Secret `rights-check-<profile>`:
+
+```bash
+curl -s -X POST "$REGISTRAR_URL/v1/tenants/acme/actions/give-position" \
+  -H "Authorization: Bearer $RIGHTS_CHECK_KEY" -H 'Content-Type: application/json' \
+  -d '{"person": "<id>", "position": "customer"}'
+```
+
+`200 {"changed": true, "holds": true, ...}` for a position `spec.positionGivers`
+names for it; `403` for any other, and for every position that administers
+([custom-catalogs.md §4.1](custom-catalogs.md)).
 
 ---
 

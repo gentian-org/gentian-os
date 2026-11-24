@@ -104,10 +104,10 @@ realm):
   confidential, JWT Authorization Grant on for every accepted partner's
   provider, authenticated by the app's Kubernetes service account token.
 
-The person's group memberships never cross, and of their roles only the one
-claim `gentian_roles` carries: whether they administer the tenant, or the
-cluster. What a linked person may do at Y is Y's own groups, as for any
-account of Y; what Y makes of the role is Y's.
+The person's positions never cross, and of their roles only the one claim
+`gentian_roles` carries, answered from the rights store: whether they
+administer the tenant, or the cluster. What a linked person may do at Y is
+what Y gives them, as for any account of Y; what Y makes of the role is Y's.
 
 **Service account trust.** Each realm with a partner app holds the identity
 provider `kubernetes` (Keycloak's Kubernetes provider) for the cluster's
@@ -172,7 +172,7 @@ spec:
   which the usage statistics report tells a store; two administrators
   exchange another one with the issuer.
 - **Same cluster.** Two tenants of one cluster use `signInTo`/`signInFrom`,
-  which give groups ([identity-brokering.md](../guides/identity-brokering.md)); a
+  which give positions ([identity-brokering.md](../guides/identity-brokering.md)); a
   partner gives none.
 
 ## 4. Linking once
@@ -288,7 +288,7 @@ works is the assertion's lifetime plus Y's token's.
   their records by it; and, in an assertion, the person's role on the tenant
   (`gentian_roles`, §2): that they administer the tenant, or the cluster, and
   nothing when they do neither. Y never sees X's user id, name, e-mail
-  address or groups, not at linking, not in an assertion. There is no switch
+  address or positions, not at linking, not in an assertion. There is no switch
   to share more.
 - **A partner that needs a contact** (billing) asks the person for it in its
   own pages, under its own privacy notice.

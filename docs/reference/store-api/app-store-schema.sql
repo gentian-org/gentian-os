@@ -218,7 +218,7 @@ create table app_keyword (
 -- -----------------------------------------------------------------------------
 -- Portal tiles — the presentation half only
 --
--- A tile's existence, link suffix, link target and allowed group are routing
+-- A tile's existence, link suffix, link target and who may open it are routing
 -- and authorization. They stay in ComponentProfile.expose in the cluster and
 -- must never be served from here: a store that can rename a tile is cosmetic,
 -- a store that can change who may see it is a privilege escalation path.

@@ -131,8 +131,8 @@ The platform then makes, in the source realm, the client `broker-to-<target>`
 realm the identity provider `tenant-<source>`, shown on the login page under
 the source tenant's name. It trusts the source's verified addresses, and
 the operator gives each person who arrives the positions named. A position
-may be `user` (who may enter the tenant) or one of `spec.positions`, never
-an administrator's. Either side taking its line away ends
+may be `user` (who may enter the tenant), `all-apps` (`user`, and every
+installed app) or one of `spec.positions`, never one that administers. Either side taking its line away ends
 the sign-in.
 
 An entry may give its positions only to some of the source's people: those

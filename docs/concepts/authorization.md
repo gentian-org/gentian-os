@@ -116,12 +116,33 @@ answers only a token of the realm the claim names for it.
 | Bouncer, rights check | `cluster:<c>`; `tenant:<t>` | `can_audit`, `can_configure`; `can_read_evidence`, asked for a person of the platform tenant by a component of that tenant whose profile declares `requires.services.rights.audit`: the evidence service and the console that shows it; `break_glass` of the cluster, by one that declares `requires.services.rights.breakGlass` |
 | Usher | `tenant:<t>`; `cluster:<c>`; per tile the object the tile names | `can_enter`, `can_view`, `can_expose` on the tenant; `can_audit`, `can_configure`, `can_approve`, `can_approve_perimeter` on the cluster; `can_launch` on `app:<t>/<p>` for an app tile and `can_administer` on `tenant:<t>` for an administration tile, the relation and object the tile declares (`internal/controller/tile_projection_reconciler.go`) |
 | Custodian | `cluster:<c>` for kernel and system credentials; `tenant:<t>` for a tenant's; `app:<t>/<p>` for a component's own, which follow its tenant's | `can_read_credential` to see that one is required, whether it is set and by whom, never its value; `can_write_credential` to set it |
-| Registrar | `tenant:<t>` for a tenant's people, what they hold and realm settings; `cluster:<c>` for handing a tenant's administrator account over and for the count of accounts | `can_manage_users`, `can_enter`; `can_configure`, `can_audit`. Whatever the store answers, it refuses a change to a group the Cluster claim names for a platform role, to a person in one, or to a person of the platform tenant the claim names a role holder (`ErrProtected`, [iam.md §1.1c](iam.md)). `can_configure` on the cluster reads the role candidates (`GET /v1/clusters/{c}/role-candidates`) |
+| Registrar | `tenant:<t>` for a tenant's people, what they hold and realm settings; `cluster:<c>` for handing a tenant's administrator account over and for the count of accounts | `can_manage_users`, `can_enter`; `can_configure`, `can_audit`. Whatever the store answers, it refuses a change to a person of the platform tenant the Cluster claim names a role holder, and any write to a group (`ErrProtected`, [iam.md §1.1c](iam.md)). `can_configure` on the cluster reads the role candidates (`GET /v1/clusters/{c}/role-candidates`) |
 | Director, tenant verbs | `tenant:<t>` | `can_install_app`, `can_set_policy` (the realm's password policy among it: the policy is in git, the tenant Composition applies it, and a rebuilt realm comes back with it), `can_grant`, `can_manage_users`, `can_expose`, `can_approve_privilege`, `can_administer`, `can_enter`, `can_view` |
 | Director, install | `tenant:<t>` | `can_install_app`, and nothing else. Nothing is asked about the app or the catalog it comes from: whether the tenant may have it is decided where its artifacts are pulled, by the credential the tenant holds for their repository (AD-3) |
 | Director, catalogs | `cluster:<c>` to add or remove a catalog for every tenant or for one tenant; `tenant:<t>` for a tenant's administrator adding or removing one for their own tenant | `can_configure` on the cluster, `can_audit` to read what it declares. `can_install_app` on the tenant, and not the whole check: the director refuses unless the cluster's administrator delegated it to that tenant, and removes only what the tenant added. `can_view` to read what a tenant installs from |
 | Director, cluster verbs | `cluster:<c>` | `can_configure`, `can_deploy_tenant`, `can_operate_system`, `can_install_shared`, `can_grant_shared`, `can_approve`, `can_approve_perimeter`, `can_set_admission`, `can_edit_raw`, `can_audit`. A pod-security waiver takes effect only where `can_approve` put it on the cluster's allowlist and granted it on the install, both in one approval if need be; the allowlist alone waives nothing. A cluster role is asked for by name from a set the platform defines, and is bound to the component's ServiceAccount only where the set has it, `can_set_admission` permitted it for the profile (`allowedClusterRoles`) and `can_approve` granted it on the install -- `can_set_admission` for a role that writes; a profile's own rules are never made into a role. A profile's own resource types are installed only once `can_set_admission` granted them |
 | Arbiter | an app's own store | the app's own relations, under the app's key; the arbiter asks the kernel store nothing ([app-authorization.md](app-authorization.md)) |
+
+### 4.1 A new enforcement point or platform service
+
+A service that asks the rights store is added this way, or its checks are
+wrong in ways nobody sees:
+
+- **Its own preshared key.** A property of its own under
+  `gentian-os/kernel/authz/openfga`, seeded with the others
+  (`scripts/bootstrap/seed-openbao.sh`, `scripts/lib/bootstrap.sh`) and added to
+  the `keys` list of `kernel/services/openfga/manifests/templates/externalsecret.yaml`
+  (§6): one key per service, revoked without touching the others.
+- **`CheckAs`, never a plain check.** A verified caller is asked as
+  `user:<sub>` and, when that is refused, as `user:<realm>/<sub>`, with the
+  realm whose keys verified the token (`internal/director/authz`), or a
+  cluster role holder is refused there.
+- **A `can_*` relation per verb** in `authz/model/v1/model.fga`, never a role
+  (R3), with its three tests in `tests.fga.yaml` (R8); `make
+  verify-authz-vocabulary` fails until this page names it.
+- **A row in the table above**: the object, the relations it asks.
+- **A consistency choice.** `HIGHER_CONSISTENCY` unless the answer only
+  shows something (§2).
 
 ## 5. Human roles
 

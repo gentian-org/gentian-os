@@ -54,7 +54,7 @@ One binary per process, all built into one image:
 | `director/` | The director: the only writer to the deployments repository. |
 | `usher/` | Answers a signed-in person's reads: what is here, what they may open. |
 | `custodian/` | Puts a credential a person supplies into the vault. |
-| `registrar/` | Manages people and groups at Keycloak. |
+| `registrar/` | Manages people at Keycloak, and asks the operator to give and take positions and roles. |
 | `bouncer/` | The edge's access check, called by the Gateway per request. |
 | `arbiter/` | The one way into the app instance of OpenFGA; the operator deploys it on demand in `system-authorization`. |
 | `director-dev/` | The director on a laptop with stand-ins for its dependencies, for UI development. Not shipped in any image. |
@@ -74,7 +74,7 @@ Implementation, split by concern rather than by kind:
 | `credentialprobe/`, `perimetertraffic/` | Which credentials a person still has to supply for an app; what each tenant's public entries carry. |
 | `platformversion/` | The platform's version line, and the floor a profile build declares against it. |
 | `applifecycle/` | The operator's listener: the live state and the actions the director and the usher ask it for. |
-| `authz/`, `membership/` | The Keycloak admin client; keeping OpenFGA's group memberships equal to Keycloak's. |
+| `authz/`, `membership/` | The Keycloak admin client; the realm's signed events: a person arriving or registering, or removed. |
 | `catalogue/`, `profilebundle/`, `bundlestore/` | Resolving a tenant's app to a profile; checking that a profile is the build an install was pinned to; reaching a bundle in object storage. |
 | `addresses/`, `hostnames/` | Where a component's entries answer; the address names an app may not take. |
 | `egress/`, `liaison/` | What carries a component's connections to hosts outside the cluster: the outgoing Gateways, a listener and Services per granted host, and the rules between callers and the fleet ([edge.md](../concepts/edge.md)); the liaison, which keeps people's sign-ins at outside services. |
@@ -123,7 +123,7 @@ License-header templates used by `controller-gen` and `golangci-lint`
 | `security/kyverno/policies/` | Admission policies. |
 | `security/network-policies/` | The NetworkPolicies of the kernel namespaces (generated). |
 | `credentials/` | The `CredentialRequirement` catalog, generated from `credentials.yaml` at the root. |
-| `extensions/keycloak-event-listener/` | The Keycloak extension that sends signed membership events to the operator. |
+| `extensions/keycloak-event-listener/` | The Keycloak extension that sends signed arrival and removal events to the operator, and writes a person's roles into tokens from the rights store. |
 
 ### `crossplane/` — the provisioning plane
 | Path | Purpose |

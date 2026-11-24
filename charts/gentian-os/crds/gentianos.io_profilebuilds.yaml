@@ -1741,11 +1741,10 @@ spec:
                               properties:
                                 groups:
                                   description: |-
-                                    Groups "mirror" is accepted and has no effect. It had the platform
-                                    keep the tenant realm's group memberships in the store; no group of
-                                    the realm carries a right any more, so nothing is written for it. A
-                                    component's own key still cannot write a tuple whose user or object
-                                    is a group.
+                                    Groups "mirror" is accepted and has no effect: no group of the realm
+                                    carries a right, and the platform writes nothing for it. Remove it
+                                    from a profile. A component's own key cannot write a tuple whose user
+                                    or object is a group.
                                   enum:
                                   - mirror
                                   type: string
@@ -2335,8 +2334,8 @@ spec:
                                   description: |-
                                     BreakGlass lets the same key ask one question more, for a person of
                                     the platform tenant: do they hold break_glass on the cluster now
-                                    (cluster#break_glass): through the realm's break-glass group, or by
-                                    name until their expiresAt. It is for a component that hands such a
+                                    (cluster#break_glass): named on the Cluster claim, until their
+                                    expiresAt. It is for a component that hands such a
                                     person a short-lived credential, and is honored for a component of the
                                     platform tenant only, as Audit is.
                                   type: boolean
@@ -3689,7 +3688,7 @@ spec:
                                 description: |-
                                   RegistrarURLKey receives the registrar's in-cluster URL: where a
                                   console relays, with the person's own token, the managing of a
-                                  tenant's people and groups. Like the two above, naming it is what
+                                  tenant's people and what they hold. Like the two above, naming it is what
                                   opens the component's egress to the control namespace.
 
                                   The registrar serves the paths the director served for people, so a
@@ -4475,11 +4474,10 @@ spec:
                             properties:
                               groups:
                                 description: |-
-                                  Groups "mirror" is accepted and has no effect. It had the platform
-                                  keep the tenant realm's group memberships in the store; no group of
-                                  the realm carries a right any more, so nothing is written for it. A
-                                  component's own key still cannot write a tuple whose user or object
-                                  is a group.
+                                  Groups "mirror" is accepted and has no effect: no group of the realm
+                                  carries a right, and the platform writes nothing for it. Remove it
+                                  from a profile. A component's own key cannot write a tuple whose user
+                                  or object is a group.
                                 enum:
                                 - mirror
                                 type: string
@@ -5069,8 +5067,8 @@ spec:
                                 description: |-
                                   BreakGlass lets the same key ask one question more, for a person of
                                   the platform tenant: do they hold break_glass on the cluster now
-                                  (cluster#break_glass): through the realm's break-glass group, or by
-                                  name until their expiresAt. It is for a component that hands such a
+                                  (cluster#break_glass): named on the Cluster claim, until their
+                                  expiresAt. It is for a component that hands such a
                                   person a short-lived credential, and is honored for a component of the
                                   platform tenant only, as Audit is.
                                 type: boolean
@@ -5622,7 +5620,7 @@ spec:
                       own OIDC clients lasts: the operator sets it as the clients' session
                       lifespan, and past that age from sign-in the realm refuses their
                       refresh, so the app cannot renew its tokens for that person without a
-                      new sign-in, which reads the person's groups again. It does not end a
+                      new sign-in, which reads the person's roles again. It does not end a
                       session the app keeps in its own cookie: an app that does not go back
                       to the realm once a person is signed in keeps that session for as long
                       as the app itself allows. Unset, the clients keep the realm's limits.

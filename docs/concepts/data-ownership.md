@@ -22,7 +22,8 @@ A tenant is one organization's workspace. Its data is:
   secrets (the values the platform generated for it and its data is written
   with) and each app's authorization store;
 - the data of apps it uninstalled with their data kept;
-- its people, groups and roles: the realm;
+- its people: the realm; and who holds which position and role, in the
+  rights store;
 - its mailboxes, and the archived mailboxes of people who were removed, where
   the cluster runs its own mail server;
 - the desktop's database: preferences and notices;
@@ -95,7 +96,7 @@ The manifest states its schema (`schemaVersion`); the schema written is 5.
 | `bundle-info.json`, in the clear | Tenant, schema, export, time, encryption mode, the recipients, and the literal command that decrypts the rest |
 | `manifest.json`, encrypted and written last | The index: the tenant and the full `TenantSpec` as committed in git; the platform's version line; the domain, the cluster and the cluster's id the bundle was taken on; per app its profile, chart version, pinned digest, releases and database engine, whether it was uninstalled with its data kept, the window in which its writes were paused, and one entry per artifact naming what was captured and where it is; the realm capture; the desktop's database; the mailboxes and the archived ones; the rights that follow from nothing else; and what the tenant had that the bundle does not hold |
 | `manifest.json.sig`, in the clear | The cluster's ed25519 signature over the manifest. A restore brings granted rights back only from a bundle the cluster it runs on signed; everything else is restored whichever cluster took the bundle |
-| `identity` | The realm: groups, roles, clients, every person, every membership. No credentials |
+| `identity` | The realm: clients, every person, and any groups and roles the tenant made. No credentials |
 | Per app: `postgres`, `postgresOwned`, `mariadb`, `mariadbOwned`, `s3`, `volume` | The app's stores as its profile declares them: a dump of each database and an archive of the databases the app made for itself, a tar of each bucket and of each volume |
 | Per app: `secrets` | The app's own secrets, one JSON document, encrypted by the operator itself so that no value passes through a Job |
 | Per app: `authorization` | The app's authorization store: its model and every tuple |

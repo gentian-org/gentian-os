@@ -661,8 +661,8 @@ is the sign-in form unless the claim names a tenant for it
 sign-in, so name a tenant only where you control the site's scripts).
 Install an app that offers a public website for it, then approve that surface
 for the main address (`kubectl gentian exposures approve`, by whoever
-approves public addresses in the tenant — the user admin, the members of the
-tenant's `perimeter` group and the platform admin, step 8; it prints the rule
+approves public addresses in the tenant — a tenant administrator the Cluster
+claim names `perimeterApprover`, and the platform admin, step 8; it prints the rule
 for a website there and needs `--acknowledge-main-address-rule`).
 `https://<kernel-domain>/` and `www.` then show the website. Sign-in is at
 `https://desktop.<kernel-domain>/`, and `https://<kernel-domain>/sign-in`
@@ -737,6 +737,12 @@ that shows what a store elsewhere offers: its own server asks the store named
 on the Cluster claim (`spec.catalogue.storeUrl`,
 set from `GENTIAN_STORE_URL`) for the list, with no account,
 and installs through the director as the person signed in.
+
+**A new install is opened only to the positions it is given.** The install
+names them (`kubectl gentian apps install … --positions a,b`), and the position All apps reaches every
+installed app; nobody else sees it, the tenant's administrator included,
+until a position they hold is given the app in the administration console
+([docs/concepts/iam.md](docs/concepts/iam.md) §1.2).
 
 The App Store app comes from the store's catalog,
 with the Aluvian Center beside it and the Operations Console in the
@@ -1308,7 +1314,8 @@ link; earlier ones still expire on their own.
 
 The platform admin's own account is not handed over that way. The CLI
 and the console ask the registrar, and the registrar changes nothing about a
-member of the platform administrators' group, whoever asks: it answers 403.
+person of the platform tenant the Cluster claim names a role holder, whoever
+asks: it answers 403.
 That account's link comes from the install host:
 
 ```bash

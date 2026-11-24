@@ -93,7 +93,7 @@ graph TD
 |---|---|---|
 | **Argo CD** (`kernel-gitops`) | Pulls git and applies it: the kernel's charts from `gentian-os`, and from the deployments repository the cluster's claims, its materialized catalog and its tenants. Syncs only commits signed by the director or the break-glass key. | Provisions nothing itself. |
 | **Director** (`kernel-control`) | The API people's requests go to. It verifies the caller's token, asks OpenFGA whether that person may make the change, and commits it to the deployments repository as that person. | Holds the git push credential and no cluster credential. |
-| **Operator** (`kernel-control`) | Reconciles `Tenant`, `Component` and the other kinds of §4: seeds secrets in OpenBao, writes the tenant's composite, renders and applies what each app's chart is installed with, routes, policies, and status. Projects tenants, installs and group memberships into OpenFGA. | Writes to the cluster only; holds no git credential. |
+| **Operator** (`kernel-control`) | Reconciles `Tenant`, `Component` and the other kinds of §4: seeds secrets in OpenBao, writes the tenant's composite, renders and applies what each app's chart is installed with, routes, policies, and status. Projects tenants, installs and positions into OpenFGA, and writes who holds what when the registrar asks. | Writes to the cluster only; holds no git credential. |
 | **Crossplane** (`kernel-provisioning`) | Composes `XCluster` and `XTenant` into managed resources (namespaces, vault policies, Jobs, `ExternalSecret`s), and an `App` claim for a profile that brings its own Composition. Its providers reconcile the managed resources the operator renders for an app, Helm `Release`s among them. | Owns what can be written down before it happens (below). |
 | **OpenBao + ESO** (`kernel-secrets`) | The one secret store, synced into Kubernetes Secrets that charts read. | Secrets never touch git or a resource's spec. |
 | **Usher, custodian, registrar** (`kernel-control`) | The other three services people's requests reach: the usher answers reads (what is here, what may I open), the custodian sets credentials in the vault, the registrar manages people at Keycloak and asks the operator to give or take what they hold. Each asks OpenFGA first and holds one credential only. | None of them writes git. |
@@ -141,7 +141,7 @@ behind it is one question:
 > Can the answer be written down before it happens?
 
 If it can, it is a statement about what should exist and **Crossplane owns it** — namespace shell
-and policy via `provider-kubernetes`, realms, clients, groups, identity providers and
+and policy via `provider-kubernetes`, realms, clients, identity providers and
 authentication flows via `provider-keycloak`, policies via `provider-vault`, charts via
 `provider-helm`. An object already
 existing is not a reason to keep it imperative: Crossplane adopts by
@@ -231,7 +231,7 @@ tenant's realm and its post-install Job. Nothing copies a catalog into a cluster
 an install. See [custom-catalogs.md](../guides/custom-catalogs.md) and
 [store-contract.md](../concepts/store-contract.md).
 
-**Identity.** Realms, clients, groups and brokering are described in
+**Identity.** Realms, clients, roles, positions and brokering are described in
 [iam.md](../concepts/iam.md) §1.8–1.9.
 
 A profile whose app needs more than the operator renders brings a Composition
@@ -672,11 +672,11 @@ platform's kinds to do their work.
 | Role | Scope | Does it through | Cannot do |
 |---|---|---|---|
 | **Platform administrator** | The cluster and the platform tenant | `kubectl gentian`, the platform desktop's consoles; creates tenants, declares catalogs, sets plans | Open a tenant's apps |
-| **Tenant administrator** | One tenant | The administration console and the App Store app: people, groups, installs, grants | Use the tenant's apps as a member; touch another tenant or the kernel |
+| **Tenant administrator** | One tenant | The administration console and the App Store app: people, positions, installs | Use the tenant's apps as a member; touch another tenant or the kernel |
 | **Perimeter approver** | One tenant | Approves what the tenant publishes without sign-in | Anything else |
 | **Member** | One tenant | The desktop: the apps they were given | Install, administer |
 
-Administrator and member are separate accounts by design. Roles, groups and
+Administrator and member are separate accounts by design. Roles, positions and
 the relations behind them are in [iam.md](../concepts/iam.md) §1.2–1.3 and
 [multi-tenancy.md](../concepts/multi-tenancy.md#8-operational-roles).
 

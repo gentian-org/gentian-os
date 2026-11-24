@@ -406,8 +406,9 @@ type TenantSpec struct {
 	// +kubebuilder:validation:MaxItems=8
 	PartnerCommissioners []TenantComponentRef `json:"partnerCommissioners,omitempty"`
 
-	// Positions are the tenant's own positions, beside the three every
-	// tenant has; see TenantPosition.
+	// Positions are the tenant's own positions, beside the four every
+	// tenant has (user, all-apps, app-administrator, tenant-administrator);
+	// see TenantPosition.
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
 	// +listType=map
@@ -1127,11 +1128,12 @@ type TenantAddress struct {
 
 // TenantPlatformAccess is what a tenant opens to the platform's own people.
 type TenantPlatformAccess struct {
-	// AdminsEnter says the members of the platform's administrators' group
-	// may sign in to this tenant, through the kernel realm, and hold its
-	// admins group for as long as they hold that one: the tenant's realm
-	// composes the identity provider "kernel" while this is on. Off unless
-	// the tenant's own administrators turn it on.
+	// AdminsEnter says the cluster's administrators (the Cluster claim's
+	// role holders admin) may sign in to this tenant, through the kernel
+	// realm, and are given its position tenant-administrator, which is taken
+	// again when this goes off: the tenant's realm composes the identity
+	// provider "kernel" while this is on. Off unless the tenant's own
+	// administrators turn it on.
 	// +optional
 	AdminsEnter bool `json:"adminsEnter,omitempty"`
 }

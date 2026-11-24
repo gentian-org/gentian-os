@@ -468,7 +468,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].extraValues` | object (free-form) |  | `ExtraValues` are merged into the sidecar Helm release values. |
 | `spec.extensions[].kernelRequirements` | object |  | ServiceRequirements declares kernel services the sidecar needs. |
 | `spec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
+| `spec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect: no group of the realm carries a right, and the platform writes nothing for it. |
 | `spec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `spec.extensions[].kernelRequirements.authorization.roles` | string |  | `Roles` "handOver" has the platform keep, in the store, the roles each person holds on the app: one tuple user:\<realm>/\<subject> holder role:\<name> per role… |
 | `spec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
@@ -695,7 +695,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.package.valueMapping.platform.kernelDomainKey` | string |  | `KernelDomainKey` receives the cluster's kernel domain. |
 | `spec.package.valueMapping.platform.organizationKey` | string |  | `OrganizationKey` receives who the tenant is, as one object: displayName, legalName, country, languages (the first is the tenant's own), currency, timeZone… |
 | `spec.package.valueMapping.platform.realmKey` | string |  | `RealmKey` receives the name of the zone's realm. |
-| `spec.package.valueMapping.platform.registrarUrlKey` | string |  | `RegistrarURLKey` receives the registrar's in-cluster URL: where a console relays, with the person's own token, the managing of a tenant's people and groups. |
+| `spec.package.valueMapping.platform.registrarUrlKey` | string |  | `RegistrarURLKey` receives the registrar's in-cluster URL: where a console relays, with the person's own token, the managing of a tenant's people and what they… |
 | `spec.package.valueMapping.platform.storeUrlKey` | string |  | `StoreURLKey` receives the base address of the App Store API this cluster names (the Cluster claim's `spec.catalogue.storeUrl`), and the empty string while the… |
 | `spec.package.valueMapping.platform.tenantKey` | string |  | `TenantKey` receives the name of the tenant the component runs in. |
 | `spec.package.valueMapping.platform.tenantUIDKey` | string |  | `TenantUIDKey` receives the tenant's unique id, its metadata.uid: the id the usage statistics report names it by, and the one the store keys its sign-in through… |
@@ -785,7 +785,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.privileges.podSecurity[].scope` | string | yes | `Scope` is the container or composition part it is waived for. |
 | `spec.requires.services` | object |  | `Services` are what the platform must fulfill before this component runs: identity, database, object storage, cache, mail, MCP. |
 | `spec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
+| `spec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect: no group of the realm carries a right, and the platform writes nothing for it. |
 | `spec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `spec.requires.services.authorization.roles` | string |  | `Roles` "handOver" has the platform keep, in the store, the roles each person holds on the app: one tuple user:\<realm>/\<subject> holder role:\<name> per role… |
 | `spec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
@@ -1139,9 +1139,9 @@ OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps. Shipp
 | `spec.mapperTemplates{}.keycloakName` | string |  | `KeycloakName` overrides the mapper name in Keycloak when it differs from the catalog template key. |
 | `spec.mapperTemplates{}.protocolMapper` | string | yes | `ProtocolMapper` is the Keycloak protocol mapper type. |
 | `spec.packs` | map[string]object |  | `Packs` maps OIDC clientId to pack configuration. |
-| `spec.packs{}.clientRole` | string |  | `ClientRole` is the Keycloak client role mapped from the entitlement group. |
+| `spec.packs{}.clientRole` | string |  | `ClientRole` is the Keycloak client role made on the pack's client. |
 | `spec.packs{}.defaultScopes` | []string |  | `DefaultScopes` are realm default scopes attached before the pack scope. |
-| `spec.packs{}.entitlementGroup` | string |  | `EntitlementGroup` is the Keycloak group name mapped to the pack client role. |
+| `spec.packs{}.entitlementGroup` | string |  | `EntitlementGroup` is read by nothing: no group is made and none is mapped to the client role, since no group of the realm carries a right. |
 | `spec.packs{}.fullScopeAllowed` | boolean |  | `FullScopeAllowed` controls Keycloak fullScopeAllowed on the client. |
 | `spec.packs{}.mappers` | []string |  | `Mappers` lists mapper template keys from spec.mapperTemplates. |
 | `spec.packs{}.publicClient` | boolean |  | `PublicClient` marks the OIDC client as PUBLIC (PKCE, no secret). |
@@ -1388,7 +1388,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].extraValues` | object (free-form) |  | `ExtraValues` are merged into the sidecar Helm release values. |
 | `status.profileSpec.extensions[].kernelRequirements` | object |  | ServiceRequirements declares kernel services the sidecar needs. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
+| `status.profileSpec.extensions[].kernelRequirements.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect: no group of the realm carries a right, and the platform writes nothing for it. |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.roles` | string |  | `Roles` "handOver" has the platform keep, in the store, the roles each person holds on the app: one tuple user:\<realm>/\<subject> holder role:\<name> per role… |
 | `status.profileSpec.extensions[].kernelRequirements.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
@@ -1615,7 +1615,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.package.valueMapping.platform.kernelDomainKey` | string |  | `KernelDomainKey` receives the cluster's kernel domain. |
 | `status.profileSpec.package.valueMapping.platform.organizationKey` | string |  | `OrganizationKey` receives who the tenant is, as one object: displayName, legalName, country, languages (the first is the tenant's own), currency, timeZone… |
 | `status.profileSpec.package.valueMapping.platform.realmKey` | string |  | `RealmKey` receives the name of the zone's realm. |
-| `status.profileSpec.package.valueMapping.platform.registrarUrlKey` | string |  | `RegistrarURLKey` receives the registrar's in-cluster URL: where a console relays, with the person's own token, the managing of a tenant's people and groups. |
+| `status.profileSpec.package.valueMapping.platform.registrarUrlKey` | string |  | `RegistrarURLKey` receives the registrar's in-cluster URL: where a console relays, with the person's own token, the managing of a tenant's people and what they… |
 | `status.profileSpec.package.valueMapping.platform.storeUrlKey` | string |  | `StoreURLKey` receives the base address of the App Store API this cluster names (the Cluster claim's `spec.catalogue.storeUrl`), and the empty string while the… |
 | `status.profileSpec.package.valueMapping.platform.tenantKey` | string |  | `TenantKey` receives the name of the tenant the component runs in. |
 | `status.profileSpec.package.valueMapping.platform.tenantUIDKey` | string |  | `TenantUIDKey` receives the tenant's unique id, its metadata.uid: the id the usage statistics report names it by, and the one the store keys its sign-in through… |
@@ -1705,7 +1705,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.privileges.podSecurity[].scope` | string | yes | `Scope` is the container or composition part it is waived for. |
 | `status.profileSpec.requires.services` | object |  | `Services` are what the platform must fulfill before this component runs: identity, database, object storage, cache, mail, MCP. |
 | `status.profileSpec.requires.services.authorization` | object |  | `Authorization` declares that the component keeps its own relations in an authorization store the platform makes for it. |
-| `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect. |
+| `status.profileSpec.requires.services.authorization.groups` | string |  | `Groups` "mirror" is accepted and has no effect: no group of the realm carries a right, and the platform writes nothing for it. |
 | `status.profileSpec.requires.services.authorization.model` | string | yes | `Model` is the store's authorization model in the OpenFGA DSL ("model / schema 1.1 / type user / ..."). |
 | `status.profileSpec.requires.services.authorization.roles` | string |  | `Roles` "handOver" has the platform keep, in the store, the roles each person holds on the app: one tuple user:\<realm>/\<subject> holder role:\<name> per role… |
 | `status.profileSpec.requires.services.authorization.tuples` | []object |  | `Tuples` are the store's starting tuples, written by the platform and held to the model when the profile is admitted. |
@@ -2008,12 +2008,12 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.partners[].issuer` | string | yes | `Issuer` is the partner's realm, https://\<host>/\<path to the realm>. |
 | `spec.partners[].name` | string | yes | `Name` is the partner's name here: the realm's scope and identity provider for it are partner-\<name>. |
 | `spec.platformAccess` | object |  | `PlatformAccess` is what the tenant opens to the platform's own people beyond the director: whether the platform's administrators may sign in to the tenant. |
-| `spec.platformAccess.adminsEnter` | boolean |  | `AdminsEnter` says the members of the platform's administrators' group may sign in to this tenant, through the kernel realm, and hold its admins group for as… |
+| `spec.platformAccess.adminsEnter` | boolean |  | `AdminsEnter` says the cluster's administrators (the Cluster claim's role holders admin) may sign in to this tenant, through the kernel realm, and are given its… |
 | `spec.positionGivers` | []object |  | `PositionGivers` are the components, of this tenant or another, that may give this tenant's people some of its positions and take them again; see… |
 | `spec.positionGivers[].component` | string | yes | `Component` is the profile the component runs. |
 | `spec.positionGivers[].positions` | []string | yes | `Positions` are the positions of this tenant the component gives and takes: user, all-apps or a name of spec.positions. |
 | `spec.positionGivers[].tenant` | string | yes | `Tenant` is the tenant the component runs in. |
-| `spec.positions` | []object |  | `Positions` are the tenant's own positions, beside the three every tenant has; see TenantPosition. |
+| `spec.positions` | []object |  | `Positions` are the tenant's own positions, beside the four every tenant has (user, all-apps, app-administrator, tenant-administrator); see TenantPosition. |
 | `spec.positions[].description` | string |  | `Description` says who the position is for. |
 | `spec.positions[].includes` | []string |  | `Includes` are other positions of the tenant whose roles the holders of this one hold too: executive includes sales-manager. |
 | `spec.positions[].name` | string | yes | `Name` is the position's name in the tenant. |

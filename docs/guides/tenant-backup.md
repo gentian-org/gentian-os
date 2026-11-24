@@ -212,9 +212,10 @@ first, so the current state is recoverable too.
 - The contents of app volumes
 - The data of apps you uninstalled without purging them: it stays in every
   backup until you purge it
-- Your member accounts, groups and their memberships
+- Your member accounts
 - What your members set up on the desktop, and your workspace's notices
-- Access rights granted beyond the standard ones
+- Who holds which position and role, and access rights granted beyond the
+  standard ones
 - Your workspace's configuration, so it can be rebuilt elsewhere
 
 **Not captured, on purpose:**

@@ -30,18 +30,19 @@ against the issuer's keys, and takes the caller's name from nothing else.
 admission policy, NetworkPolicy, CRD validation. A component that answers two
 of these is where the framework forks.
 
-*Who* includes which groups the person belongs to: membership is an identity
-fact, and Keycloak is the only place it is changed. OpenFGA holds a
-**projection** of it, written only from Keycloak's events, to compute *may*;
-it never alters it, and Keycloak never decides a permission. What the rule
-separates is authority, not copies.
+*Who* is the account and its session: Keycloak is the only place an account
+is made, changed or signed out. *May* is the rights store's: which positions
+and roles a person holds is written in OpenFGA, by the operator alone, and
+Keycloak holds no right and decides no permission. The realm tells the
+operator only what it alone sees: a person arriving from another realm,
+registering, or removed. What the rule separates is authority, not copies.
 
 ## 3. Few, named policy-enforcement points; everything else consumes a verdict
 
 The gateway with its bouncer (browser and API traffic behind a session), the
 **publishing proxy** (everything published without sign-in, in a DMZ
 namespace), the director (configuration writes), the custodian (secret
-writes), and the registrar (people and groups). The proxy is one of these
+writes), and the registrar (people, and what they hold). The proxy is one of these
 because it decides what is published: only an approved entry's declared paths pass, and every
 perimeter and inside entry passes through it. It verifies no caller — `authMode: none`
 forwards for anyone, `authMode: app` hands the caller's own credential to the
@@ -63,10 +64,9 @@ principle 3 as a license for a bypassable one.
 ## 4. The authorization vocabulary grows with the API, not with use cases
 
 One OpenFGA type per kind a PEP decides about (`cluster`, `tenant`, `app`, `contract`, …), one relation per verb a PEP exposes. A new kind ships with its
-type and a case in `authz/model/*/tests.fga.yaml`, or it does not ship. Group
-membership is in the graph only as a projection of Keycloak, written by the
-operator from Keycloak's events, never edited in place. RBAC is only the assignment of
-a role to a group — never a second decision path.
+type and a case in `authz/model/*/tests.fga.yaml`, or it does not ship. A
+role is held by a person or by a position, written by the operator; no group
+of the identity provider holds one, and RBAC is never a second decision path.
 
 ## 5. Authority is derived, never granted sideways
 
