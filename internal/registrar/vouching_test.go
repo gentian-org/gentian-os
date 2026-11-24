@@ -607,3 +607,67 @@ func TestWithoutANamedPageNoPagesTokenLinks(t *testing.T) {
 		t.Fatalf("linked = %v", got)
 	}
 }
+
+// The key of the consent page, as the operator lists its hash beside the
+// component that named the page.
+const pageOfDemo = "key-of-the-page-of-demo"
+
+func listWithAPagesKey() []registrar.VouchingKey {
+	keys := listWithAPage()
+	keys[1].ConsentKeyHash = componentkeys.Hash(pageOfDemo)
+	return keys
+}
+
+// The consent page asks, with its own key, whether one person is linked to
+// the component that named it: so that it can tell them to link before the
+// component needs it. The store is not asked: the page is no person.
+func TestAConsentPagesKeyReadsWhetherAPersonIsLinked(t *testing.T) {
+	f := vouchingFake()
+	h := startVouching(t, f, listWithAPagesKey())
+	const miaAtScribe = "/v1/tenants/demo/vouching/scribe/people/mia"
+	status, body := h.do(t, http.MethodGet, miaAtScribe, pageOfDemo, "")
+	if status != http.StatusOK || body["linked"] != false {
+		t.Fatalf("before mia linked: %d %v", status, body)
+	}
+	if status, _ := h.do(t, http.MethodPost, linkScribe, h.token(t, "demo", "mia"), ""); status != http.StatusNoContent {
+		t.Fatal("linking mia")
+	}
+	asked := len(h.asked.questions())
+	status, body = h.do(t, http.MethodGet, miaAtScribe, pageOfDemo, "")
+	if status != http.StatusOK || body["linked"] != true {
+		t.Fatalf("after mia linked: %d %v", status, body)
+	}
+	if q := h.asked.questions(); len(q) != asked {
+		t.Fatalf("the store was asked about a page: %v", q[asked:])
+	}
+}
+
+// The page's key opens that one question and nothing else: no list, no
+// removal, no link, no other component's links, and no other tenant's.
+func TestAConsentPagesKeyOpensNothingElse(t *testing.T) {
+	f := vouchingFake()
+	h := startVouching(t, f, listWithAPagesKey())
+	if status, _ := h.do(t, http.MethodPost, linkScribe, h.token(t, "demo", "mia"), ""); status != http.StatusNoContent {
+		t.Fatal("linking mia")
+	}
+	for name, call := range map[string][2]string{
+		"listing the linked":             {http.MethodGet, "/v1/tenants/demo/vouching/scribe/people"},
+		"taking a link away":             {http.MethodDelete, "/v1/tenants/demo/vouching/scribe/people/mia"},
+		"linking":                        {http.MethodPost, linkScribe},
+		"a component that named no page": {http.MethodGet, miaAtNotary},
+		"another tenant":                 {http.MethodGet, "/v1/tenants/solo/vouching/scribe/people/mia"},
+		"another route":                  {http.MethodGet, "/v1/tenants/demo/people"},
+	} {
+		if status, _ := h.do(t, call[0], call[1], pageOfDemo, ""); status != http.StatusUnauthorized && status != http.StatusForbidden {
+			t.Errorf("%s: %s %s answered %d, want 401 or 403", name, call[0], call[1], status)
+		}
+	}
+	if got := f.linkedPeople(); strings.Join(got, ",") != "demo/scribe/mia" {
+		t.Fatalf("the page's key changed the links: %v", got)
+	}
+	// A list that names the page and no key of it takes no key for it.
+	plain := startVouching(t, vouchingFake(), listWithAPage())
+	if status, _ := plain.do(t, http.MethodGet, "/v1/tenants/demo/vouching/scribe/people/mia", pageOfDemo, ""); status != http.StatusUnauthorized {
+		t.Errorf("a page whose key is not listed: %d, want 401", status)
+	}
+}

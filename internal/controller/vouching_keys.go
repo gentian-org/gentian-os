@@ -47,9 +47,17 @@ const (
 // after the profile (VouchingAlias).
 //
 // An entry also names the component whose page collects people's consent,
-// where the profile names one that counts (vouchingConsent).
+// where the profile names one that counts (vouchingConsent), and the hash of
+// that component's key: the page may ask whether a person is linked, so that
+// it can tell them to link before the component needs it.
 func vouchingKeys(ctx context.Context, c client.Reader) ([]componentkeys.Vouching, error) {
 	keys, err := componentKeys(ctx, c, rightsCheckKeys, wantsVouching)
+	if err != nil {
+		return nil, err
+	}
+	// Every key, for the consent pages': a page's component holds one for
+	// the rights check whatever it declares besides.
+	all, err := componentKeys(ctx, c, rightsCheckKeys, holdsComponentKey)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +67,19 @@ func vouchingKeys(ctx context.Context, c client.Reader) ([]componentkeys.Vouchin
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, componentkeys.Vouching{
+		entry := componentkeys.Vouching{
 			Key:     componentkeys.Key{Tenant: k.Tenant, Component: k.Profile, KeyHash: k.KeyHash},
 			Consent: consent,
-		})
+		}
+		if consent != "" {
+			for _, page := range all {
+				if page.Tenant == k.Tenant && page.Profile == consent {
+					entry.ConsentKeyHash = page.KeyHash
+					break
+				}
+			}
+		}
+		out = append(out, entry)
 	}
 	return out, nil
 }

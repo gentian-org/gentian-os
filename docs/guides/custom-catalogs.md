@@ -545,6 +545,12 @@ component's to decide:
   the page is never handed a token that is good for more than giving consent. The name counts while
   that component is installed in the same tenant at `trustTier: platform` with an `exchangeToken`
   entry; it reaches the registrar by naming `valueMapping.platform.registrarUrlKey`.
+- **The consent page asks whether a person is linked.**
+  `GET /v1/tenants/<t>/vouching/<profile>/people/<id>` also takes the key of the named consent
+  page's component (its `RIGHTS_CHECK_KEY`, where its profile declares `requires.services.rights`)
+  as the bearer, and answers `{"linked": true|false}`. The page can then tell a person to link
+  before the vouching component needs it. That key opens this one question for this one component:
+  it lists nobody, links nobody and unlinks nobody.
 - **Unlinking only takes away.** `DELETE /v1/tenants/<t>/vouching/<profile>/people/<id>` is the
   person's, an administrator's of the tenant's people, and the component's own, presenting its key
   (`RIGHTS_CHECK_KEY`, which a vouching component is given as well) as the bearer. A component

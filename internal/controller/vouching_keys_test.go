@@ -217,3 +217,49 @@ func TestRegistrarListNamesAConsentPageOnlyWhileItCounts(t *testing.T) {
 		}
 	}
 }
+
+// Beside a consent page that counts, the list carries the hash of that
+// page's own key, where its component holds one: the page asks the
+// registrar whether a person is linked. A page without a key is named and
+// has no hash.
+func TestRegistrarListCarriesTheConsentPagesKeyHash(t *testing.T) {
+	ctx := context.Background()
+	scheme := rightsScheme(t)
+	for name, withKey := range map[string]bool{"a page that holds a key": true, "a page that holds none": false} {
+		scribe, page := rightsComponent("acme", "scribe"), rightsComponent("acme", "page")
+		profile := vouchingProfile("scribe")
+		profile.Spec.Requires.Services.Vouching.Consent = "page"
+		pageProfile := rightsProfile("page", withKey)
+		pageProfile.Spec.TrustTier = gentianov1alpha1.TrustTierPlatform
+		pageProfile.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "consent", ExchangeToken: true}}
+		tenant := rightsTenant("acme")
+		tenant.Spec.Apps = []gentianov1alpha1.TenantApp{{Profile: "page"}}
+		c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(tenant, scribe, page, profile, pageProfile).Build()
+		components := &ComponentReconciler{Client: c, Scheme: scheme}
+		if err := components.ensureRightsCheck(ctx, scribe, defaultTenantName(scribe), profile); err != nil {
+			t.Fatal(err)
+		}
+		if err := components.ensureRightsCheck(ctx, page, defaultTenantName(page), pageProfile); err != nil {
+			t.Fatal(err)
+		}
+		if err := (&GatewayPlatformReconciler{Client: c}).ensureRegistrarVouchingKeys(ctx); err != nil {
+			t.Fatal(err)
+		}
+		raw, keys := registrarsList(t, c)
+		if len(keys) != 1 || keys[0].Component != "scribe" || keys[0].Consent != "page" {
+			t.Fatalf("%s: the list is %+v", name, keys)
+		}
+		want := ""
+		if withKey {
+			key := rightsSecret(t, c, page).Data[rightsCheckKeyKey]
+			sum := sha256.Sum256(key)
+			want = hex.EncodeToString(sum[:])
+			if strings.Contains(raw, string(key)) {
+				t.Fatalf("%s: the list carries the page's key itself", name)
+			}
+		}
+		if keys[0].ConsentKeyHash != want {
+			t.Errorf("%s: the page's key hash is %q, want %q", name, keys[0].ConsentKeyHash, want)
+		}
+	}
+}
