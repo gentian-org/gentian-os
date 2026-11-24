@@ -17,4 +17,4 @@ spec:
   kernelDomain: example.org
   networkMode: tunnel
   mail:
-    serviceMode: system
+    serviceMode: internal

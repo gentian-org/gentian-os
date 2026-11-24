@@ -468,7 +468,7 @@ _keycloak_smtp_settings() {
     [[ -n "${kernel_domain}" ]] || return 1
 
     case "${mode}" in
-        external)
+        relay|external)
             if [[ -z "${EXTERNAL_SMTP_HOST:-}" || -z "${SMTP_RELAY_USERNAME:-}" \
                 || -z "${SMTP_RELAY_PASSWORD:-}" ]]; then
                 return 1
@@ -484,7 +484,7 @@ _keycloak_smtp_settings() {
         # and a cluster with its own mail stack got a kernel realm with no
         # mail server and no keycloak-smtp-credentials -- which is also what
         # the operator waits for before it writes a tenant realm's.
-        system)
+        internal)
             if ! declare -F _derived >/dev/null 2>&1; then
                 return 1
             fi
@@ -702,7 +702,7 @@ EOADMINCLIENTS
 #
 # Deferring is not a downgrade. The reason to write it from here was that
 # nothing else could, and that is exactly what the ExternalSecret changed.
-# kernel mode keeps this path: its submission password is derived, not stored,
+# internal mode keeps this path: its submission password is derived, not stored,
 # so there is no OpenBao path for ESO to extract.
 _apply_keycloak_smtp_secret() {
     local ns
@@ -773,7 +773,7 @@ configure_keycloak_realm_smtp() {
 
     if ! _apply_keycloak_smtp_secret "${ns}"; then
         warn "SMTP credentials incomplete — set EXTERNAL_SMTP_* + SMTP_RELAY_*" \
-             "(external) or MAIL_SERVICE_MODE=system with derived smtp password."
+             "(relay, external) or MAIL_SERVICE_MODE=internal with derived smtp password."
         return 1
     fi
 

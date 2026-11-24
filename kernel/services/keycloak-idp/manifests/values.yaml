@@ -5,7 +5,7 @@ env: dev
 # Realm SMTP. Supplied by the ApplicationSet from the Cluster claim, the same
 # way Postfix receives them — see externalsecret-smtp.yaml for what is built
 # from them and why the credential itself is not here.
-mailServiceMode: external
+mailServiceMode: relay
 relayHost: ""
 relayPort: "587"
 # A relay on port 587: implicit TLS off, STARTTLS on.

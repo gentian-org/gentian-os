@@ -2497,7 +2497,7 @@ spec:
             Dovecot's OIDC client, on clusters that run Dovecot.
 
             Gated on mail.serviceMode the same way the operator gates Dovecot
-            provisioning: on a cluster relaying through a smarthost there is no
+            provisioning: on a cluster without its own mail stack there is no
             IMAP server, and a client nothing authenticates as would sit in every
             tenant realm suggesting otherwise.
 
@@ -2512,7 +2512,7 @@ spec:
             omitted clientSecretSecretRef would have Keycloak generate a new one
             and IMAP would stop validating tokens.
             */}}
-            {{- if eq (dig "mail.serviceMode" "" $ccData) "system" }}
+            {{- if eq (dig "mail.serviceMode" "" $ccData) "internal" }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: Client

@@ -187,7 +187,7 @@ func newPlacementWorld(t *testing.T, external bool) *placementWorld {
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
 		WithStatusSubresource(&gentianov1alpha1.TenantRestore{}, &gentianov1alpha1.TenantExport{}).Build()
-	tr := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", MailServiceMode: mailServiceModeSystem}
+	tr := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", MailServiceMode: mailServiceModeInternal}
 	er := &TenantExportReconciler{Client: c, Scheme: scheme, Reconciler: tr}
 	return &placementWorld{c: c, tenant: tenant, export: export, restore: restore, er: er,
 		rr: &TenantRestoreReconciler{Client: c, Scheme: scheme, Tenant: tr, Reconciler: er}}

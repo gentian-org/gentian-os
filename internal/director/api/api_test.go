@@ -715,7 +715,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 
 	// A change lands as a commit against the claim.
 	code, body = h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
-		`{"settings":{"mail.serviceMode":"external"}}`)
+		`{"settings":{"mail.serviceMode":"relay"}}`)
 	if code != http.StatusAccepted {
 		t.Fatalf("write: %d %v", code, body)
 	}
@@ -729,7 +729,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 			found, _ = m["value"].(string)
 		}
 	}
-	if found != "external" {
+	if found != "relay" {
 		t.Fatalf("the setting did not land: %q", found)
 	}
 
@@ -774,7 +774,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 		t.Fatalf("a tenant admin read the cluster's settings: %d", code)
 	}
 	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", tina,
-		`{"settings":{"mail.serviceMode":"system"}}`); code != http.StatusForbidden {
+		`{"settings":{"mail.serviceMode":"internal"}}`); code != http.StatusForbidden {
 		t.Fatalf("a tenant admin changed the cluster's settings: %d", code)
 	}
 }

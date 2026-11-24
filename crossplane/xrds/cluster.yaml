@@ -41,14 +41,15 @@ spec:
               x-kubernetes-validations:
                 - rule: >-
                     !(has(self.mail) && has(self.mail.serviceMode) &&
-                    self.mail.serviceMode == 'system' &&
+                    self.mail.serviceMode == 'internal' &&
                     has(self.networkMode) && self.networkMode == 'tunnel')
                   message: >-
-                    mail.serviceMode 'system' cannot run behind networkMode
+                    mail.serviceMode 'internal' cannot run behind networkMode
                     'tunnel': a tunnel carries HTTP and HTTPS only, so the cluster
                     can neither receive mail on port 25 nor publish submission on
-                    587. Use 'external' with an smtp-relay credential, or switch
-                    to networkMode 'static-ip' with a reachable SMTP ingress.
+                    587. Use 'relay' with an smtp-relay credential, 'external'
+                    with a mail server outside the cluster, or switch to
+                    networkMode 'static-ip' with a reachable SMTP ingress.
                 # The same physics for TURN: a tunnel carries no UDP, so a TURN
                 # edge behind one is a load balancer nothing reaches. A
                 # component that declares TURN there waits and says why; this
@@ -1414,26 +1415,40 @@ spec:
                 mail:
                   type: object
                   description: >
-                    Where the cluster sends mail. The relay's credentials are
-                    NOT here — they are the smtp-relay CredentialRequirement,
-                    and this carries only its address and transport settings.
+                    Where the cluster's mail is. The login at a relay or an
+                    external mail server is NOT here — it is the smtp-relay
+                    CredentialRequirement, and this carries only addresses and
+                    transport settings.
+                  x-kubernetes-validations:
+                    - rule: >-
+                        !(has(self.serviceMode) && self.serviceMode == 'external') ||
+                        (has(self.imap) && has(self.imap.host) && self.imap.host != '')
+                      message: >-
+                        mail.serviceMode 'external' is a mail server outside the
+                        cluster and needs mail.imap.host, where its mail is read,
+                        beside mail.host, where mail is submitted. A cluster that
+                        only sends through a provider is 'relay'.
                   properties:
                     serviceMode:
                       type: string
                       description: >
-                        external relays through an upstream provider; system
-                        runs Postfix and Dovecot in-cluster, in system-mail and
-                        system-mail-dmz.
+                        relay sends through an upstream provider and has no
+                        mailboxes. external is a mail server outside the
+                        cluster, which holds the mailboxes: the cluster sends
+                        through mail.host and hands apps mail.imap to read
+                        from, and runs no mail stack. internal runs Postfix and
+                        Dovecot in-cluster, in system-mail and system-mail-dmz.
 
-                        This was called "kernel", which was wrong under the
-                        layout: the stack is a system-tier service and no
-                        kernel namespace is involved. There is no alias — a
-                        claim that still says kernel is refused, which is
-                        better than one that silently means something else.
+                        There is no alias for a former name. A claim that says
+                        system or kernel is refused, and so is one that says
+                        external and names no mail.imap.host, which is what a
+                        relay used to be called: refused is better than
+                        silently meaning something else.
                       enum:
+                        - relay
                         - external
-                        - system
-                      default: external
+                        - internal
+                      default: relay
                     egressHost:
                       type: string
                       description: >
@@ -1451,7 +1466,10 @@ spec:
                         Empty means the shared egress address or a smarthost relay.
                     host:
                       type: string
-                      description: Relay hostname. Required when serviceMode is external.
+                      description: >
+                        Where mail is submitted: the relay's hostname when
+                        serviceMode is relay, the external mail server's when
+                        it is external. Nothing sends until it is set.
                     port:
                       type: integer
                       default: 587
@@ -1462,11 +1480,30 @@ spec:
                     starttls:
                       type: boolean
                       default: true
+                    imap:
+                      type: object
+                      description: >
+                        Where mail is read when serviceMode is external: the
+                        mail server's IMAP address, handed to every app that
+                        declares requires.services.mail.imap. TLS from the
+                        first byte. Mailboxes and the logins that open them
+                        are made on that server, not by the cluster.
+                      properties:
+                        host:
+                          type: string
+                          maxLength: 253
+                          pattern: '^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                          description: The IMAP hostname. Required when serviceMode is external.
+                        port:
+                          type: integer
+                          minimum: 1
+                          maximum: 65535
+                          default: 993
                     listeners:
                       type: object
                       description: >
                         Which ports the mail edge serves to mail clients when
-                        serviceMode is system. Port 25, where other servers
+                        serviceMode is internal. Port 25, where other servers
                         deliver, is always served. Setting one to true approves
                         serving it; the signed commit that sets it is the
                         record. A claim the installer writes sets both to

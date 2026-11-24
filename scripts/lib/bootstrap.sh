@@ -198,7 +198,7 @@ bootstrap_openbao_for_crossplane() {
 # `declare -F _derive` — which _keycloak_smtp_settings tested before deriving the
 # Postfix password, as it now tests _derived — was therefore false
 # everywhere else. On every
-# MAIL_SERVICE_MODE=system cluster that test failed, so Keycloak realm SMTP was
+# MAIL_SERVICE_MODE=internal cluster that test failed, so Keycloak realm SMTP was
 # skipped with "SMTP credentials incomplete" and the realm could not send an
 # invitation or a password reset, while the credentials it needed existed.
 # =============================================================================
@@ -404,7 +404,7 @@ create_crossplane_secrets() {
              + (if $user != "" then {relay_username:$user} else {} end)
              + (if $pass != "" then {relay_password:$pass} else {} end)')"
 
-    # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=system) ─
+    # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=internal) ─
     # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
     # on first apply. The doveadm_password shares its derivation namespace with
     # the object store's secret for cross-service derivation consistency.
@@ -1719,22 +1719,34 @@ _claim_cluster_fields() {
     fi
 
     printf '\n'
-    printf '  # Where mail goes.\n'
-    printf '  #   external  relay through an SMTP provider; supply the smtp-relay\n'
-    printf '  #             credential to the custodian after install\n'
-    printf '  #   system    in-cluster Postfix/Dovecot; requires networkMode static-ip\n'
+    printf '  # Where mail is.\n'
+    printf '  #   relay     send through an SMTP provider, no mailboxes; supply the\n'
+    printf '  #             smtp-relay credential to the custodian after install\n'
+    printf '  #   external  a mail server outside the cluster holds the mailboxes:\n'
+    printf '  #             host is where mail is submitted, imap.host where it is\n'
+    printf '  #             read; the same credential, for the login it sends with\n'
+    printf '  #   internal  in-cluster Postfix/Dovecot; requires networkMode static-ip\n'
     printf '  mail:\n'
     printf '    serviceMode: %s\n' "${mm}"
-    if [[ "${mm}" == "external" ]]; then
+    if mail_mode_sends_through_login "${mm}"; then
         if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then
             printf '    host: %s\n' "${EXTERNAL_SMTP_HOST}"
         else
-            printf '    # host:                    the relay address; set before mail will send\n'
+            printf '    # host:                    where mail is submitted; set before mail will send\n'
         fi
         printf '    # port: 587                 defaults to 587\n'
         printf '    # starttls: true            defaults to true\n'
+        if [[ "${mm}" == "external" ]]; then
+            printf '    imap:\n'
+            printf '      host: %s\n' "${MAIL_IMAP_HOST:-}"
+            if [[ -n "${MAIL_IMAP_PORT:-}" && "${MAIL_IMAP_PORT}" != "993" ]]; then
+                printf '      port: %s\n' "${MAIL_IMAP_PORT}"
+            else
+                printf '      # port: 993               defaults to 993, TLS from the first byte\n'
+            fi
+        fi
     else
-        printf '    # host:                     not used while serviceMode is system\n'
+        printf '    # host:                     not used while serviceMode is internal\n'
         # Mail clients' ports stay closed until the claim says otherwise:
         # true is the approval to serve one, and the signed commit its record.
         printf '    listeners:\n'
@@ -1756,7 +1768,7 @@ _claim_cluster_fields() {
     # scaffold invented would be wrong in a way that looks configured.
     if [[ -n "${MAIL_EGRESS_HOST:-}" ]]; then
         printf '    egressHost: %s\n' "${MAIL_EGRESS_HOST}"
-    elif [[ "${mm}" == "system" ]]; then
+    elif [[ "${mm}" == "internal" ]]; then
         printf '    # egressHost:               the name outbound mail leaves from, e.g.\n'
         printf '    #                           mail-egress.%s — required for SPF to pass.\n' "${KERNEL_DOMAIN:-example.com}"
         printf '    #                           Needs a floating IP on one node whose\n'

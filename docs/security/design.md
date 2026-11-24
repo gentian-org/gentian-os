@@ -704,7 +704,7 @@ told it is the only thing there is.
 
 ### 2.16 Who may open a mailbox with a sign-in token
 
-Only on a cluster whose `mail.serviceMode` is `system`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). A token with the scope `mailbox` comes from one of two places: a sign-in at which an app's own client asked for it, or, for an agent bridge, an exchange of the token the chaperone hands the bridge for one call. For a token, four things have to hold, and each is checked by a different party:
+Only on a cluster whose `mail.serviceMode` is `internal`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). A token with the scope `mailbox` comes from one of two places: a sign-in at which an app's own client asked for it, or, for an agent bridge, an exchange of the token the chaperone hands the bridge for one call. For a token, four things have to hold, and each is checked by a different party:
 
 | Check | By | What makes it true |
 | --- | --- | --- |

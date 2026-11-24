@@ -119,7 +119,7 @@ check() {
     # did not know the mode by its name has neither, and a re-run puts both
     # there. With a relay the Secret is an ExternalSecret's and arrives with
     # the credential, after the install: nothing to look for here.
-    if [[ "$(gentian_mail_service_mode)" == "system" ]]; then
+    if [[ "$(gentian_mail_service_mode)" == "internal" ]]; then
         kubectl get secret keycloak-smtp-credentials -n "${IDENTITY_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
     fi
     return 0

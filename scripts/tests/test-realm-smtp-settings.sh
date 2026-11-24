@@ -72,7 +72,7 @@ for MODE in ${modes}; do
     fi
 done
 
-MODE=system
+MODE=internal
 _keycloak_smtp_settings
 if [[ "${KC_SMTP_HOST}" == "mail.example.org" && "${KC_SMTP_PORT}" == "587" && "${KC_SMTP_STARTTLS}" == "true" &&
       "${KC_SMTP_SSL}" == "false" && "${KC_SMTP_USER}" == "gentian-system@example.org" &&
@@ -82,7 +82,7 @@ else
     bad "the cluster's own mail: got ${KC_SMTP_USER}@${KC_SMTP_HOST}:${KC_SMTP_PORT} starttls=${KC_SMTP_STARTTLS} ssl=${KC_SMTP_SSL}"
 fi
 
-MODE=external
+MODE=relay
 _keycloak_smtp_settings
 if [[ "${KC_SMTP_HOST}" == "relay.example.org" && "${KC_SMTP_USER}" == "relay-user" && "${KC_SMTP_PASSWORD}" == "relay-secret" ]]; then
     ok "a relay: the relay's host and login"

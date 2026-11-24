@@ -1,0 +1,37 @@
+# A composite stored under the name the cluster's own mail had, `system`.
+#
+# The schema refuses that word on a claim written or edited now. A composite
+# that was stored under it is still there when this Composition first renders
+# it, until its claim is edited, and it has a mail stack with mailboxes in it.
+#
+# What this asserts: it renders as `internal` does. system-mail and
+# system-mail-dmz stay composed, and gentian-cluster-config says internal,
+# which is what the operator and the tenants' Composition read.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  secretMode: random
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  mail:
+    serviceMode: system
+  compositeDeletePolicy: Background
+  resourceRefs: []

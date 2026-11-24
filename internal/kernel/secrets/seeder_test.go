@@ -473,3 +473,38 @@ func TestSeedContractGivesTheContractItsUser(t *testing.T) {
 		t.Fatalf("an older path holds user %q, endpoint %q, and its password is kept: %v", got["user"], got["endpoint"], got["password"] == "kept")
 	}
 }
+
+// SyncIMAP replaces an empty record, follows a changed address and never
+// writes an empty one.
+func TestSyncIMAPFollowsValues(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	ctx := context.Background()
+	s := secrets.NewSeeder(newClient(t, srv.URL), nil)
+	path := secrets.CategoryPath("t", "app", "imap")
+
+	if err := s.SeedEmptyIMAP(ctx, "t", "app"); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []secrets.IMAPCreds{
+		{Host: "imap.example.com", Port: "993"},
+		{Host: "mail.example.net", Port: "1993"},
+	} {
+		if err := s.SyncIMAP(ctx, "t", "app", want); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Read(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["host"] != want.Host || got["port"] != want.Port {
+			t.Fatalf("record = %v, want %+v", got, want)
+		}
+	}
+	if err := s.SyncIMAP(ctx, "t", "app", secrets.IMAPCreds{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Read(ctx, path); got["host"] != "mail.example.net" {
+		t.Fatalf("empty sync changed the record to %v", got)
+	}
+}

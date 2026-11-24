@@ -97,7 +97,7 @@ spec:
                  The four are unconditional because every cluster serves
                  tenants; the engines in two of them are not (the Releases
                  below). system-mail and system-llm follow the claim: mail
-                 when mail.serviceMode is system, LLM when llm.enabled.
+                 when mail.serviceMode is internal, LLM when llm.enabled.
 
                  lint-namespace-layout.sh asserts this list equals
                  kernel/namespaces.yaml's. */}}
@@ -114,7 +114,14 @@ spec:
             {{- $alwaysFns := default list (dig "systemServices" "always" list $spec) }}
             {{- $obsEngines := default dict .observed.resources }}
             {{- $systemFns := list "postgresql" "mariadb" "cache" "s3" }}
-            {{- if eq (dig "mail" "serviceMode" "external" $spec) "system" }}
+            {{- /* "system" is what internal was called. The schema refuses it
+                 on a claim written or edited now, but a composite stored
+                 under it is still here until its claim is edited, and read
+                 as anything else it would have its mail namespaces, and the
+                 mailboxes in them, taken away in between. */}}
+            {{- $mailMode := dig "mail" "serviceMode" "" $spec }}
+            {{- if eq $mailMode "system" }}{{- $mailMode = "internal" }}{{- end }}
+            {{- if eq $mailMode "internal" }}
             {{- $systemFns = concat $systemFns (list "mail" "mail-dmz") }}
             {{- end }}
             {{- if dig "llm" "enabled" false $spec }}
@@ -866,7 +873,7 @@ spec:
                  another. Everything except LateInitialize, so that what
                  Keycloak fills in on the live client does not become this
                  object's declared intent. */}}
-            {{- if eq (dig "mail" "serviceMode" "external" $spec) "system" }}
+            {{- if eq $mailMode "internal" }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: Client
@@ -1625,11 +1632,16 @@ spec:
                     # Empty therefore means genuinely unset, not "nobody said".
                     #
                     # These exist so the operator can stop reading its own Helm value for them.
-                    # mail.serviceMode said kernel in the claim and external in the operator for
-                    # as long as the two were separate, which left Dovecot deployed but
-                    # unprovisioned and its ApplicationSet unrendered.
-                    mail.serviceMode: {{ dig "mail" "serviceMode" "" $spec | quote }}
+                    # The claim said the cluster ran its own mail and the operator said it
+                    # relayed for as long as the two were separate, which left Dovecot
+                    # deployed but unprovisioned and its ApplicationSet unrendered.
+                    mail.serviceMode: {{ $mailMode | quote }}
                     mail.egressHost: {{ dig "mail" "egressHost" "" $spec | quote }}
+                    # Where mail is read on a cluster whose mail is on a server outside
+                    # it (serviceMode external); the operator hands it to the apps that
+                    # declare mail.imap. A string, as every value of a ConfigMap is.
+                    mail.imapHost: {{ dig "mail" "imap" "host" "" $spec | quote }}
+                    mail.imapPort: {{ dig "mail" "imap" "port" "" $spec | toString | quote }}
                     node.ip: {{ default "" (dig "nodeIp" "" $spec) | quote }}
                     # Keycloak's in-cluster base URL, /auth included. The broker IdP
                     # fetches token, JWKS and userinfo over it so the code exchange stays

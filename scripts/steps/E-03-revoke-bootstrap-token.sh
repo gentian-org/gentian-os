@@ -474,21 +474,21 @@ _wait_for_sign_in() {
     mail_mode="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
         -o jsonpath='{.items[0].spec.mail.serviceMode}' 2>/dev/null || true)"
     case "${mail_mode}" in
-        external)
+        relay|external)
             warn "     Then fill in the SMTP relay there, before anything else. This"
-            warn "     cluster's mail.serviceMode is 'external', so nothing sends"
+            warn "     cluster's mail.serviceMode is '${mail_mode}', so nothing sends"
             warn "     until the relay is set — and any"
             warn "     tenant app that asks for SMTP will not install at all: its"
             warn "     credentials never reach OpenBao, so its secret never syncs."
             ;;
-        system)
+        internal)
             info "     Nothing has to be filled in there for the install to finish:"
-            info "     mail is the cluster's own (mail.serviceMode system), so there"
+            info "     mail is the cluster's own (mail.serviceMode internal), so there"
             info "     is no relay to supply."
             ;;
         *)
             warn "     The claim's mail.serviceMode could not be read. If this cluster"
-            warn "     relays mail externally, fill in the SMTP relay there: until it is set"
+            warn "     sends through a relay or an external mail server, fill in the SMTP relay there: until it is set"
             warn "     no realm can send and tenant apps that ask for SMTP will not install."
             ;;
     esac

@@ -508,9 +508,10 @@ _requirement_applies() {
             [[ "$(_repo_credential_mode "$1")" != "none" ]]
             ;;
         smtp-relay)
-            # A relay account only where mail leaves through a relay. Under
-            # system mail the cluster runs its own MTA and derives its password.
-            [[ "$(gentian_mail_service_mode)" == "external" ]]
+            # A login only where mail leaves through a server outside the
+            # cluster: a relay, or an external mail server. Under internal
+            # mail the cluster runs its own MTA and derives its password.
+            mail_mode_sends_through_login
             ;;
         argocd-github-webhook)
             # Nothing configures Argo CD's webhook from this credential yet, so

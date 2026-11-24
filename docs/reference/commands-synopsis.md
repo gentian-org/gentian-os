@@ -92,7 +92,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian release set <vX.Y.Z> [--auto-upgrade none|patch|minor]   run this release; one signed commit by the director
   kubectl gentian release track <branch>       follow a gentian-os branch build by build (a development cluster)
   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
-                                               mainAddress.tenant=<tenant>, mail.serviceMode=system ...
+                                               mainAddress.tenant=<tenant>, mail.serviceMode=internal ...
   kubectl gentian domains [--problems]         every domain the cluster serves, the DNS records it needs, and whether
                                                the internet has them: present, pending, missing, or held by another record
 

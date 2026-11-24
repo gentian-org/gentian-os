@@ -129,7 +129,7 @@ func newMailboxWorld(t *testing.T, objects ...client.Object) *mailboxWorld {
 			Data: map[string][]byte{"url": []byte(kc.URL), "client_id": []byte("admin"), "client_secret": []byte("x")}})
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
 		WithStatusSubresource(&gentianov1alpha1.MailboxRemoval{}).Build()
-	tr := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel", MailServiceMode: mailServiceModeSystem}
+	tr := &TenantReconciler{Client: c, Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel", MailServiceMode: mailServiceModeInternal}
 	w := &mailboxWorld{t: t, c: c, tr: tr, people: people, now: mailboxT0.Add(time.Second)}
 	w.r = &MailboxRemovalReconciler{Client: c, Tenant: tr, Now: func() time.Time { return w.now }}
 	return w
@@ -439,7 +439,7 @@ func TestNoMailboxWhereTheClusterKeepsNone(t *testing.T) {
 	}
 
 	w = newMailboxWorld(t, selfhosted("demo"), mailboxRecord("demo-r6", "demo", "alice@demo.k.example", gentianov1alpha1.MailboxChoiceDelete))
-	w.tr.MailServiceMode = "external"
+	w.tr.MailServiceMode = "relay"
 	if got := w.tr.mailboxDomainOf(context.Background(), selfhosted("demo")); got != "" {
 		t.Errorf("a cluster with no mail server of its own gives a tenant the mailbox domain %q", got)
 	}
@@ -449,7 +449,7 @@ func TestNoMailboxWhereTheClusterKeepsNone(t *testing.T) {
 	if got := w.tr.mailboxDomainOf(context.Background(), selfhosted("demo")); got != "" {
 		t.Error(got)
 	}
-	w.tr.MailServiceMode = mailServiceModeSystem
+	w.tr.MailServiceMode = mailServiceModeInternal
 	if got := w.tr.mailboxDomainOf(context.Background(), selfhosted("demo")); got != "demo.k.example" {
 		t.Errorf("a tenant with its mail on the cluster's mail server has the mailbox domain %q", got)
 	}

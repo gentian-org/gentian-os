@@ -303,7 +303,7 @@ type TenantReconciler struct {
 	// unset or misspelled value keeps today's behavior rather than rejecting
 	// mail on the strength of a typo.
 	MailRecipientPolicy string
-	// MailServiceMode is the CLUSTER's mail stack — kernel or external — from
+	// MailServiceMode is where the CLUSTER's mail is — relay, external or internal — from
 	// the Cluster claim's mail.serviceMode. Sourced from MAIL_SERVICE_MODE.
 	//
 	// Distinct from Tenant.spec.mail.mode, which says what one tenant wants;

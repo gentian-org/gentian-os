@@ -40,7 +40,9 @@ const keycloakSMTPCredentialsSecret = "keycloak-smtp-credentials"
 // server rewritten by the provider without the password; its Composition now
 // declares the block with the password, and this run puts the password back
 // where the provider holds nothing to compare.
-const tenantSMTPVersion = "6"
+//
+// 7: the script takes the cluster's own mail by the mode's name, "internal".
+const tenantSMTPVersion = "7"
 
 func tenantSMTPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-tenant-smtp-%s", tenantName)
@@ -79,11 +81,11 @@ REALM_JSON=$(kc_curl -H "${AUTH_HEADER}" \
 # failing every invite. mynetworks still permits it; this is a migration, and the
 # grant is removed only once every sender authenticates.
 #
-# "system" is the mode; "kernel" is what it was called, and what a
-# keycloak-smtp-credentials written before the rename still says.
+# "internal" is the mode; "system" and "kernel" are what it was called, and
+# what a keycloak-smtp-credentials written under either name still says.
 OWN_MAIL="false"
-case "${MAIL_SERVICE_MODE:-external}" in
-  system|kernel) OWN_MAIL="true" ;;
+case "${MAIL_SERVICE_MODE:-relay}" in
+  internal|system|kernel) OWN_MAIL="true" ;;
 esac
 if [ "${OWN_MAIL}" = "true" ]; then
   if [ -n "${KERNEL_SMTP_USER:-}" ] && [ -n "${KERNEL_SMTP_PASSWORD:-}" ] && [ -n "${KERNEL_MAIL_HOST:-}" ]; then

@@ -40,7 +40,7 @@ SMTP_RELAY_PASS="${SMTP_RELAY_PASSWORD:-}"
 
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
 BAO_TOKEN="${BAO_TOKEN:-}"
-MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-relay}"
 EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}"
 EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
 EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}"
@@ -341,13 +341,16 @@ fi
 # --- Mail transport settings ---
 # This path is operational config (not a derived password), so we intentionally
 # overwrite it on each run to reflect install.env changes.
-if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "system" ]; then
-  echo "  Invalid MAIL_SERVICE_MODE='${MAIL_SERVICE_MODE}' (expected external|kernel); defaulting to external"
-  MAIL_SERVICE_MODE="external"
-fi
+case "${MAIL_SERVICE_MODE}" in
+  relay|external|internal) ;;
+  *)
+    echo "  Invalid MAIL_SERVICE_MODE='${MAIL_SERVICE_MODE}' (expected relay|external|internal); defaulting to relay"
+    MAIL_SERVICE_MODE="relay"
+    ;;
+esac
 
-if [ "${MAIL_SERVICE_MODE}" = "external" ] && [ -z "${EXTERNAL_SMTP_HOST}" ]; then
-  echo "  MAIL_SERVICE_MODE=external but EXTERNAL_SMTP_HOST is empty; SMTP delivery will be broken."
+if [ "${MAIL_SERVICE_MODE}" != "internal" ] && [ -z "${EXTERNAL_SMTP_HOST}" ]; then
+  echo "  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE} but EXTERNAL_SMTP_HOST is empty; SMTP delivery will be broken."
 fi
 
 kv_put "mail/smtp" "$(jq -n \

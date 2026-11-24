@@ -16,4 +16,4 @@ spec:
   networkMode: static-ip
   nodeIp: 198.51.100.10
   mail:
-    serviceMode: system
+    serviceMode: internal

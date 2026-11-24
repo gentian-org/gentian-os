@@ -21,11 +21,12 @@ kernelDomain: ""
 # Plumbed as TENANCY_MODE; the Cluster claim's spec.tenancyMode wins once it is published.
 tenancyMode: multi
 
-# mailServiceMode is the cluster's mail stack — kernel or external — from the
-# Cluster claim. external means Dovecot is not deployed, so the operator does
-# not provision it: no per-realm Keycloak client, no XOAUTH2 realm auth, no
-# domain registration. Plumbed as MAIL_SERVICE_MODE.
-mailServiceMode: external
+# mailServiceMode is where the cluster's mail is — relay, external or
+# internal — from the Cluster claim. Anything but internal means Dovecot is
+# not deployed, so the operator does not provision it: no per-realm Keycloak
+# client, no XOAUTH2 realm auth, no domain registration. Plumbed as
+# MAIL_SERVICE_MODE.
+mailServiceMode: relay
 
 # handover controls the gate that keeps a cluster's recovery cheap until its
 # administrator has been seen to write a credential through the login path.

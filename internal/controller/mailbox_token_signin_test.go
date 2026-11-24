@@ -85,16 +85,18 @@ func TestMailboxTokenSignInIsServedWhereTheTenantHasMailboxes(t *testing.T) {
 		cluster string
 		want    bool
 	}{
-		{"own mail server, tenant does not say", withMode(""), "system", true},
-		{"own mail server, tenant says selfhosted", withMode(gentianov1alpha1.MailModeSelfhosted), "system", true},
-		{"own mail server, tenant sends only", withMode(gentianov1alpha1.MailModeTransportOnly), "system", false},
-		{"own mail server, tenant's mail is elsewhere", withMode(gentianov1alpha1.MailModeExternal), "system", false},
-		{"own mail server, tenant has no mail", withMode(gentianov1alpha1.MailModeDisabled), "system", false},
-		{"mail at a provider", withMode(""), "external", false},
+		{"own mail server, tenant does not say", withMode(""), "internal", true},
+		{"own mail server, tenant says selfhosted", withMode(gentianov1alpha1.MailModeSelfhosted), "internal", true},
+		{"own mail server, tenant sends only", withMode(gentianov1alpha1.MailModeTransportOnly), "internal", false},
+		{"own mail server, tenant's mail is elsewhere", withMode(gentianov1alpha1.MailModeExternal), "internal", false},
+		{"own mail server, tenant has no mail", withMode(gentianov1alpha1.MailModeDisabled), "internal", false},
+		{"mail at a provider", withMode(""), "relay", false},
+		{"mail on a server outside the cluster", withMode(""), "external", false},
 		{"no mail", withMode(""), "none", false},
 		{"a cluster that cannot answer yet", withMode(""), "", false},
-		{"the name the mode had before", withMode(""), "kernel", false},
-		{"the tenant that adopts the kernel realm", platformTenantFixture(), "system", false},
+		{"the name the mode had before", withMode(""), "system", false},
+		{"the name it had before that", withMode(""), "kernel", false},
+		{"the tenant that adopts the kernel realm", platformTenantFixture(), "internal", false},
 	} {
 		if got := tenantHasTokenMailboxes(c.tenant, c.cluster, "kernel"); got != c.want {
 			t.Errorf("%s: served = %v, want %v", c.name, got, c.want)
@@ -141,7 +143,7 @@ func TestTheClaimCarriesMailboxTokenSignIn(t *testing.T) {
 	}
 
 	system := &ComponentReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig("system")).Build(),
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig("internal")).Build(),
 		Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel",
 	}
 	write(system, mailboxProfile(true, true))
@@ -162,7 +164,7 @@ func TestTheClaimCarriesMailboxTokenSignIn(t *testing.T) {
 	// A cluster whose mail is at a provider accepts the declaration and
 	// grants nothing.
 	external := &ComponentReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig("external")).Build(),
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig("relay")).Build(),
 		Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel",
 	}
 	write(external, mailboxProfile(true, true))

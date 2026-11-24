@@ -121,7 +121,7 @@ _verify_tcp_from_cluster() {
         sh -c "nc -z -w 5 ${host} ${port}"
 }
 
-# When MAIL_SERVICE_MODE=system, confirm Dovecot Deployment, Service endpoints, and IMAP/LMTP ports.
+# When MAIL_SERVICE_MODE=internal, confirm Dovecot Deployment, Service endpoints, and IMAP/LMTP ports.
 verify_dovecot_installation() {
     if ! _verify_kernel_services_enabled; then
         info "Skipping Dovecot verification (VERIFY_KERNEL_SERVICES=0)."
@@ -131,7 +131,7 @@ verify_dovecot_installation() {
     local mode
 
     mode="$(gentian_mail_service_mode)"
-    if [[ "${mode}" != "system" ]]; then
+    if [[ "${mode}" != "internal" ]]; then
         info "Skipping Dovecot verification (MAIL_SERVICE_MODE=${mode})."
         return 0
     fi
