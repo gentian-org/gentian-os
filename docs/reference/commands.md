@@ -571,7 +571,8 @@ An install first says what the build, and the apps it comes with, ask for
 beyond the tenant: each egress request that would wait for an approval, with
 its hosts and the profile's reason. `--approve-egress` approves those requests
 with the install: each is recorded as a grant by you, as `apps approve` records
-one. It needs the perimeter approver's right in the tenant
+one. A request marked `hostsAtApproval` is not approved with the install; it
+waits for `apps approve` with its hosts. It needs the perimeter approver's right in the tenant
 (`can_approve_privilege`); without that right nothing is installed. Without the
 flag the app is installed and waits for the approver.
 
@@ -756,11 +757,19 @@ kubectl gentian exposures withdraw cloud share --tenant demo
 
 `requests` shows every entry an installed app declares for the internet: its
 kind, the address it is published at, its paths, who can reach it, and its
-state. The same list carries the one request that is not a public address:
-an entry behind sign-in that asks to keep the app's own `Authorization`
-header (KIND "Behind sign-in: keeps the app's own Authorization header").
-It is approved, reviewed and withdrawn with the same commands, and nothing
-is published for it.
+state. The same list carries the requests that are not a public address,
+each approved, reviewed and withdrawn with the same commands:
+
+- an entry behind sign-in that asks to keep the app's own `Authorization`
+  header (KIND "Behind sign-in: keeps the app's own Authorization header");
+  nothing is published for it;
+- an inside entry (`surface: inside`, kind `insideAppCredential`, KIND
+  "Inside the cluster only: passes the caller's credential to the app"): its
+  address is known to the cluster's own DNS alone, and only pods of the
+  cluster whose component was granted the host as egress reach it
+  ([edge.md §2](../concepts/edge.md)). `approve` prints that it puts nothing
+  on the internet, then the address, paths, kind, access and limit.
+
 `requested` is declared and not approved, so nothing is published.
 `approved`, `review due` and `expired` are as in `list`, with who approved it
 and until when. `unmatched` is an entry in the registry that matches no entry
@@ -770,8 +779,9 @@ Whoever may see the tenant may read the list.
 Under SIGN-IN, `none: anyone` means anyone on the internet reaches the paths
 without signing in, and no credential is passed to the app. `none: the app
 checks the credential` is a public address whose callers' `Authorization`
-header is passed to the app (`authMode: app`). The platform checks nobody at
-a published address in either case. `required` is an entry behind sign-in.
+header is passed to the app (`authMode: app`), or an inside entry. The
+platform checks nobody at a published or inside address in either case.
+`required` is an entry behind sign-in.
 KIND, and everything `approve` prints about an entry, are the director's own
 words.
 
@@ -1213,7 +1223,18 @@ kubectl get tenant -o custom-columns=NAME:.metadata.name,GATEWAY:.status.conditi
 # Envoy policies attached to routes
 kubectl get backendtrafficpolicy -n tenant-demo
 kubectl get backendtrafficpolicy -n kernel-edge -l app.kubernetes.io/managed-by=gentian-os
+
+# Inside entries and outgoing connections: classes of their own (installer step A-05)
+kubectl get gatewayclass gentian-envoy-inside gentian-envoy-out
+kubectl get gateway inside -n kernel-edge                 # exists while an inside entry is approved
+kubectl get gateway -n kernel-edge | grep outgoing        # outgoing-<n>, from the first grant on
+kubectl get component <app> -n tenant-demo -o jsonpath='{.status.outgoingHosts}'
+kubectl -n kernel-edge logs <outgoing Envoy pod> -c envoy # one JSON line per connection: host, port, client, bytes
 ```
+
+A Component that waits for its listener on the outgoing gateway reads
+`OutgoingGatewayPending`. The whole edge, both directions:
+[edge.md](../concepts/edge.md).
 
 On `networkMode: tunnel`, `Gateway.status.conditions[Programmed]` may be
 `False` (`AddressNotAssigned`) while listener conditions are `Programmed=True`

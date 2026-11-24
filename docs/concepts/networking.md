@@ -7,8 +7,9 @@ type: concept
 
 How traffic is admitted inside the cluster: the network plugin, the
 NetworkPolicy tiers of a tenant namespace, the kernel's rules, egress, and the
-edge that real-time media takes. The edge itself -- Gateways, listeners,
-routes, certificates and DNS -- is [routing.md](routing.md); the controls each
+edge that real-time media takes. The map of every crossing of the
+cluster's boundary, in and out, is [edge.md](edge.md). The edge itself --
+Gateways, listeners, routes, certificates and DNS -- is [routing.md](routing.md); the controls each
 rule rests on, with their tests, are [security/design.md](../security/design.md); the mail
 edge is [mail.md](mail.md). The rules are AD-1, AD-6 and AD-9 in
 [decisions/index.md](../decisions/index.md).
@@ -72,7 +73,8 @@ writes one by hand.
 | `porter`, `porter-target-*` | the tenant's porter's pods, and the pods of the file homes | the file dialog's way to the tenant's file home, and the home's way in for it ([app-customization.md §2.3](../guides/app-customization.md)) |
 | `kernel-access-<app>` | the app's pods | Egress to each store the profile declares, on that store's port, and to the model gateway for `requires.services.llm` ([security/design.md §2.6](../security/design.md)) |
 | the app's in-app policy | the app's pods | the programs of one app reach each other |
-| `component-<app>` | the app's pods | the egress rules of `requires.privileges.egress` that were granted by name on the install. A declared privilege nobody granted opens nothing |
+| `component-<app>` | the app's pods | what `requires.privileges.egress` was granted by name on the install, or answered by a trusted domain or by the platform: for a request by host, the outgoing gateway's pods on the listener ports of its hosts, or, for a host the cluster serves itself, the edge's or the inside Gateway's pods on the port the host's port forwards to; for a rule, the rule. A declared privilege nobody granted opens nothing ([edge.md §3](edge.md)) |
+| `agent-bridge-callers-<caller>` | the pods of a component that speaks as a person, the caller of the tenant's agent bridges | Egress to the pods of the tenant's agent bridges, and the rules by address granted to an agent bridge that runs nothing in the tenant (packaged as `api`), whose way out is its callers' ([bridges.md §4.4](bridges.md#44-ways-from-the-agents)). The hosts granted to such a bridge are opened in `component-<caller>` |
 | a contract's policies | consumer and provider of an `IntegrationBinding` | the path between two apps that share a contract, as far as the `AppGrant` allows |
 | the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared cache (Valkey) through `kernel-access-<app>` instead |
 
@@ -123,7 +125,7 @@ a pod from any other account (`gentian-run-pods`).
 | Policy | Selects | Opens |
 | --- | --- | --- |
 | `runs-default-deny` | every pod of the namespace | Nothing in. Out, the cluster's DNS and nothing else |
-| `action-<name>` | the pods of runs of that installed action | the egress rules of the action's `requires.privileges.egress` that were granted on its install |
+| `action-<name>` | the pods of runs of that installed action | what the action's `requires.privileges.egress` was granted on its install: the outgoing gateway's pods on its hosts' listener ports, whose names the dispatcher writes into the run pod's host table, and its rules by address |
 | `caller-<app>` | the pods of runs that component started | the component's pods in `tenant-<t>`, on the port its callback Service sends to |
 
 No rule reaches a bridge, an engine, a store or the kernel: what a run needs
@@ -221,7 +223,7 @@ Keeping the levels apart is what makes self-service and control compatible.
 
 | Level | Object | Declared by | How many | Lives |
 | --- | --- | --- | --- | --- |
-| The profile's entry | a `surface: perimeter` entry: name, host label, paths, deny paths, `authMode` | the app's author, in the catalog | a few per app | with the profile |
+| The profile's entry | a `surface: perimeter` or `surface: inside` entry: name, host label, paths, deny paths, `authMode` | the app's author, in the catalog | a few per app | with the profile |
 | The tenant's enablement | *this* entry of *this* install is published: owner, publish date, `reviewAt`, an optional `expiresAt` ([routing.md §7](routing.md)). The `authMode` is not restated: it is the entry's, and an approval cannot weaken it | the tenant's perimeter approver, `can_expose`, through the director | a handful per tenant | until withdrawn or expired; regular review is the control |
 | The app-level object | a share link, a guest meeting, a public form | any user of the app, inside the app | thousands | as the app's own policy says |
 

@@ -949,6 +949,13 @@ differs is listed here, in the order you meet it.
    kubectl gentian apps list --tenant <tenant>
    kubectl get component -A | grep <profile>        # Ready when it runs
    ```
+
+   A service whose profile asks to reach hosts outside the cluster
+   (`requires.privileges.egress`) waits until the tenant's perimeter
+   approver answers: `apps install` lists those requests, `--approve-egress`
+   answers them with the install where you hold that right, and
+   `kubectl gentian apps approve <profile> egress/<name> --tenant <tenant>`
+   answers one afterwards ([docs/concepts/edge.md](docs/concepts/edge.md) §3).
 7. **Its public address.** An entry a profile exposes answers at
    `<subDomain>.<the tenant's domain>`. An entry that the public reaches
    (`surface: perimeter` in the profile) is not reachable until the tenant's
@@ -1018,7 +1025,10 @@ differs is listed here, in the order you meet it.
    An entry the list does not show cannot be approved: the director refuses
    an app that is not installed in the tenant and an entry its profile does
    not declare for the internet. The admin console shows the same entries,
-   read-only, under **Apps → Details → Public addresses**. What the tenant
+   with Approve and Withdraw for whoever may, under **Perimeter** and per app
+   under **Apps → Details**. An entry the profile declares as
+   `surface: inside` is approved the same way and is reachable from the
+   cluster's own pods only. What the tenant
    has published, and taking an entry down again:
 
    ```bash

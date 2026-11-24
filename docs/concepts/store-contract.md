@@ -927,8 +927,10 @@ An app that waits on a person lists each request nobody granted yet in
 `{privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt,
 declinedBy, declinedAt, declineReason}`:
 `approvedBy` is `perimeter-approver` (the tenant's perimeter approver,
-`tenant#can_approve_privilege`) for `egress`, and `security-officer`
-(`cluster#can_approve`) for every other kind. It is the answer the director
+`tenant#can_approve_privilege`) for `egress`, `security-officer`
+(`cluster#can_approve`) for a pod-security waiver and a cluster role that
+reads, and `break-glass` (`cluster#can_set_admission`) for an API extension
+and a cluster role that writes. It is the answer the director
 applies to the approval, so a console offers the button by it and the
 director still decides. `reason` is the profile's own, for the approver to
 read. `requestedBy`, `requestedAt` and `note` are the request a tenant

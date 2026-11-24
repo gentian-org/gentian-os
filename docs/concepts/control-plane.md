@@ -426,6 +426,9 @@ How to read it:
   the cookies and the `Authorization` header, and limits size, time and the
   number of requests from one address
   ([security/design.md §2.14](../security/design.md)).
+- An inside entry takes the same proxy from the `inside` Gateway, whose
+  address is inside the cluster: the cluster's own pods with a grant for its
+  host reach it, the internet does not ([edge.md §2](edge.md)).
 - The sign-in sidecar has two paths. `/sso/login` is behind the session and
   the bouncer, so only a person who may use the app begins a sign-in.
   `/sso/acs` takes Keycloak's signed answer with no session; the sidecar
@@ -1272,11 +1275,11 @@ It keeps a person's sign-ins at services outside the cluster:
 - A component that was granted the contract `connections` tells the liaison
   which services there are and asks it for a short credential for one call.
   The lasting credential never leaves the liaison.
-- It reaches outside services over https. The platform answers that request
-  itself, as it does for every profile it ships. What a tenant's approver
-  answers is each bridge to an outside service: the bridge names the
-  service, and the liaison is told of a bridge only once the bridge's own
-  request was answered.
+- It asks for no egress of its own. It reaches the sign-in hosts the
+  tenant's bridges name (`bridge.ways[].outside.signIn.oauth.issuer`),
+  through the outgoing gateway, each once that bridge's own requests are
+  answered, and no other host outside. What a tenant's approver answers is
+  each bridge to an outside service ([edge.md §3.3](edge.md)).
 
 The platform places it in no tenant. A tenant has a liaison while an app it
 installed names it in `spec.comesWith`.
@@ -1486,8 +1489,8 @@ gives.
     approved by the tenant's perimeter approver, let an app's own token
     through unverified by the platform: behind sign-in, an entry that
     declares `clientAuthorization: app` keeps the header its own page sent
-    (the session is still required); and a published entry of `authMode: app`
-    passes the header of a client with no session (a sync client, a mobile
+    (the session is still required); and a published or inside entry of
+    `authMode: app` passes the header of a client with no session (a sync client, a mobile
     app, a script) to the app. A client that needs the app's cookies on a
     public address is not served.
 

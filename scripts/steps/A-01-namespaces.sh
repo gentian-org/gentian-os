@@ -2,7 +2,7 @@
 # step: A-01-namespaces
 # phase: control-plane
 # requires:
-# provides: every kernel namespace of kernel/namespaces.yaml, labeled with gentianos.io/tier and gentianos.io/function; the platform's own namespaces labeled; in each kernel namespace the NetworkPolicies of kernel/security/network-policies when KERNEL_NETWORK_POLICIES=true, and none of them otherwise
+# provides: every kernel namespace of kernel/namespaces.yaml, labeled with gentianos.io/tier and gentianos.io/function; the platform's own namespaces labeled; in each kernel namespace the NetworkPolicies of kernel/security/network-policies when KERNEL_NETWORK_POLICIES=true, and none of them otherwise; the kernel-egress rules of the namespaces whose inventory says egress: cluster carry the API server's addresses and ports read from the kubernetes EndpointSlice in default, and the step fails when none can be read
 # mutates: namespaces, and the NetworkPolicies labeled gentianos.io/kernel-network-policy in the kernel namespaces
 
 # The list is kernel/namespaces.yaml and nothing else: the operator reads the

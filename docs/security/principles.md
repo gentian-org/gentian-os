@@ -43,7 +43,7 @@ The gateway with its bouncer (browser and API traffic behind a session), the
 namespace), the director (configuration writes), the custodian (secret
 writes), and the registrar (people and groups). The proxy is one of these
 because it decides what is published: only an approved entry's declared paths pass, and every
-perimeter entry passes through it. It verifies no caller — `authMode: none`
+perimeter and inside entry passes through it. It verifies no caller — `authMode: none`
 forwards for anyone, `authMode: app` hands the caller's own credential to the
 app to check, and `basic`, `bearer`, `jwt` and `signature` are refused on a
 perimeter entry because nothing verifies them. Being a PEP obliges it: it
@@ -84,10 +84,13 @@ in the chain, not beside it.
 ## 6. Traffic is identity-aware and closed by default
 
 L3/4: a tenant namespace is closed by default and opens only to the traffic
-its apps declare, through NetworkPolicy derived from those requirements. The
-kernel, system and shared namespaces run the platform's own services: their
-ingress is closed by policy, on by default, and their egress is left to those
-services. L7: every route declares its `authMode`; `none` is a word someone
+its apps declare, through NetworkPolicy derived from those requirements. Out
+of the cluster it reaches nothing but what was answered: a host through the
+outgoing gateway, or a rule by address ([concepts/edge.md](../concepts/edge.md)).
+The kernel, system and shared namespaces run the platform's own services:
+their ingress is closed by policy, on by default. A kernel namespace whose
+pods need no internet reaches only the cluster, DNS and the API server; the
+egress of the others is left to those services. L7: every route declares its `authMode`; `none` is a word someone
 wrote and a reviewer can find, never an absence.
 
 ## 7. Audit is three logs joined by one request id
