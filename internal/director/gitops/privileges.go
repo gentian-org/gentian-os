@@ -63,10 +63,13 @@ type PrivilegeGrant struct {
 	ApprovedAt string `json:"approvedAt"`
 	Reason     string `json:"reason,omitempty"`
 	ExpiresAt  string `json:"expiresAt,omitempty"`
-	// Digest pins an apiExtensions grant to the definitions approved.
+	// Digest pins an apiExtensions grant to the definitions approved, and
+	// an egress grant of a request by address to the rule approved
+	// (security.EgressRuleDigest).
 	Digest string `json:"digest,omitempty"`
-	// Hosts are what an egress grant opens for a request whose hosts are
-	// named at approval, as the approver named them.
+	// Hosts are what an egress grant answered: the request's hosts as the
+	// approver read them, or, for a request whose hosts are named at
+	// approval, the hosts the approver named.
 	Hosts []string `json:"hosts,omitempty"`
 }
 
@@ -155,6 +158,46 @@ func (g *GitOps) GrantPrivilege(ctx context.Context, tenant string, grant Privil
 	}
 	return g.writeTenantFileLocked(ctx, tenant, PrivilegesFile, renderPrivileges(tenant, next), listPatch,
 		fmt.Sprintf("Grant %s to %s for tenant %s", grant.Privilege, grant.Install, tenant), meta)
+}
+
+// RecordPrivilegeAnswers writes, in one commit, what grants that record no
+// answer answered: records names grants by Key with the hosts or the digest
+// to record. A grant is written only while it still records nothing and is
+// the same approval (approver and approvedAt) the record was made for, so a
+// grant replaced meanwhile keeps what its own approval recorded. Nothing to
+// write is "unchanged".
+func (g *GitOps) RecordPrivilegeAnswers(ctx context.Context, tenant string, records []PrivilegeGrant, meta Meta) (Result, error) {
+	if !gentianov1alpha1.ValidTenantName(tenant) {
+		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	have, err := g.tenantPrivileges(ctx, tenant)
+	if err != nil {
+		return Result{}, err
+	}
+	byKey := make(map[string]PrivilegeGrant, len(records))
+	for _, r := range records {
+		byKey[r.Key()] = r
+	}
+	changed := false
+	for i := range have {
+		h := &have[i]
+		r, ok := byKey[h.Key()]
+		if !ok || len(h.Hosts) > 0 || h.Digest != "" || r.Approver != h.Approver || r.ApprovedAt != h.ApprovedAt {
+			continue
+		}
+		if len(r.Hosts) == 0 && r.Digest == "" {
+			continue
+		}
+		h.Hosts, h.Digest = r.Hosts, r.Digest
+		changed = true
+	}
+	if !changed {
+		return Result{Status: "unchanged"}, nil
+	}
+	return g.writeTenantFileLocked(ctx, tenant, PrivilegesFile, renderPrivileges(tenant, have), listPatch,
+		fmt.Sprintf("Record what the egress grants of tenant %s answered", tenant), meta)
 }
 
 // RevokePrivilege withdraws one. The component's next reconcile finds the

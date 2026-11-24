@@ -61,7 +61,9 @@ type grantPrivilegeRequest struct {
 	// Hosts are, for an egress request whose hosts are named at approval
 	// (hostsAtApproval), the hosts the approver lets the install reach:
 	// "erp.example.org", "files.example.org:8443". The grant opens these and
-	// no others. Ignored by the cluster for any other egress request.
+	// no others. For any other egress request the grant records the
+	// request's own hosts or the digest of its rule, read from the profile
+	// the install is at, and these are not used.
 	Hosts []string `json:"hosts,omitempty"`
 }
 
@@ -307,6 +309,30 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 			return
 		}
 	}
+	digest := body.Digest
+	if kind == security.PrivilegeEgress {
+		// An egress grant records what it answers: the request as the
+		// profile the install is at states it, or, for a request whose
+		// hosts are named at approval, the hosts named here. A request the
+		// install does not state is not approved: there is nothing to
+		// record, and nothing the approver read.
+		definition, err := s.installDefinition(r.Context(), r.PathValue("t"), install)
+		if err != nil {
+			s.repoError(w, r, err)
+			return
+		}
+		e := egressRequestOf(definition, ref)
+		if e == nil {
+			s.fail(w, r, http.StatusConflict, install+" does not ask for "+ref+" at the build it is at; nothing was approved")
+			return
+		}
+		if !e.HostsAtApproval {
+			if hosts, digest, err = egressRecord(e); err != nil {
+				s.fail(w, r, http.StatusConflict, ref+" of "+install+" cannot be recorded: "+err.Error())
+				return
+			}
+		}
+	}
 	res, err := s.cfg.Repo.GrantPrivilege(r.Context(), r.PathValue("t"), gitops.PrivilegeGrant{
 		Install:    install,
 		Privilege:  ref,
@@ -314,7 +340,7 @@ func (s *Server) grantPrivilege(w http.ResponseWriter, r *http.Request, c call) 
 		ApprovedAt: time.Now().UTC().Format(time.RFC3339),
 		Reason:     strings.TrimSpace(body.Reason),
 		ExpiresAt:  body.ExpiresAt,
-		Digest:     body.Digest,
+		Digest:     digest,
 		Hosts:      hosts,
 	}, c.meta)
 	s.written(w, r, res, err)

@@ -112,8 +112,14 @@ func TestAnInstallApprovesTheRequestsItNames(t *testing.T) {
 		t.Fatalf("grants = %v", list["privileges"])
 	}
 	for _, raw := range grants {
-		if g := raw.(map[string]any); g["approver"] != "tom" {
+		g := raw.(map[string]any)
+		if g["approver"] != "tom" {
 			t.Errorf("a grant's approver is %v, want the caller", g["approver"])
+		}
+		// Each records the hosts its request named, as the build stated them.
+		want := map[string]string{"recorder": "[api.recorder.example]", "relay": "[relay.example]"}[g["install"].(string)]
+		if got := fmt.Sprint(g["hosts"]); got != want {
+			t.Errorf("the grant of %v records hosts %s, want %s", g["install"], got, want)
 		}
 	}
 	if trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%B", "main"); !strings.Contains(trailer, "can_approve_privilege tenant:demo") {

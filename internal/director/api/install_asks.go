@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/catalogue"
@@ -57,9 +59,13 @@ type askedEgress struct {
 	// the app's own.
 	CameWith string `json:"cameWith,omitempty"`
 
-	// answered says the request waits for nobody: policy answers it, or it
-	// was granted on this install before.
+	// answered says the request waits for nobody: policy answers it, or a
+	// grant on this install answers it as it is.
 	answered bool
+	// recordHosts and recordDigest are what a grant of the request records:
+	// its hosts, or the digest of its rule (egressRecord).
+	recordHosts  []string
+	recordDigest string
 }
 
 // askedIntegration is one contract a build about to be installed consumes
@@ -152,26 +158,43 @@ func asksOf(install string, definition *gentianov1alpha1.ComponentProfile, origi
 	}
 	shipped := hostnames.PlatformShipped(read)
 	byDomain := security.TrustedEgress(read, have.domains)
-	now := time.Now()
+	// A grant answers a request as it is, as the cluster reads it: live,
+	// and recording what the request asks now.
+	granted := security.LiveGrants(read, grantsOfInstall(have.grants, install), time.Now())
 	var out []askedEgress
 	for i := range read.Privileges().Egress {
 		e := &read.Privileges().Egress[i]
 		ref := security.PrivilegeRef(security.PrivilegeEgress, e.Name)
 		_, domain := byDomain[ref]
-		granted := slices.ContainsFunc(have.grants, func(g gitops.PrivilegeGrant) bool {
-			if g.Install != install || g.Privilege != ref {
-				return false
-			}
-			if g.ExpiresAt == "" {
-				return true
-			}
-			until, err := time.Parse(time.RFC3339, g.ExpiresAt)
-			return err == nil && until.After(now)
-		})
+		_, answered := granted[ref]
+		hosts, digest, _ := egressRecord(e)
 		out = append(out, askedEgress{
 			Install: install, Privilege: ref, Reason: e.Reason, Hosts: e.Hosts, HostsAtApproval: e.HostsAtApproval, CameWith: cameWith,
-			answered: (shipped && !e.HostsAtApproval) || domain || granted,
+			answered:    (shipped && !e.HostsAtApproval) || domain || answered,
+			recordHosts: hosts, recordDigest: digest,
 		})
+	}
+	return out
+}
+
+// grantsOfInstall are the tenant's grants for install, as the Component
+// carries them. One whose expiry does not parse is left out: it grants
+// nothing the cluster would read either.
+func grantsOfInstall(grants []gitops.PrivilegeGrant, install string) []gentianov1alpha1.PrivilegeGrant {
+	var out []gentianov1alpha1.PrivilegeGrant
+	for _, g := range grants {
+		if g.Install != install {
+			continue
+		}
+		grant := gentianov1alpha1.PrivilegeGrant{Privilege: g.Privilege, Approver: g.Approver, Digest: g.Digest, Hosts: g.Hosts}
+		if g.ExpiresAt != "" {
+			until, err := time.Parse(time.RFC3339, g.ExpiresAt)
+			if err != nil {
+				continue
+			}
+			grant.ExpiresAt = &metav1.Time{Time: until}
+		}
+		out = append(out, grant)
 	}
 	return out
 }
@@ -438,18 +461,22 @@ func (s *Server) grantWithInstall(ctx context.Context, c call, tenant, decision 
 	for _, a := range approve {
 		// A request whose hosts are named at approval is approved where the
 		// hosts are named, not with the install.
-		waits := slices.ContainsFunc(asks, func(e askedEgress) bool {
+		i := slices.IndexFunc(asks, func(e askedEgress) bool {
 			return e.Install == a.Install && e.Privilege == a.Privilege && !e.answered && !e.HostsAtApproval
 		})
-		if !waits {
+		if i < 0 {
 			continue
 		}
+		// The grant records the request as the build states it: what the
+		// person approving read.
 		_, err := s.cfg.Repo.GrantPrivilege(ctx, tenant, gitops.PrivilegeGrant{
 			Install:    a.Install,
 			Privilege:  a.Privilege,
 			Approver:   c.meta.Subject,
 			ApprovedAt: time.Now().UTC().Format(time.RFC3339),
 			Reason:     "approved with the install of the app",
+			Hosts:      asks[i].recordHosts,
+			Digest:     asks[i].recordDigest,
 		}, meta)
 		if err != nil {
 			s.cfg.Log.WarnContext(ctx, "an approval given with an install could not be written; the request waits",

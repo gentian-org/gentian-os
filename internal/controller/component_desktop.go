@@ -44,6 +44,7 @@ import (
 	gentianmeta "github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 // The desktop is the one component the OS ships itself (admin-console.md
@@ -965,9 +966,10 @@ func tenantPrivilegeGrants(tenant *gentianov1alpha1.Tenant, install string) []ge
 
 // replacedGrants are the privileges the Component carries an approval for
 // that the Tenant has approved again for other terms: another digest (the
-// definitions changed and were approved as they are now) or another expiry
-// (a renewal). Pressing the button again for the same terms is not one; that
-// approval stays as stored.
+// definitions changed and were approved as they are now), another expiry
+// (a renewal), or another record of what an egress grant answered (other
+// hosts, another rule's digest). Pressing the button again for the same
+// terms is not one; that approval stays as stored.
 func replacedGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []string {
 	have := make(map[string]gentianov1alpha1.PrivilegeGrant, len(stored))
 	for _, g := range stored {
@@ -979,7 +981,7 @@ func replacedGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []string 
 		if !ok {
 			continue
 		}
-		if kept.Digest != g.Digest || !equalOptionalTime(kept.ExpiresAt, g.ExpiresAt) {
+		if !security.SameRecord(&kept, &g) || !equalOptionalTime(kept.ExpiresAt, g.ExpiresAt) {
 			out = append(out, g.Privilege)
 		}
 	}

@@ -274,15 +274,20 @@ func TestHostsNamedAtApprovalAreTheGrantsOwn(t *testing.T) {
 		t.Error("a trusted domain answered a request whose hosts are named at approval")
 	}
 
-	// Hosts on the grant of a request that names its own are not opened.
+	// Hosts on the grant of a request that names its own are the hosts it
+	// answered: one the request does not name is not opened, and one the
+	// grant does not name waits.
 	fixed := profileAsking()
 	fixed.Spec.Requires.Privileges.Egress = append(fixed.Spec.Requires.Privileges.Egress, gentianov1alpha1.EgressRequest{
 		Name: "outside", Reason: "reads the calendars people connected", Hosts: []string{"graph.microsoft.com"},
 	})
 	extra := componentGranting("egress/outside")
 	extra.Spec.Privileges[0].Hosts = []string{"evil.example.net"}
-	if got := security.GrantedEgressHostsUnder(fixed, extra, now, nil); strings.Join(got, ",") != "graph.microsoft.com" {
-		t.Errorf("a grant's hosts widened a request that names its own: %v", got)
+	if got := security.GrantedEgressHostsUnder(fixed, extra, now, nil); len(got) != 0 {
+		t.Errorf("a grant opened hosts it did not answer: %v", got)
+	}
+	if pending := security.PendingPrivileges(fixed, extra, now); !slices.Contains(pending, "egress/outside") {
+		t.Errorf("a request beyond its grant's hosts does not wait: %v", pending)
 	}
 }
 

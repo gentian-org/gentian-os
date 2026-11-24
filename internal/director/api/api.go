@@ -163,6 +163,7 @@ type Repository interface {
 	SetTenantOrganization(ctx context.Context, tenant, displayName string, org gentianov1alpha1.TenantOrganization, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
 	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
+	RecordPrivilegeAnswers(ctx context.Context, tenant string, records []gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
 	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
 	TenantChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	TenantExposureChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
@@ -230,9 +231,13 @@ type Config struct {
 	// (catalogue_refused.go). Off unless the program turns it on, so that a
 	// test's catalog of minimal profiles is left as it wrote it.
 	TakeOutRefused bool
-	Authn          Authenticator
-	Authz          authz.Checker
-	Repo           Repository
+	// RecordEgressAnswers has the director record, once at start, what
+	// each egress grant that records nothing answered (egress_records.go).
+	// Off unless the program turns it on.
+	RecordEgressAnswers bool
+	Authn               Authenticator
+	Authz               authz.Checker
+	Repo                Repository
 	// Catalogue fetches a profile when a tenant installs it (AD-3), and a
 	// catalogue's index when one is listed. Which catalogs there are is
 	// not its to know: they are read from git when they are needed, per
@@ -315,6 +320,7 @@ func New(cfg Config) (*Server, error) {
 	s.startUpdater()
 	s.startPlatformApps()
 	s.startTakeOutRefused()
+	s.startEgressRecords()
 	return s, nil
 }
 
