@@ -165,7 +165,6 @@ Every flow of the two namespaces. The first three rows are the only ones that be
 | Postfix | mail servers on the internet | 25 | no policy: egress from `system-mail` is not restricted |
 | Postfix | the relay host, where the claim names one | the relay's port (587 unless set) | no policy |
 | Postfix, Dovecot | the cluster's resolver | 53 | no policy |
-| Dovecot | Keycloak, in `kernel-authentication`, to introspect a sign-in token | 8080 | no policy on Dovecot's side |
 | The kubelet, from the pod's node | the proxy's health endpoint (8404), Dovecot's 24 | | not subject to a NetworkPolicy |
 
 Closed, though something listens: Postfix's 25 (mail from outside arrives on 10025, and nothing inside the cluster is handed 25) and the proxy's health port. The proxy is the only pod of the two namespaces whose egress is restricted: it can reach the three PROXY-protocol ports and a resolver, and nothing else in any namespace or on the internet.
@@ -704,22 +703,25 @@ told it is the only thing there is.
 
 ### 2.16 Who may open a mailbox with a sign-in token
 
-Only on a cluster whose `mail.serviceMode` is `internal`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). A token with the scope `mailbox` comes from one of two places: a sign-in at which an app's own client asked for it, or, for an agent bridge, an exchange of the token the chaperone hands the bridge for one call. For a token, four things have to hold, and each is checked by a different party:
+Only on a cluster whose `mail.serviceMode` is `internal`, and only for a tenant with mailboxes on it (`spec.mail.mode` `selfhosted`, the default there) in a realm of its own. A mail program presents either an app password or a person's access token (XOAUTH2). A token with the scope `mailbox` comes from one of two places: a sign-in at which an app's own client asked for it, or, for an agent bridge, an exchange of the token the chaperone hands the bridge for one call. For a token, five things have to hold, and each is checked by a different party:
 
 | Check | By | What makes it true |
 | --- | --- | --- |
-| The token names `gentian-dovecot` in its audience | Keycloak, when Dovecot introspects as `gentian-dovecot` (the client's name and secret are in the introspection address, the one credential Dovecot 2.3 sends with an introspection) | the realm's client scope `mailbox`, whose mapper adds that audience to an access token |
+| The token is the realm's, and still valid | Dovecot, locally: the signature against the realm's published keys, the issuer among the registered realms, the expiry | the operator writes each realm's keys and issuer into `dovecot-realm-auth` |
+| The token names `gentian-dovecot` in its audience | Dovecot (`client_id = gentian-dovecot`) | the realm's client scope `mailbox`, whose mapper adds that audience to an access token |
 | The token carries the scope `mailbox` | Dovecot (`scope = mailbox`) | the client asked for `mailbox` at that sign-in, and has the scope |
 | The client has the scope | Keycloak, at sign-in or exchange (`invalid_scope` otherwise) | the profile declares `requires.services.mail.imap.tokenSignIn`; the scope is an optional scope of that profile's own client and of no other |
 | The mailbox is the person's | Dovecot | the user is the token's `email` claim, and the address the mail program gave has to equal it |
 
-So an app that declares it can open the mailbox of a person who signed in to it, with the token of the sign-in at which it asked for `mailbox`, for as long as that token is valid. It cannot open anybody else's, and its other tokens -- the ones it holds for its own session or relays to what it calls -- open none. An app that does not declare it cannot obtain such a token at all, and a token of another realm is introspected by a realm that does not know it.
+So an app that declares it can open the mailbox of a person who signed in to it, with the token of the sign-in at which it asked for `mailbox`, for as long as that token is valid. It cannot open anybody else's, and its other tokens -- the ones it holds for its own session or relays to what it calls -- open none. An app that does not declare it cannot obtain such a token at all.
+
+- **Dovecot does not ask Keycloak.** It checks the token against keys it holds, so a person disabled or signed out keeps mail access until the token in hand expires (the realm's access-token lifespan, minutes). A key the realm retires stays accepted until Dovecot restarts.
 
 - **An agent bridge gets the token by exchange, one call at a time.** A bridge has no sign-in: the chaperone hands it the person's token made out to the bridge's profile name, after the rights check and, for a run, under the person's mandate. A bridge that declares `tokenSignIn` has a client of its own that only exchanges (standard token exchange; no flow, no redirect, `fullScopeAllowed` off), named after the profile so that it is in that token's audience, and confidential (admission holds it to all three). It exchanges that token for `mailbox`, uses the result for the call and keeps nothing. Keycloak exchanges only a token that names the asking client, and grants `mailbox` only to a client that has it: the token the bridge is handed opens no mailbox, another bridge cannot exchange it, and a bridge that does not declare it gets no `mailbox` token (`scripts/tests/test-mailbox-exchange-lab.sh`, against the pinned Keycloak and Dovecot). The gate in front of the exchange is the chaperone's: the person's rights, and their mandate for a run.
 - **The declaration is a grant, so it is explicit.** `mail.imap: {}` alone means the app reads mail and is given the server's address; it does not make its tokens mailbox keys.
 - **Withdrawn with the declaration.** A profile that stops declaring it keeps its optional scopes without `mailbox`; tokens already issued stay valid until they expire.
 - **A token with the scope is a mailbox key wherever it travels.** An app should ask for `mailbox` in a sign-in of its own for mail and not relay that token.
-- **`gentian-dovecot` checks the audience like every other client.** The client attribute that exempts one client from the check is set nowhere (`TestNothingSwitchesTheIntrospectionAudienceCheckOff`).
+- **No client is exempt from Keycloak's audience check on introspection.** The client attribute that exempts one is set nowhere (`TestNothingSwitchesTheIntrospectionAudienceCheckOff`).
 - **Not served:** the kernel realm, and so the platform tenant, has no `mailbox` scope; a cluster that relays its mail has no Dovecot. The declaration is accepted there and grants nothing.
 - **The network is not the gate.** A profile that declares `requires.services.mail` is opened `system-mail` (`kernel-access-<app>`), and Dovecot's IMAP ports admit every tenant's pods, and the proxy for everybody else (§2.8); the token is the check.
 

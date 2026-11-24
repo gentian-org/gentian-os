@@ -13,8 +13,10 @@ package controller
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -387,22 +389,72 @@ func TestABridgesClientOnlyExchanges(t *testing.T) {
 // introspection is asked as gentian-dovecot: in the address, which is the
 // only credential Dovecot 2.3 sends with one.
 func TestDovecotRequiresTheMailboxScope(t *testing.T) {
-	conf, ext := dovecotRealmAuthFiles("acme", "https://id.k.example/", "s3cret")
-	wantExt := `introspection_mode = post
-introspection_url = https://gentian-dovecot:s3cret@id.k.example/realms/acme/protocol/openid-connect/token/introspect
-client_id = gentian-dovecot
-client_secret = s3cret
-username_attribute = email
-active_attribute = active
-active_value = true
-scope = mailbox
-`
-	if ext != wantExt {
-		t.Fatalf("the realm's oauth2 settings are\n%s\nwant\n%s", ext, wantExt)
+	conf := dovecotOAuth2Conf([]string{"https://id.k.example/realms/b", "https://id.k.example/realms/a"}, "s3cret")
+	for _, want := range []string{
+		"introspection_mode = local\n",
+		"client_id = gentian-dovecot\n",
+		"scope = mailbox\n",
+		"username_attribute = email\n",
+		"issuers = https://id.k.example/realms/a https://id.k.example/realms/b\n",
+		"dict_file_path = /etc/dovecot/realms/validation-keys\n",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("the oauth2 block lacks %q:\n%s", want, conf)
+		}
 	}
-	if !strings.Contains(conf, "driver = oauth2") || !strings.Contains(conf, "mechanisms = xoauth2") ||
-		!strings.Contains(conf, "result_failure = continue") {
-		t.Fatalf("the realm's passdb changed:\n%s", conf)
+}
+
+// A realm's keys are filed under every app that may be given "mailbox", as
+// Dovecot looks them up: shared/<azp>/<alg>/<kid>, the key's JSON below.
+func TestARealmsKeysAreFiledUnderEachAppThatOpensMailboxes(t *testing.T) {
+	keys, err := signingKeys([]json.RawMessage{
+		json.RawMessage(`{"kid": "k1", "alg": "RS256", "use": "sig", "kty": "RSA", "n": "abc", "e": "AQAB"}`),
+		json.RawMessage(`{"kid": "k2", "alg": "RSA-OAEP", "use": "enc", "kty": "RSA", "n": "def", "e": "AQAB"}`),
+		json.RawMessage(`{"alg": "RS256", "kty": "RSA", "n": "ghi", "e": "AQAB"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := dovecotRealmKeys([]string{"nextcloud-ce", "mail-agent-bridge-ee", "nextcloud-ce"}, keys)
+	want := `shared/mail-agent-bridge-ee/RS256/k1
+{"kid":"k1","alg":"RS256","use":"sig","kty":"RSA","n":"abc","e":"AQAB"}
+shared/nextcloud-ce/RS256/k1
+{"kid":"k1","alg":"RS256","use":"sig","kty":"RSA","n":"abc","e":"AQAB"}
+`
+	if got != want {
+		t.Fatalf("the realm's keys are\n%s\nwant\n%s", got, want)
+	}
+	if dovecotRealmKeys(nil, keys) != "" {
+		t.Fatal("a realm with no app that opens mailboxes brought keys")
+	}
+}
+
+// Every realm adds its own entries; the two files Dovecot reads are written
+// from all of them, and what Dovecot 2.3 read is gone.
+func TestTheRealmsShareOneOAuth2BlockAndOneKeyDict(t *testing.T) {
+	existing := map[string][]byte{
+		"old.conf":        []byte("passdb { driver = oauth2 }"),
+		"old.oauth2.ext":  []byte("introspection_mode = post"),
+		"a.issuer":        []byte("https://id.k.example/realms/a"),
+		"a.keys":          []byte("shared/x/RS256/ka\n{}\n"),
+		"oauth2.inc":      []byte("stale"),
+		"validation-keys": []byte("stale"),
+	}
+	data := dovecotRealmAuthData(existing, "b", "https://id.k.example/realms/b", "shared/y/RS256/kb\n{}\n", "s3cret")
+	for _, gone := range []string{"old.conf", "old.oauth2.ext"} {
+		if _, ok := data[gone]; ok {
+			t.Errorf("%s was kept", gone)
+		}
+	}
+	if got := string(data["validation-keys"]); got != "shared/x/RS256/ka\n{}\nshared/y/RS256/kb\n{}\n" {
+		t.Errorf("validation-keys:\n%s", got)
+	}
+	if !strings.Contains(string(data["oauth2.inc"]), "issuers = https://id.k.example/realms/a https://id.k.example/realms/b\n") {
+		t.Errorf("oauth2.inc:\n%s", data["oauth2.inc"])
+	}
+	// The same realm again writes the same bytes.
+	if again := dovecotRealmAuthData(data, "b", "https://id.k.example/realms/b", "shared/y/RS256/kb\n{}\n", "s3cret"); !maps.EqualFunc(again, data, bytes.Equal) {
+		t.Error("a second write of the same realm changed the Secret")
 	}
 }
 

@@ -1,7 +1,8 @@
 # Kernel Dovecot (IMAP / LMTP)
 
 Inbound MDA for `mail.serviceMode: internal`: accepts mail from Postfix over LMTP,
-files it per tenant domain, and authenticates IMAP against Keycloak with XOAUTH2.
+files it per tenant domain, and signs IMAP in with a Keycloak token (XOAUTH2,
+OAUTHBEARER) or an app password. Dovecot 2.4.
 
 No maintained public Dovecot Helm chart is available, so this is a raw Deployment
 with a self-contained `dovecot.conf` in a ConfigMap.
@@ -12,32 +13,45 @@ IMAP users authenticate with a Keycloak access token (XOAUTH2), or with an app
 password minted per user and client type. The `passwd-file` passdb is
 deliberately empty and serves as the final deny.
 
-A token is accepted only if it names `gentian-dovecot` in its audience and
-carries the scope `mailbox` (`scope = mailbox` in each realm's settings). Both
-come from the realm's `mailbox` client scope, which only the client of an app
-that declares `requires.services.mail.imap.tokenSignIn` may ask for. The kernel
-realm has no such scope, so its block accepts no token.
+Dovecot checks a token itself (`introspection_mode = local`), without asking
+Keycloak: the signature against the realm's published keys, the issuer among
+the registered realms, `gentian-dovecot` in the audience, the scope `mailbox`,
+and the expiry. The audience and the scope come from the realm's `mailbox`
+client scope, which only the client of an app that declares
+`requires.services.mail.imap.tokenSignIn` may ask for. The mailbox opened is the
+token's `email` claim, and the address the mail program gave has to equal it.
 
-One `oauth2` passdb exists per Keycloak realm whose users have mailboxes — the
-kernel realm for the cluster admin, plus one per tenant using selfhosted mail —
-because Dovecot's `oauth2` passdb takes a single introspection URL. The operator's
-mail reconciler writes them into the `dovecot-realm-auth` Secret as
-`<realm>.conf` + `<realm>.oauth2.ext`; `dovecot.conf` picks them up with
-`!include_try /etc/dovecot/realms/*.conf`. The introspection address carries
-`gentian-dovecot` and its secret as its user and password: Dovecot 2.3 sends no
-other credential with an introspection, and Keycloak answers one without a
-credential 401. `scripts/tests/test-mailbox-exchange-lab.sh` signs a person in
-with a token against the pinned Keycloak and this image.
+Dovecot 2.4 has one `oauth2` block for the whole server. The operator's mail
+reconciler keeps each realm's part in the `dovecot-realm-auth` Secret
+(`<realm>.issuer`, `<realm>.keys`) and writes from all of them:
 
-Adding a realm restarts this Pod. Dovecot reads passdb blocks only at startup, so
-the operator stamps a hash of the realm set on the Pod template — unlike the
-Postfix domain maps, which are `texthash:` files re-read per lookup and therefore
-restart-free. Postfix retries delivery across the restart.
+- `oauth2.inc`: the `oauth2` block with every registered issuer, and the
+  mechanisms `xoauth2` and `oauthbearer`. They come with the block because,
+  listed without it, the auth process does not start, and password sign-ins and
+  Postfix's SASL go with it.
+- `validation-keys`: a dict-file of the realms' signing keys. Dovecot looks a
+  key up as `shared/<azp>/<alg>/<kid>`, under the app the token was issued to,
+  so each key is written once per app of the realm that may be given `mailbox`.
+  The kernel realm has none, so it brings its issuer and no keys.
+
+Dovecot reads the dict again when the file changes, so a new app or a realm's
+new key needs no restart. A change to `oauth2.inc` (a realm added) restarts this
+Pod: the operator stamps a hash of the Secret, without the keys, on the Pod
+template. A key the realm stopped publishing stays in Dovecot's memory until the
+next restart. Dovecot does not ask Keycloak whether a token is still active: a
+person disabled or signed out keeps mail access until the token in hand expires.
+
+The files have names that Dovecot 2.3 did not include (`*.inc`, not `*.conf`),
+and the operator removes what it wrote for 2.3, so neither version reads the
+other's configuration while the two are rolled out.
+
+`scripts/tests/test-mailbox-exchange-lab.sh` signs a person in with a token
+against the pinned Keycloak and this image; `scripts/tests/test-mail-edge-lab.sh`
+runs this chart's configuration behind the mail edge.
 
 **Known gap:** removing a tenant does not remove its realm from
-`dovecot-realm-auth`. A stale block costs one failed introspection per login
-attempt against a realm that no longer exists; it does not deny valid users,
-because `result_failure = continue` moves on to the next realm.
+`dovecot-realm-auth`. Its issuer stays accepted; the realm is gone, so no token
+of it exists.
 
 ## Install location
 
@@ -51,7 +65,9 @@ because `result_failure = continue` moves on to the next realm.
 
 ## Image
 
-- `dovecot/dovecot:2.3.21` on Docker Hub ([Dovecot CE Docker](https://doc.dovecot.org/latest/installation/docker.html))
+- `dovecot/dovecot:2.4.5-root` on Docker Hub ([Dovecot CE Docker](https://doc.dovecot.org/latest/installation/docker.html))
 
-The official image listens on non-privileged container ports; the Service maps cluster
-port **24** (LMTP) and **143** (IMAP) to those ports.
+The `-root` variant runs Dovecot's master as root and keeps the ports this
+configuration names (24, 143, 993, 12345); the default variant runs as `vmail`
+on ports above 31000. The backup and restore Jobs run the same image's
+`doveadm` as uid 1000.

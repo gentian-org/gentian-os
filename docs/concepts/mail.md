@@ -358,7 +358,8 @@ test-mail-edge-lab`, part a2).
 
 **Putting an archived mailbox back by hand.** Not offered. On the node, in a
 pod of the mail server's image with the volume mounted, as user 1000:
-`doveadm -o mail_location=maildir:/var/mail/<domain>/<name> sync -1 -R
+`doveadm -o mail_driver=maildir -o mail_path=/var/mail/<domain>/<name>
+-o mail_home=/var/mail/<domain>/<name> sync --no-userdb-lookup -1 -R
 maildir:/var/mail/.archive/<domain>/<archive>` adds the archived mail to the
 live mailbox of that address and removes nothing.
 

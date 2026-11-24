@@ -26,7 +26,7 @@ metadata:
 data:
   values.yaml: |
     # Reserved for a future Gentian Dovecot Helm chart. Not consumed by deployment.yaml.
-    image: dovecot/dovecot:2.3.21
+    image: dovecot/dovecot:2.4.5-root
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -124,6 +124,13 @@ metadata:
     argocd.argoproj.io/sync-wave: "8"
 data:
   dovecot.conf: |
+    # Dovecot 2.4 syntax. The version must be the first setting: it fixes the
+    # setting names and the defaults this file was written against, so a newer
+    # Dovecot keeps them until this number is raised. The storage version is
+    # the oldest Dovecot the mail on the volume stays readable by.
+    dovecot_config_version = 2.4.0
+    dovecot_storage_version = 2.4.0
+
     # LMTP on 24 is the reason this file exists. Postfix hands every message for a
     # registered tenant domain to lmtp:[dovecot-<env>...]:24, but the upstream
     # default ships `inet_listener lmtp { port = 0 }` — disabled — so port 24 was
@@ -147,32 +154,32 @@ data:
     # issued by the cluster's own CA instead, which is why the client has to
     # trust that CA — see values.yaml.
     ssl = yes
-    ssl_cert = </etc/dovecot/tls/tls.crt
-    ssl_key = </etc/dovecot/tls/tls.key
+    ssl_server_cert_file = /etc/dovecot/tls/tls.crt
+    ssl_server_key_file = /etc/dovecot/tls/tls.key
     # Plaintext auth only inside TLS. STARTTLS on 143 and implicit TLS on 993
     # both satisfy this; an unencrypted login is refused rather than downgraded.
-    disable_plaintext_auth = yes
+    auth_allow_cleartext = no
     {{- else }}
     # TLS off. Dovecot refuses to start when ssl = yes and the certificate files
     # are absent, so this stays the default until the cluster's CA issuer exists
     # and the mail client trusts it — enabling it before then takes inbound
     # delivery down with it, since the same process serves LMTP.
     ssl = no
-    disable_plaintext_auth = no
+    auth_allow_cleartext = yes
     {{- end }}
 
-    # xoauth2 is how tenant and cluster-admin users authenticate: the client sends
-    # a Keycloak access token, and the per-realm passdb blocks included below
-    # validate it against the realm that issued it. plain and login stay listed so
-    # a client that cannot do XOAUTH2 gets a clean authentication failure from the
-    # passwd-file passdb rather than "no supported mechanism".
-    auth_mechanisms = plain login xoauth2
+    # plain and login are for the per-app passwords. xoauth2 and oauthbearer,
+    # how a Keycloak token signs in, are added by the oauth2 block included
+    # below: listed here without that block, Dovecot's auth process refuses to
+    # start, and with it every password sign-in and Postfix's SASL.
+    auth_mechanisms = plain login
 
     # Per-domain maildir, matching the catch-all the operator already writes into
-    # the Postfix map ("@<domain>  <domain>/"). %d is the domain and %n the local
-    # part, so mail for user@tenant.example is filed in
-    # /var/mail/tenant.example/user.
-    mail_location = maildir:/var/mail/%d/%n
+    # the Postfix map ("@<domain>  <domain>/"): mail for user@tenant.example is
+    # filed in /var/mail/tenant.example/user, the home and the maildir both.
+    mail_driver = maildir
+    mail_home = /var/mail/%{user | domain}/%{user | username}
+    mail_path = /var/mail/%{user | domain}/%{user | username}
 
     # Numeric, so this does not depend on the image having a vmail user. A static
     # userdb with numeric ids needs no /etc/passwd entry, and fsGroup on the Pod
@@ -225,14 +232,18 @@ data:
     # registered domain", which is precisely the catch-all the Postfix map
     # declares. With no userdb at all, LMTP rejects every recipient as unknown.
     #
-    # allow_all_users=yes is load-bearing, not decoration. Without it the static
-    # userdb still runs a passdb lookup to confirm the user exists, and since the
-    # passdb below is deliberately empty that lookup returns NOTFOUND and every
-    # delivery is refused with "550 5.1.1 User doesn't exist" — LMTP listening
-    # correctly and rejecting all mail regardless.
-    userdb {
-      driver = static
-      args = uid=1000 gid=1000 home=/var/mail/%d/%n allow_all_users=yes
+    # userdb_static_allow_all_users is load-bearing, not decoration. Without it
+    # the static userdb still runs a passdb lookup to confirm the user exists,
+    # and since the passdb below is deliberately empty that lookup returns
+    # NOTFOUND and every delivery is refused with "550 5.1.1 User doesn't exist"
+    # — LMTP listening correctly and rejecting all mail regardless.
+    userdb static {
+      fields {
+        uid = 1000
+        gid = 1000
+        home = /var/mail/%{user | domain}/%{user | username}
+      }
+      userdb_static_allow_all_users = yes
     }
 
     # Per-app passwords, one passwd-file per client type.
@@ -251,36 +262,34 @@ data:
     # webmail password is not rejected by the first file that lacks them. The
     # empty passwd-file at the end is still the final deny.
     #
-    # include_try and a glob, exactly like the realm blocks below: the operator
-    # writes one <app>.conf per client type, so adding a client type needs no
-    # change to this configuration.
-    !include_try /etc/dovecot/apppw/*.conf
+    # include_try and a glob: the operator writes one <app>-<tenant>.inc per
+    # client type and tenant, each a named passdb, so adding one needs no change
+    # to this configuration. .inc, not .conf: what Dovecot 2.3 included was
+    # *.conf, and the operator wrote 2.3 blocks under that name.
+    !include_try /etc/dovecot/apppw/*.inc
 
-    # One oauth2 passdb per Keycloak realm, written by the operator's mail
-    # reconciler into the dovecot-realm-auth Secret — the kernel realm for the
-    # cluster admin, plus one per tenant using selfhosted mail.
+    # The token check: one oauth2 block for every Keycloak realm whose people
+    # have mailboxes, written by the operator's mail reconciler into the
+    # dovecot-realm-auth Secret (dovecotOAuth2Conf, mail_reconciler.go). Dovecot
+    # checks a token itself, against the realm's signing keys in the same
+    # Secret: the issuer, gentian-dovecot in the audience, the scope "mailbox"
+    # and the expiry. A token signs in by mechanism, without a passdb.
     #
     # include_try, not include: the Secret does not exist until the operator has
     # run, and a required include that is missing stops Dovecot from starting, so
     # inbound LMTP delivery would break for want of IMAP configuration.
-    #
-    # Included BEFORE the passwd-file passdb so a valid token is accepted by its
-    # own realm rather than being refused by the catch-all first. Only *.conf is
-    # matched: each realm also has a .oauth2.ext holding its introspection
-    # settings, which is read through the passdb args and must not be parsed as
-    # configuration itself.
-    !include_try /etc/dovecot/realms/*.conf
+    !include_try /etc/dovecot/realms/oauth2.inc
 
-    # The final deny. Reached when no realm accepted the credentials, or when a
-    # client offered plain/login instead of XOAUTH2.
+    # The final deny. Reached by a plain/login whose name and password no app's
+    # passwd-file above holds.
     #
-    # The file is empty, so this always fails — which is correct: password logins
-    # are not a supported path, identities live in Keycloak. With no passdb at all
+    # The file is empty, so this always fails — which is correct: the only
+    # passwords are the per-app ones, identities live in Keycloak. With no passdb at all
     # Dovecot rejects the configuration outright, and a static passdb with
     # nopassword=y would accept ANY password on port 143.
-    passdb {
+    passdb deny {
       driver = passwd-file
-      args = /etc/dovecot/gentian/users
+      passwd_file_path = /etc/dovecot/gentian/users
     }
 
     service lmtp {
@@ -308,7 +317,7 @@ data:
     # already hold one credential per (user, app), so submission is just another
     # app. No second identity source to keep in step.
     service auth {
-      inet_listener {
+      inet_listener sasl {
         port = 12345
       }
     }
@@ -355,7 +364,7 @@ data:
     # doveadm_password in dovecot-sensitive-values stays unconsumed until
     # something actually listens here.
     service doveadm {
-      inet_listener {
+      inet_listener doveadm {
         port = 0
       }
     }
@@ -495,7 +504,7 @@ spec:
         {{- end }}
       containers:
         - name: dovecot
-          image: dovecot/dovecot:2.3.21
+          image: dovecot/dovecot:2.4.5-root
           imagePullPolicy: IfNotPresent
           # The image entrypoint builds configuration from its own environment
           # into conf.d. Running the binary directly with -c bypasses that
