@@ -94,6 +94,12 @@ type AuthzProjectionReconciler struct {
 	// BootstrapAdministrator answers the realm and the id of the account the
 	// install made, "" when it is not there. Nil asks the kernel realm.
 	BootstrapAdministrator func(ctx context.Context) (realm, id string, err error)
+
+	// RightsTaken is told, by tenant, the people a change of what a position
+	// holds took something from (TenantReconciler.RightsTaken): their
+	// sessions end, so no token carries what they no longer hold. Nil ends
+	// nothing.
+	RightsTaken func(ctx context.Context, tenant string, subjects []string) error
 }
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=clusters,verbs=get;list;watch
@@ -137,7 +143,8 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 	// A tenant whose declared positions the store cannot hold is left as it
 	// is and the others are written; the error names it and asks again.
-	positionsErr := r.Graph.ReconcilePositions(ctx, positions)
+	taken, positionsErr := r.Graph.ReconcilePositionsTaking(ctx, positions, stillInstalled(apps))
+	r.endSessionsOfTaken(ctx, taken)
 	// What follows from what is given, written for every tenant here, the
 	// one whose positions were refused included: what it has stays derived
 	// from what the store holds for it.
@@ -169,6 +176,50 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 		}
 	}
 	return ctrl.Result{RequeueAfter: requeue}, nil
+}
+
+// endSessionsOfTaken ends the sessions of the people a change of positions
+// took something from. What was taken is gone from the store already and a
+// later pass would not find it again, so a failure is said and not retried.
+func (r *AuthzProjectionReconciler) endSessionsOfTaken(ctx context.Context, taken map[string][]string) {
+	if r.RightsTaken == nil {
+		return
+	}
+	tenants := make([]string, 0, len(taken))
+	for tenant := range taken {
+		tenants = append(tenants, tenant)
+	}
+	sort.Strings(tenants)
+	for _, tenant := range tenants {
+		log.FromContext(ctx).Info("a change of positions took something from people; their sessions end",
+			"tenant", tenant, "people", len(taken[tenant]))
+		if err := r.RightsTaken(ctx, tenant, taken[tenant]); err != nil {
+			log.FromContext(ctx).Error(err, "the sessions of people a change of positions took something from were not all ended",
+				"tenant", tenant)
+		}
+	}
+}
+
+// stillInstalled says whether a thing a position holds a role on is still
+// there: an installed app or add-on, or a role one of them declares.
+func stillInstalled(apps map[string][]authz.InstalledApp) func(object string) bool {
+	there := map[string]bool{}
+	var add func(tenant string, a authz.InstalledApp)
+	add = func(tenant string, a authz.InstalledApp) {
+		there[authz.App(tenant, a.Profile)] = true
+		for _, role := range a.Roles {
+			there[authz.Role(tenant, a.Profile, role.Name)] = true
+		}
+		for _, addon := range a.Addons {
+			add(tenant, addon)
+		}
+	}
+	for tenant, installed := range apps {
+		for _, a := range installed {
+			add(tenant, a)
+		}
+	}
+	return func(object string) bool { return there[object] }
 }
 
 // withBootstrapAdministrator adds the account the install made as the

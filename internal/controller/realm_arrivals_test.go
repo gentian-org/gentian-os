@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -103,6 +104,13 @@ func TestSignInFromHoldingGivesAndTakesByWhatIsHeldAtHome(t *testing.T) {
 		Object: authz.Position("team", "sales")})
 	store := newFakeRights(tuples...)
 	a := arrivalsFor(t, store, shop)
+	var ended []string
+	a.RightsTaken = func(_ context.Context, tenant string, subjects []string) error {
+		for _, sub := range subjects {
+			ended = append(ended, tenant+"/"+sub)
+		}
+		return nil
+	}
 	editor := authz.Position("shop", "editor")
 
 	// At home: anna holds sales, ben is an executive, carl holds nothing.
@@ -131,6 +139,10 @@ func TestSignInFromHoldingGivesAndTakesByWhatIsHeldAtHome(t *testing.T) {
 	if store.has(carl, "holder", editor) {
 		t.Error("a person who holds nothing at home keeps editor")
 	}
+	// The session that arrival made may carry editor: it ends.
+	if !slices.Equal(ended, []string{"shop/carl"}) {
+		t.Errorf("sessions ended: %v, want shop/carl alone", ended)
+	}
 
 	// anna leaves sales: at her next arrival, editor goes.
 	delete(store.tuples, authz.Tuple{User: userOf(t, "team-anna"), Relation: "holder", Object: authz.Position("team", "sales")})
@@ -139,6 +151,9 @@ func TestSignInFromHoldingGivesAndTakesByWhatIsHeldAtHome(t *testing.T) {
 	}
 	if store.has(userOf(t, "anna"), "holder", editor) {
 		t.Error("a person who left sales keeps editor")
+	}
+	if !slices.Equal(ended, []string{"shop/carl", "shop/anna"}) {
+		t.Errorf("sessions ended: %v, want carl and anna", ended)
 	}
 
 	// Nobody said who ben is at home: nothing given, nothing taken.
@@ -170,6 +185,10 @@ func TestSignInFromHoldingGivesAndTakesByWhatIsHeldAtHome(t *testing.T) {
 	}
 	if !store.has(eve, "holder", editor) || !store.has(eve, "holder", authz.Position("shop", "user")) {
 		t.Error("an arrival through an entry without holding took a position")
+	}
+	// Nothing taken since anna's arrival: no further session ended.
+	if len(ended) != 2 {
+		t.Errorf("sessions ended where nothing was taken: %v", ended)
 	}
 }
 

@@ -704,10 +704,11 @@ func main() {
 		// which is the store's one writer.
 		tenantReconciler.Rights = graph
 		if err := (&controller.AuthzProjectionReconciler{
-			Client:  mgr.GetClient(),
-			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
-			Graph:   graph,
-			Roles:   arbiterPlatform,
+			Client:      mgr.GetClient(),
+			Cluster:     os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
+			Graph:       graph,
+			Roles:       arbiterPlatform,
+			RightsTaken: tenantReconciler.RightsTaken,
 		}).SetupWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "AuthzProjection")
 			os.Exit(1)
@@ -715,7 +716,7 @@ func main() {
 		// What only a realm sees happen to a person: somebody arriving
 		// from another realm is given what the tenant declares for them,
 		// and what a removed person held goes with them.
-		arrivals := &controller.RealmArrivals{Client: mgr.GetClient(), Rights: graph}
+		arrivals := &controller.RealmArrivals{Client: mgr.GetClient(), Rights: graph, RightsTaken: tenantReconciler.RightsTaken}
 		// What components keep for a person in the vault ends when the
 		// realm says the person is gone. Without a vault there is nothing
 		// kept.

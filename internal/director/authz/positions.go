@@ -302,6 +302,20 @@ func ofTenant(object, kind, tenant string) bool {
 // A tenant whose declaration the store cannot hold is left as it is and
 // named in the error; the others are reconciled.
 func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]PositionSpec) error {
+	_, err := c.ReconcilePositionsTaking(ctx, declared, nil)
+	return err
+}
+
+// ReconcilePositionsTaking is ReconcilePositions, answering from whom it took
+// something: by tenant, the subjects who held a position that lost a role or
+// an inclusion, a position that includes such a one, or a position that is
+// no longer declared. A token carries what its person held when it was
+// written, so the caller ends those people's sessions.
+//
+// present says whether a thing a position held a role on is still there; a
+// role on an app that is no longer installed is not counted as taken from
+// anyone, since there is nothing left to reach. Nil counts every role.
+func (c *OpenFGA) ReconcilePositionsTaking(ctx context.Context, declared map[string][]PositionSpec, present func(object string) bool) (map[string][]string, error) {
 	tenants := make([]string, 0, len(declared))
 	for t := range declared {
 		tenants = append(tenants, t)
@@ -310,6 +324,7 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 
 	var writes, deletes []Tuple
 	var refused []error
+	losses := map[string]*positionLosses{}
 	for _, tenant := range tenants {
 		want, err := positionTuples(tenant, declared[tenant])
 		if err != nil {
@@ -322,8 +337,10 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 		}
 		attached, err := c.Read(ctx, Tuple{User: Tenant(tenant), Relation: "tenant", Object: "position:"})
 		if err != nil {
-			return fmt.Errorf("read positions of tenant %s: %w", tenant, err)
+			return nil, fmt.Errorf("read positions of tenant %s: %w", tenant, err)
 		}
+		lost := &positionLosses{wanted: wanted, holders: map[string][]string{}, includers: map[string][]string{}}
+		losses[tenant] = lost
 		objects := map[string]bool{}
 		for object := range wanted {
 			objects[object] = true
@@ -343,10 +360,16 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 			// it is gone, who held it.
 			on, err := c.Read(ctx, Tuple{Object: object})
 			if err != nil {
-				return fmt.Errorf("read %s: %w", object, err)
+				return nil, fmt.Errorf("read %s: %w", object, err)
 			}
 			for _, t := range on {
 				p := plain(t)
+				switch p.Relation {
+				case "holder":
+					lost.holders[object] = append(lost.holders[object], p.User)
+				case "included_in":
+					lost.includers[object] = append(lost.includers[object], p.User)
+				}
 				if p.Relation == "holder" {
 					if !wanted[object] {
 						deletes = append(deletes, p)
@@ -358,12 +381,13 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 					continue
 				}
 				deletes = append(deletes, p)
+				lost.deleted = append(lost.deleted, p)
 			}
 			// The roles it holds, on the tenant's own things.
 			for _, kind := range rolesHeldOn {
 				held, err := c.Read(ctx, Tuple{User: Holders(object), Object: kind})
 				if err != nil {
-					return fmt.Errorf("read what %s holds: %w", object, err)
+					return nil, fmt.Errorf("read what %s holds: %w", object, err)
 				}
 				for _, t := range held {
 					p := plain(t)
@@ -377,6 +401,7 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 						continue
 					}
 					deletes = append(deletes, p)
+					lost.deleted = append(lost.deleted, p)
 				}
 			}
 		}
@@ -388,11 +413,88 @@ func (c *OpenFGA) ReconcilePositions(ctx context.Context, declared map[string][]
 		sort.Slice(writes, func(i, j int) bool { return key(writes[i]) < key(writes[j]) })
 		sort.Slice(deletes, func(i, j int) bool { return key(deletes[i]) < key(deletes[j]) })
 		if err := c.Write(ctx, writes, deletes); err != nil {
-			return fmt.Errorf("reconcile positions: %w", err)
+			return nil, fmt.Errorf("reconcile positions: %w", err)
 		}
 		c.log.InfoContext(ctx, "positions reconciled", "tenants", len(tenants), "written", len(writes), "removed", len(deletes))
 	}
-	return errors.Join(refused...)
+	taken := map[string][]string{}
+	for tenant, lost := range losses {
+		if subjects := lost.takenFrom(present); len(subjects) > 0 {
+			taken[tenant] = subjects
+		}
+	}
+	return taken, errors.Join(refused...)
+}
+
+// positionLosses is what one tenant's reconcile read and removed, enough to
+// say from whom it took something.
+type positionLosses struct {
+	// wanted are the positions declared now.
+	wanted map[string]bool
+	// holders are each position's holders as they were, by position object.
+	holders map[string][]string
+	// includers are, by position object, the positions that included it.
+	includers map[string][]string
+	// deleted are the entries removed that said what a position is or
+	// holds (not who holds it).
+	deleted []Tuple
+}
+
+// takenFrom are the subjects who lost something, sorted: the holders of
+// every position that lost a role on something still present or an
+// inclusion, or is no longer declared, and of every position that includes
+// one of those. An entry that is not a person of the tenant (user:<id>) is
+// not a session to end and is left out.
+func (l *positionLosses) takenFrom(present func(object string) bool) []string {
+	lost := map[string]bool{}
+	for object := range l.holders {
+		if !l.wanted[object] {
+			lost[object] = true
+		}
+	}
+	for _, t := range l.deleted {
+		switch {
+		case t.Relation == "tenant":
+			// The position is no longer declared.
+			lost[t.Object] = true
+		case t.Relation == "included_in":
+			// t.User included t.Object: its holders lose what that gave.
+			lost[t.User] = true
+		case strings.HasSuffix(t.User, "#holder"):
+			if present == nil || strings.HasPrefix(t.Object, "tenant:") || present(t.Object) {
+				lost[strings.TrimSuffix(t.User, "#holder")] = true
+			}
+		}
+	}
+	// What includes a position that lost something loses it too.
+	queue := make([]string, 0, len(lost))
+	for object := range lost {
+		queue = append(queue, object)
+	}
+	for len(queue) > 0 {
+		object := queue[0]
+		queue = queue[1:]
+		for _, includer := range l.includers[object] {
+			if !lost[includer] {
+				lost[includer] = true
+				queue = append(queue, includer)
+			}
+		}
+	}
+	seen := map[string]bool{}
+	var subjects []string
+	for object := range lost {
+		for _, user := range l.holders[object] {
+			sub, ok := strings.CutPrefix(user, "user:")
+			if !ok || sub == "" || strings.ContainsAny(sub, "/#") || seen[sub] {
+				continue
+			}
+			seen[sub] = true
+			subjects = append(subjects, sub)
+		}
+	}
+	sort.Strings(subjects)
+	return subjects
 }
 
 // ValidatePositions reports why a tenant's own positions cannot be declared

@@ -592,7 +592,12 @@ declares its own, and they reach the app it is activated in.
   role on the app at their next request. For a role taken while another
   stays, the operator ends the person's sessions in the realm; every app
   that is told of a sign-out (§1.12) drops its own, and the next sign-in
-  carries the roles as they are. An app that is not told keeps the role
+  carries the roles as they are. This holds however it was taken: from the
+  person, from a position they hold or one it includes (a role or an
+  inclusion removed, a position no longer declared), or by the sign-in when
+  they no longer hold at home what `signInFrom[].holding` asks; the person
+  then signs in once more. A role on an app that is uninstalled ends no
+  session. An app that is not told keeps the role
   until the person signs in to it again. A role that is given takes effect
   at the next sign-in.
 

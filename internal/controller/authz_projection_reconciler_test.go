@@ -153,3 +153,41 @@ func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 		}
 	}
 }
+
+// A role on something still installed is taken from a position's holders;
+// one on an app that is gone is not, and neither is anything of another
+// tenant.
+func TestStillInstalledKnowsTheAppsTheirAddonsAndTheirRoles(t *testing.T) {
+	present := stillInstalled(map[string][]authz.InstalledApp{
+		"acme": {{Profile: "odoo-base-ce", Roles: []authz.DeclaredRole{{Name: "manager"}},
+			Addons: []authz.InstalledApp{{Profile: "crm-ce", Roles: []authz.DeclaredRole{{Name: "salesman"}}}}}},
+	})
+	for object, want := range map[string]bool{
+		authz.App("acme", "odoo-base-ce"):             true,
+		authz.Role("acme", "odoo-base-ce", "manager"): true,
+		authz.App("acme", "crm-ce"):                   true,
+		authz.Role("acme", "crm-ce", "salesman"):      true,
+		authz.App("acme", "xwiki-ce"):                 false,
+		authz.Role("acme", "odoo-base-ce", "auditor"): false,
+		authz.App("other", "odoo-base-ce"):            false,
+	} {
+		if got := present(object); got != want {
+			t.Errorf("%s: %v, want %v", object, got, want)
+		}
+	}
+}
+
+// What a change of positions took is told by tenant, each once; nothing is
+// told where nothing was taken.
+func TestTheProjectionTellsWhomAChangeOfPositionsTookFrom(t *testing.T) {
+	told := map[string][]string{}
+	r := &AuthzProjectionReconciler{RightsTaken: func(_ context.Context, tenant string, subjects []string) error {
+		told[tenant] = append(told[tenant], subjects...)
+		return nil
+	}}
+	r.endSessionsOfTaken(context.Background(), map[string][]string{"acme": {"anna", "ben"}, "shop": {"carl"}})
+	if len(told) != 2 || len(told["acme"]) != 2 || told["shop"][0] != "carl" {
+		t.Fatalf("told %v", told)
+	}
+	(&AuthzProjectionReconciler{}).endSessionsOfTaken(context.Background(), map[string][]string{"acme": {"anna"}})
+}
