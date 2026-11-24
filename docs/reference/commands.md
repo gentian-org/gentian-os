@@ -581,6 +581,13 @@ install, each with exactly what the build asks for. It needs the right to grant
 in the tenant (`can_grant`); without that right nothing is installed. Without
 the flag the integrations wait for a grant in the Admin Console.
 
+And the entries behind sign-in that keep the app's own `Authorization`
+header, which wait for the perimeter approver like any entry under
+`exposures requests`. `--approve-authorization` approves those with the
+install, each recorded as `exposures approve` records one, by you. It needs
+the right to approve the tenant's entries (`can_expose`); without that right
+nothing is installed. A public address is never approved with an install.
+
 Inspect app reconciliation:
 
 ```bash

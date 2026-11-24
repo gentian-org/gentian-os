@@ -754,6 +754,16 @@ refuses the install, and so does a grant by somebody without `can_grant`. An
 install without `grant` leaves the integrations waiting for the tenant's
 administrator.
 
+It also lists the entries behind sign-in that keep the app's own
+`Authorization` header and are not approved yet (`exposures`, kind
+`signInAppAuthorization`), and whether the caller may approve them
+(`can_expose`). The install names the entries approved (`expose` in its body),
+and each is written to the tenant's exposure registry as the perimeter
+approver's own approval is, under that person's name. An entry the build does
+not ask to keep the header on refuses the install, and so does an approval by
+somebody without `can_expose`. A public address is never approved with an
+install: it is approved where it is listed with the tenant's public addresses.
+
 ---
 
 ## 16. Secrets: three kinds

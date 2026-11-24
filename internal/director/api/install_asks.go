@@ -98,6 +98,9 @@ type grantedContract struct {
 type buildAsks struct {
 	egress       []askedEgress
 	integrations []askedIntegration
+	// exposures are its entries that keep the app's own Authorization
+	// header (install_exposures.go).
+	exposures []askedExposure
 }
 
 // approvedRequest is one request an install names as approved.
@@ -220,6 +223,10 @@ func (s *Server) installAsks(
 	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
 		return buildAsks{}, err
 	}
+	published, err := s.cfg.Repo.TenantExposures(ctx, tenant)
+	if err != nil && !errors.Is(err, gitops.ErrTenantNotFound) {
+		return buildAsks{}, err
+	}
 	if origin == "" {
 		origin = definition.Annotations[profilebundle.OriginAnnotation]
 	}
@@ -259,6 +266,7 @@ func (s *Server) installAsks(
 		}
 	}
 	var out buildAsks
+	now := time.Now()
 	for _, b := range bringing {
 		cameWith := ""
 		if b.name != profile {
@@ -266,6 +274,7 @@ func (s *Server) installAsks(
 		}
 		out.egress = append(out.egress, asksOf(b.name, b.definition, b.origin, cameWith, have)...)
 		out.integrations = append(out.integrations, integrationsOf(b.name, b.definition, cameWith, granted, together)...)
+		out.exposures = append(out.exposures, exposureAsksOf(b.name, b.definition, cameWith, published, now)...)
 	}
 	return out, nil
 }
@@ -344,10 +353,16 @@ func (s *Server) catalogueEntryAsks(w http.ResponseWriter, r *http.Request, c ca
 			ungranted = append(ungranted, a)
 		}
 	}
+	unapproved := []askedExposure{}
+	for _, a := range asks.exposures {
+		if !a.answered {
+			unapproved = append(unapproved, a)
+		}
+	}
 	// Each asked only where there is something to answer: a tenant that
 	// cannot be asked about leaves the choice out, and the install works as
 	// it does without one.
-	mayApprove, mayGrant := false, false
+	mayApprove, mayGrant, mayExpose := false, false, false
 	if target, err := tenantObject(r); err == nil {
 		if len(waiting) > 0 {
 			mayApprove, _ = s.can(ctx, c, "can_approve_privilege", target)
@@ -355,11 +370,15 @@ func (s *Server) catalogueEntryAsks(w http.ResponseWriter, r *http.Request, c ca
 		if len(ungranted) > 0 {
 			mayGrant, _ = s.can(ctx, c, "can_grant", target)
 		}
+		if len(unapproved) > 0 {
+			mayExpose, _ = s.can(ctx, c, "can_expose", target)
+		}
 	}
 	s.json(w, http.StatusOK, map[string]any{
 		"tenant": tenant, "profile": profile, "digest": digest,
 		"egress": waiting, "mayApprove": mayApprove,
 		"integrations": ungranted, "mayGrant": mayGrant,
+		"exposures": unapproved, "mayExpose": mayExpose,
 	})
 }
 
