@@ -16,10 +16,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func tenantPrefix(tenant string) string {
-	return "gentian:tenant:" + tenant + ":"
-}
-
 // PartnerRolesClaim is the claim of the scope partner-<name> that names a
 // person's role on the tenant in a partner assertion, and nowhere else:
 // PartnerRoleTenantAdmin for an administrator of the tenant,
