@@ -67,6 +67,10 @@ const (
 type RealmArrivals struct {
 	Client client.Client
 	Rights rights.Store
+	// RightsTaken is told the people a sign-in took a position from
+	// (TenantReconciler.RightsTaken): their sessions end, so no token
+	// carries what they no longer hold. Nil ends nothing.
+	RightsTaken func(ctx context.Context, tenant string, subjects []string) error
 }
 
 // tenantsOfRealm are the tenants with that realm to themselves: the ones a
@@ -160,15 +164,24 @@ func (a *RealmArrivals) PersonEntered(ctx context.Context, realm, sub, provider,
 		if err := a.give(ctx, tenant, sub, notAdministrators(append(positions, give...)), "provider", provider); err != nil {
 			return err
 		}
+		took := false
 		for _, position := range take {
 			// Nor is it taken here: what administers is not an arrival's,
 			// and the tenant's last administrator is never reached from it.
 			if slices.Contains(positions, position) || slices.Contains(give, position) || tenant.PositionAdministers(position) {
 				continue
 			}
-			_, err := rights.Take(ctx, a.Rights, tenant.Name, sub, rights.Assignment{Position: position})
+			changed, err := rights.Take(ctx, a.Rights, tenant.Name, sub, rights.Assignment{Position: position})
 			if err != nil {
 				return fmt.Errorf("take %s in %s: %w", position, tenant.Name, err)
+			}
+			took = took || changed
+		}
+		// The session this sign-in made may carry the position taken: it
+		// ends, and the next sign-in carries what the person holds now.
+		if took && a.RightsTaken != nil {
+			if err := a.RightsTaken(ctx, tenant.Name, []string{sub}); err != nil {
+				return fmt.Errorf("end the sessions of a person a sign-in took a position from in %s: %w", tenant.Name, err)
 			}
 		}
 		if fromKernel {
@@ -323,8 +336,12 @@ func (r *TenantReconciler) ensureKernelEntryWithdrawn(ctx context.Context, tenan
 	if r.Rights == nil || tenant.PlatformAdminsEnter() || len(entered) == 0 {
 		return nil
 	}
+	var took []string
 	for _, sub := range entered {
-		_, err := rights.Take(ctx, r.Rights, tenant.Name, sub, rights.Assignment{Position: rights.PositionTenantAdministrator})
+		changed, err := rights.Take(ctx, r.Rights, tenant.Name, sub, rights.Assignment{Position: rights.PositionTenantAdministrator})
+		if changed {
+			took = append(took, sub)
+		}
 		if errors.Is(err, rights.ErrLastAdministrator) {
 			// The tenant has nobody else: left, and said.
 			log.FromContext(ctx).Info("the position is not taken back from the tenant's last administrator",
@@ -334,6 +351,10 @@ func (r *TenantReconciler) ensureKernelEntryWithdrawn(ctx context.Context, tenan
 		if err != nil && !errors.Is(err, rights.ErrNoSuchThing) {
 			return fmt.Errorf("take the position back from %s: %w", sub, err)
 		}
+	}
+	// Administering is not carried on by a token written before.
+	if err := r.RightsTaken(ctx, tenant.Name, took); err != nil {
+		return fmt.Errorf("end the sessions of the accounts the position was taken back from: %w", err)
 	}
 	orig := tenant.DeepCopy()
 	delete(tenant.Annotations, enteredFromKernelAnnotation)

@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"time"
@@ -417,6 +418,46 @@ func accountsOf(accounts []authz.KeycloakUser, subjects []string) []authz.Keyclo
 // where it hears of a sign-out, and the next sign-in carries the roles as
 // they are. A role that was given waits for the person's next sign-in.
 func (r *TenantReconciler) RightsChanged(ctx context.Context, tenantName, subject string, taken bool) error {
+	if taken {
+		return r.RightsTaken(ctx, tenantName, []string{subject})
+	}
+	return r.askAppsToldAgain(ctx, tenantName)
+}
+
+// RightsTaken is what follows from something taken from people of a tenant,
+// however it was taken: by an administrator, by a change of what a position
+// holds, or by the sign-in. The apps are told again once, and each person's
+// sessions in the realm end, so their next sign-in carries what they hold
+// now. A person whose sessions could not be ended is named in the error; the
+// others are ended all the same.
+func (r *TenantReconciler) RightsTaken(ctx context.Context, tenantName string, subjects []string) error {
+	if len(subjects) == 0 {
+		return nil
+	}
+	if err := r.askAppsToldAgain(ctx, tenantName); err != nil {
+		return err
+	}
+	tenant := &gentianov1alpha1.Tenant{}
+	if err := r.Get(ctx, types.NamespacedName{Name: tenantName}, tenant); err != nil {
+		return err
+	}
+	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
+	if err != nil {
+		return fmt.Errorf("load keycloak admin: %w", err)
+	}
+	var failed []error
+	for _, subject := range subjects {
+		if err := kc.EndUserSessions(ctx, keycloakRealmName(tenant), subject); err != nil {
+			failed = append(failed, fmt.Errorf("end the sessions of %s: %w", subject, err))
+		}
+	}
+	return stderrors.Join(failed...)
+}
+
+// askAppsToldAgain makes the tenant reconcile and tell the apps that are
+// told their people (provisioning.syncJob) again now, rather than at the
+// next idle pass.
+func (r *TenantReconciler) askAppsToldAgain(ctx context.Context, tenantName string) error {
 	tenant := &gentianov1alpha1.Tenant{}
 	if err := r.Get(ctx, types.NamespacedName{Name: tenantName}, tenant); err != nil {
 		return err
@@ -428,16 +469,6 @@ func (r *TenantReconciler) RightsChanged(ctx context.Context, tenantName, subjec
 	tenant.Annotations[appPrivilegeRequestedAtAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
 	if err := r.Patch(ctx, tenant, client.MergeFrom(orig)); err != nil {
 		return fmt.Errorf("ask for the apps to be told: %w", err)
-	}
-	if !taken {
-		return nil
-	}
-	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
-	if err != nil {
-		return fmt.Errorf("load keycloak admin: %w", err)
-	}
-	if err := kc.EndUserSessions(ctx, keycloakRealmName(tenant), subject); err != nil {
-		return fmt.Errorf("end the person's sessions: %w", err)
 	}
 	return nil
 }
