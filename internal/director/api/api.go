@@ -226,6 +226,10 @@ type Config struct {
 	// It keeps the placement of the platform's apps (platform_apps.go) from
 	// running on its own too; PlacePlatformApps still places.
 	UpdaterOff bool
+	// UpdaterEvery is how often the mover looks for newer builds. Zero is
+	// updaterEvery. A development cluster that follows a develop channel
+	// shortens it.
+	UpdaterEvery time.Duration
 	// TakeOutRefused has the director take out of the catalog directory
 	// what this release's schema refuses, at start and every so often
 	// (catalogue_refused.go). Off unless the program turns it on, so that a

@@ -202,7 +202,8 @@ entries:
   for your own apps; `pe` and `ee` (proprietary) entries are counted and left to the App Store.
 - An entry without a valid digest is listed and cannot be installed from the listing: there is
   nothing to pin the install to.
-- The index is at most 1 MiB. The director keeps a fetched index for five minutes.
+- The index is at most 1 MiB. The director keeps a fetched index for five minutes
+  (`director.catalogueCache` in the chart, a Go duration such as `30s`).
 - A catalog without an `index.yaml` works, but cannot be browsed: an entry is then installed by
   naming the catalog and the digest by hand (`--from` and `--digest`, §5).
 

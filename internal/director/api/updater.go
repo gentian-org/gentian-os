@@ -44,7 +44,11 @@ func (s *Server) startUpdater() {
 		return
 	}
 	s.watch(func(ctx context.Context) {
-		t := time.NewTicker(updaterEvery)
+		every := updaterEvery
+		if s.cfg.UpdaterEvery > 0 {
+			every = s.cfg.UpdaterEvery
+		}
+		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
 			select {

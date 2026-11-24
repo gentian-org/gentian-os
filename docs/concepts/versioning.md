@@ -183,7 +183,9 @@ next upstream release breaks; `latest` does not walk past it.
 
 `latest` moves apps inside a window set on the `Cluster` claim
 (`spec.catalogue.updates.window`: a daily `start` and `end` in a `timezone`;
-absent, any time). The mover runs inside the director every five minutes and
+absent, any time). The mover runs inside the director every five minutes
+(`director.updaterEvery` in the chart; a development cluster that follows a
+develop channel shortens it) and
 reads the update report (§4.2); nothing is stored between runs, so what it
 acts on is what a person reads. Within the window it moves one tenant first,
 waits for that move to verify (§5), then the rest in batches of five per run.
