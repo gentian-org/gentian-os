@@ -32,7 +32,7 @@ func relaySecret(user, password string) *corev1.Secret {
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace},
 		Data: map[string][]byte{
-			"mail_service_mode": []byte("external"),
+			"mail_service_mode": []byte("relay"),
 			"smtp_host":         []byte("smtp.gmail.com"),
 			"smtp_port":         []byte("587"),
 			"smtp_starttls":     []byte("true"),
@@ -71,7 +71,7 @@ var emptySMTP = map[string]string{"host": "", "port": "", "user": "", "password"
 func TestMail_ExternalRelayFillsAppSMTPRecord(t *testing.T) {
 	ctx := context.Background()
 	tenant := mailingTenant()
-	r, _, vault := relayReconciler(t, "external", mailingProfile(), tenant, relaySecret("relay@example.com", "s3cret"))
+	r, _, vault := relayReconciler(t, "relay", mailingProfile(), tenant, relaySecret("relay@example.com", "s3cret"))
 
 	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestMail_ExternalRelayFillsAppSMTPRecord(t *testing.T) {
 func TestMail_ExternalRelayWithoutCredentialKeepsRecord(t *testing.T) {
 	ctx := context.Background()
 	tenant := mailingTenant()
-	r, c, vault := relayReconciler(t, "external", mailingProfile(), tenant, relaySecret("", ""))
+	r, c, vault := relayReconciler(t, "relay", mailingProfile(), tenant, relaySecret("", ""))
 
 	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestMail_ExternalRelayWithoutCredentialKeepsRecord(t *testing.T) {
 func TestMail_ExternalRelayChangeUpdatesRecord(t *testing.T) {
 	ctx := context.Background()
 	tenant := mailingTenant()
-	r, c, vault := relayReconciler(t, "external", mailingProfile(), tenant, relaySecret("old@example.com", "old"))
+	r, c, vault := relayReconciler(t, "relay", mailingProfile(), tenant, relaySecret("old@example.com", "old"))
 
 	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
@@ -143,10 +143,86 @@ func TestMail_ExternalRelayChangeUpdatesRecord(t *testing.T) {
 func TestMail_SystemModeDoesNotUseRelay(t *testing.T) {
 	ctx := context.Background()
 	tenant := mailingTenant()
-	r, _, vault := relayReconciler(t, mailServiceModeSystem, mailingProfile(), tenant, relaySecret("relay@example.com", "s3cret"))
+	r, _, vault := relayReconciler(t, mailServiceModeInternal, mailingProfile(), tenant, relaySecret("relay@example.com", "s3cret"))
 
 	if err := mailPass(ctx, r, tenant); err != nil {
 		t.Fatal(err)
 	}
 	wantSMTP(t, vault, emptySMTP)
+}
+
+// externalMailConfig is gentian-cluster-config as the Cluster Composition
+// writes it for a claim whose mail is on a server outside the cluster.
+func externalMailConfig(mode, imapHost, imapPort string) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterConfigName, Namespace: clusterConfigNamespace},
+		Data: map[string]string{
+			clusterConfigMailModeKey:     mode,
+			clusterConfigMailIMAPHostKey: imapHost,
+			clusterConfigMailIMAPPortKey: imapPort,
+		},
+	}
+}
+
+func wantIMAP(t *testing.T, vault memVault, host, port string) {
+	t.Helper()
+	got := vault[secrets.CategoryPath("quiet", "mailer", "imap")]
+	if got == nil || got["host"] != host || got["port"] != port {
+		t.Errorf("imap record = %v, want host %q port %q", got, host, port)
+	}
+}
+
+// A cluster whose mail is on a server outside it gives each app that server's
+// login to send with, as a relay does, and its IMAP address to read from.
+func TestMail_ExternalServerFillsAppSMTPAndIMAPRecords(t *testing.T) {
+	ctx := context.Background()
+	tenant := mailingTenant()
+	r, _, vault := relayReconciler(t, mailServiceModeExternal, mailingProfile(), tenant,
+		relaySecret("cluster@example.com", "s3cret"),
+		externalMailConfig(mailServiceModeExternal, "imap.example.com", "993"))
+
+	if err := mailPass(ctx, r, tenant); err != nil {
+		t.Fatal(err)
+	}
+	wantSMTP(t, vault, map[string]string{
+		"host": "smtp.gmail.com", "port": "587", "user": "cluster@example.com", "password": "s3cret",
+	})
+	wantIMAP(t, vault, "imap.example.com", "993")
+}
+
+// The IMAP record follows the claim: a server named anew reaches a record
+// already written, and a port the ConfigMap does not carry is 993.
+func TestMail_ExternalServerChangeUpdatesIMAPRecord(t *testing.T) {
+	ctx := context.Background()
+	tenant := mailingTenant()
+	r, c, vault := relayReconciler(t, mailServiceModeExternal, mailingProfile(), tenant,
+		relaySecret("", ""), externalMailConfig(mailServiceModeExternal, "imap.example.com", ""))
+
+	if err := mailPass(ctx, r, tenant); err != nil {
+		t.Fatal(err)
+	}
+	wantIMAP(t, vault, "imap.example.com", "993")
+
+	if err := c.Update(ctx, externalMailConfig(mailServiceModeExternal, "mail.example.net", "1993")); err != nil {
+		t.Fatal(err)
+	}
+	if err := mailPass(ctx, r, tenant); err != nil {
+		t.Fatal(err)
+	}
+	wantIMAP(t, vault, "mail.example.net", "1993")
+}
+
+// An IMAP address on the claim is read in external mode alone: a relay has no
+// mailboxes, whatever else the claim carries.
+func TestMail_RelayIgnoresAnIMAPAddress(t *testing.T) {
+	ctx := context.Background()
+	tenant := mailingTenant()
+	r, _, vault := relayReconciler(t, mailServiceModeRelay, mailingProfile(), tenant,
+		relaySecret("relay@example.com", "s3cret"),
+		externalMailConfig(mailServiceModeRelay, "imap.example.com", "993"))
+
+	if err := mailPass(ctx, r, tenant); err != nil {
+		t.Fatal(err)
+	}
+	wantIMAP(t, vault, "", "")
 }

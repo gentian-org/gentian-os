@@ -60,12 +60,12 @@ try_load_creds_from_openbao() {
         _core_ready=1
     fi
     if [[ "${_core_ready}${_repos_ready}${_providers_ready}" == "111" ]]; then
-        if [[ "${_mail_mode}" == "external" \
-            && -n "${SMTP_RELAY_USERNAME:-}" \
+        if mail_mode_sends_through_login "${_mail_mode}" \
+            && [[ -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
             return
         fi
-        if [[ "${_mail_mode}" == "system" ]]; then
+        if [[ "${_mail_mode}" == "internal" ]]; then
             return
         fi
     fi

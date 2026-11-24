@@ -133,7 +133,9 @@ spec:
         llm.console.enabled: "false"
         llm.enabled: "false"
         mail.egressHost: ""
-        mail.serviceMode: system
+        mail.imapHost: ""
+        mail.imapPort: ""
+        mail.serviceMode: internal
         mail.smtpHost: ""
         mainAddress.mailTenant: ""
         mainAddress.tenant: ""

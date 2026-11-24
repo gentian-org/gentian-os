@@ -1270,19 +1270,20 @@ needs no pack entry. See [app-profile-guide.md](https://github.com/gentian-org/g
 
 **Two knobs:** `spec.mail.serviceMode` on the **Cluster claim**
 (`clusters/<cluster>/kernel/claims/cluster.yaml` in the deployments
-repository) says whether the cluster runs its own mail servers (`system`) or
-relays through a provider (`external`, the default).
+repository) says whether the cluster runs its own mail servers (`internal`),
+relays through a provider (`relay`, the default), or has its mail on a server
+outside it (`external`).
 **`Tenant.spec.mail.mode`** controls what the **operator** provisions per
 tenant. See [mail.md](../concepts/mail.md) §0.
 
-**Tunnel clusters:** `mail.serviceMode: system` is refused with
+**Tunnel clusters:** `mail.serviceMode: internal` is refused with
 `networkMode: tunnel`, at pre-flight. A tunnel carries HTTP and HTTPS only;
-use `external` there.
+use `relay` or `external` there.
 
-### What runs where under `system`
+### What runs where under `internal`
 
 No installer step deploys mail. The `gentian-mail` ApplicationSet exists only
-while the claim says `system`, and syncs three charts:
+while the claim says `internal`, and syncs three charts:
 
 | Application | Namespace | What it is |
 |---|---|---|
@@ -1306,7 +1307,7 @@ its own connection, with the PROXY protocol switched on at both ends
 spec:
   networkMode: static-ip
   mail:
-    serviceMode: system
+    serviceMode: internal
 ```
 
 Edit the claim in the deployments checkout and run `./install.sh`: step 0
@@ -1329,13 +1330,13 @@ DKIM and DMARC records; it publishes no address record before the load
 balancer has one. The PTR of the address mail leaves from is set at the
 provider ([mail.md §10](../concepts/mail.md#10-dns-for-real-mail)).
 
-### Switch back to external relay mode
+### Switch back to relay mode
 
 ```yaml
 # clusters/<cluster>/kernel/claims/cluster.yaml
 spec:
   mail:
-    serviceMode: external
+    serviceMode: relay
     host: smtp.example.com
     port: 587
     ssl: false

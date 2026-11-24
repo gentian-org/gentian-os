@@ -127,7 +127,7 @@ func TestAWriteThatNeedsADroppedFieldIsRefusedAndTheRestServed(t *testing.T) {
 	}
 	// Another kind altogether.
 	if code, body := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
-		`{"settings":{"mail.serviceMode":"external"}}`); code != http.StatusAccepted {
+		`{"settings":{"mail.serviceMode":"relay"}}`); code != http.StatusAccepted {
 		t.Fatalf("a cluster setting: %d %v", code, body)
 	}
 	// A removal, and a read.
@@ -154,7 +154,7 @@ func TestAClusterClaimFieldTheClusterWouldDropNamesTheInstallerStep(t *testing.T
 	operator.serves(map[string][]string{"Cluster": {"spec.mail"}})
 	before := h.tip(t)
 
-	code, body := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice, `{"settings":{"mail.serviceMode":"external"}}`)
+	code, body := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice, `{"settings":{"mail.serviceMode":"relay"}}`)
 	refused(t, "a cluster setting", code, body, "Cluster", "clusters.gentianos.io", "spec.mail.serviceMode", "./install.sh --only B-06")
 	if h.tip(t) != before {
 		t.Fatal("a refused write moved the repository")
@@ -177,7 +177,7 @@ func TestWithNoAnswerFromTheOperatorNothingThatSetsAFieldIsWritten(t *testing.T)
 	refused(t, "an install", code, body, "could not be confirmed", "operator could not be asked")
 	code, body = h.do(t, "PUT", "/v1/tenants/demo/apps/nextcloud/addons", tom, `{"addons":["calendar"]}`)
 	refused(t, "choosing addons", code, body, "could not be confirmed")
-	code, body = h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", h.token(t, "gentian", "alice"), `{"settings":{"mail.serviceMode":"external"}}`)
+	code, body = h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", h.token(t, "gentian", "alice"), `{"settings":{"mail.serviceMode":"relay"}}`)
 	refused(t, "a cluster setting", code, body, "could not be confirmed")
 	if h.tip(t) != before {
 		t.Fatal("a refused write moved the repository")

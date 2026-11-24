@@ -181,7 +181,8 @@ until it is done.
     tunnel's routes itself and publishes every hostname as a record pointing at
     the tunnel, through external-dns, which is installed on a tunnel cluster
     too.
-    A tunnel carries HTTP and HTTPS only, so mail goes out through a relay.
+    A tunnel carries HTTP and HTTPS only, so mail goes out through a relay
+    or a mail server outside the cluster.
   - `static-ip` needs a fixed address that DNS points at and something that
     answers a `LoadBalancer` Service with it: MetalLB on your own machines
     (on MicroK8s the add-on `metallb`, given that address), or the cloud's
@@ -376,9 +377,10 @@ one. Every question shows its default; Enter takes it.
 | `certificates.acmeEnv` | `production` | Never needed for rebuilds — a purge keeps the issued wildcard in `~/.gentian/certs` and the next install reuses it (only `--purge --cluster-infra` deletes it). `staging` breaks the kernel sign-in, which does not trust its chain |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
 | `certificates.dnsParams` | unset | The provider needs more than its credential, and the installer then asks for each value. A zone on a nameserver of your own (`rfc2136`: BIND, Knot, PowerDNS) needs `nameserver` (its address as `IP` or `IP:port`, not a name), `zone` (the zone itself, which the kernel domain may sit below) and `tsigKeyName`; `tsigAlgorithm` is `HMACSHA512` unless set. The nameserver must accept dynamic updates and zone transfers (AXFR) signed with that key — on PowerDNS `dnsupdate=yes`, and on the zone the metadata `TSIG-ALLOW-DNSUPDATE`, `ALLOW-DNSUPDATE-FROM` and `TSIG-ALLOW-AXFR`, with the cluster's egress address in `allow-axfr-ips` |
-| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). Not asked on a tunnel cluster, which is always `external`. A cluster with its own mail needs things arranged at your provider before the install, and a second load-balancer address: [mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do) lists them. With a relay, none of it applies |
-| `mail.egressHost` | unset | `system` mode: the name outbound mail leaves from, for example `mail-egress.<domain>`. Asked after the mail mode. It needs a floating IP of your own on one node, with its reverse DNS set to this name; the pre-flight stops the install when that is not so. Blank sends from the provider's shared address, which most receivers treat as spam ([mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)) |
-| `mail.host` | unset | `external` mode: the relay's hostname, for example `smtp.example.com`. Its user name and password are a credential, supplied in step 5 — not asked here |
+| `mail.serviceMode` | `relay` | Mail is on a mail server outside the cluster that holds the mailboxes (`external`; then `mail.imap.host` and `mail.host` are asked, [mail.md §8a](docs/concepts/mail.md#8a-mail-on-a-server-outside-the-cluster)), or you want the platform's own mail, in-cluster Postfix and Dovecot (`internal`; refused with `networkMode: tunnel`, so it needs `static-ip`, and not offered on a tunnel cluster). A cluster with its own mail needs things arranged at your provider before the install, and a second load-balancer address: [mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do) lists them. With a relay, none of it applies |
+| `mail.egressHost` | unset | `internal` mode: the name outbound mail leaves from, for example `mail-egress.<domain>`. Asked after the mail mode. It needs a floating IP of your own on one node, with its reverse DNS set to this name; the pre-flight stops the install when that is not so. Blank sends from the provider's shared address, which most receivers treat as spam ([mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)) |
+| `mail.host` | unset | `relay` and `external` mode: where mail is submitted, the relay's or the mail server's hostname, for example `smtp.example.com`. Its user name and password are a credential, supplied in step 5 — not asked here |
+| `mail.imap.host` | — | `external` mode: where mail is read, the mail server's IMAP hostname, for example `imap.example.com`. Always asked in that mode; there is no default. Mailboxes and their logins are made on that server |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
 | `tenancyMode` | `multi` | Who the cluster is for. `multi`: the platform tenant plus any number of user tenants, each at `desktop.<tenant>.<kernel-domain>`; the install creates none. `single`: the platform tenant plus exactly one user tenant, named `user`, on the cluster's own addresses (`desktop.<kernel-domain>`); the install creates it after the handover. The platform admin signs in at `platform.<kernel-domain>` either way. See step 7. |
@@ -398,7 +400,7 @@ default:
 | Kernel domain | a domain in your Cloudflare zone | the organization's domain |
 | `networkMode` | `tunnel` | `static-ip`, then `nodeIp` |
 | `certificates.issuerMode`, `dnsProvider` | `acme-dns01`, `cloudflare` | `acme-dns01`, and the provider that hosts the zone |
-| `mail.serviceMode` | not asked: `external`. Then `mail.host`, the relay | `system`, then `mail.egressHost` |
+| `mail.serviceMode` | `relay`, then `mail.host`, the relay | `internal`, then `mail.egressHost` |
 | `tenancyMode` | `multi` | `single` |
 | Credentials asked after step 0 | the deployments token, the master password, the DNS token, the tunnel token | the deployments token, the master password, the DNS provider's credential |
 | Supplied in step 5 | the relay's user name and password | nothing for mail |
@@ -519,19 +521,19 @@ The install pauses here and waits for you. Three things finish it:
    tab. Opening it is what the installer waits for: it shows that someone
    other than the installer reaches the credential store. Then fill in what
    the cluster is still missing, if anything — the SMTP relay's user name and
-   password on a cluster with `mail.serviceMode: external`, any extra app
-   repository and its pull secret. A cluster with its own mail (`system`) has
+   password on a cluster with `mail.serviceMode: relay` or `external`, any extra app
+   repository and its pull secret. A cluster with its own mail (`internal`) has
    no relay to supply, and often nothing at all.
 
 Signing in and opening that tab is what the installer is waiting for: it proves
 someone other than the installer can write credentials. The moment it sees that, it revokes its own
 credential, deletes the temporary secret files, and prints **`Install Complete`**.
 
-**With a relay, do the SMTP relay first.** It is not only about sending mail. Any app whose
+**With a relay or an external mail server, do the SMTP relay first.** It is not only about sending mail. Any app whose
 profile asks for SMTP reads those credentials from OpenBao, and they are written
 there only once the relay exists — so until you supply it, those apps do not
 install at all: the tenant stays in `Provisioning` and the app's secret never
-syncs. On a cluster with `mail.serviceMode: external` this is the most common
+syncs. On a cluster with `mail.serviceMode: relay` or `external` this is the most common
 reason a tenant appears to hang.
 
 The wait is bounded — 30 minutes, `GENTIAN_HANDOVER_WAIT_SECS` to change it —
@@ -1208,7 +1210,7 @@ what is already done, so convergence and update are the same operation.
   are in [docs/reference/commands.md](docs/reference/commands.md).
 - **Configure mail** — [docs/concepts/mail.md](docs/concepts/mail.md). Mail between
   users of this cluster works once the cluster's own mail stack is deployed
-  (`mail.serviceMode: system`). Mail to and from the internet arrives on the
+  (`mail.serviceMode: internal`). Mail to and from the internet arrives on the
   load balancer of the mail edge in `system-mail-dmz` — a proxy that passes
   ports 25, 587 and 993 on to Postfix and Dovecot with TLS untouched,
   [§9b](docs/concepts/mail.md#9b-the-mail-edge) — and additionally needs the MX,

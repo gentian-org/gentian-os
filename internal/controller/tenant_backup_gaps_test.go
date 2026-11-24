@@ -866,7 +866,7 @@ func TestATenantsMailboxesAreCapturedRestoredAndDestroyed(t *testing.T) {
 
 	// --- a mail server: a unit beside its volume, on the node it is held on.
 	w = newGapsWorld(t, mailCluster()...)
-	w.tr.MailServiceMode = mailServiceModeSystem
+	w.tr.MailServiceMode = mailServiceModeInternal
 	units, err = w.er.tenantWideUnits(ctx, w.tenant, w.export, gapsEncryption)
 	if err != nil {
 		t.Fatal(err)
@@ -1072,7 +1072,7 @@ func TestATenantsMailboxesAreCapturedRestoredAndDestroyed(t *testing.T) {
 func TestMailboxesOnTheClustersOwnDomainAreNeitherCopiedNorDestroyed(t *testing.T) {
 	ctx := context.Background()
 	w := newGapsWorld(t, mailCluster()...)
-	w.tr.MailServiceMode = mailServiceModeSystem
+	w.tr.MailServiceMode = mailServiceModeInternal
 	w.tr.TenancyMode = gentianov1alpha1.TenancyModeSingle
 	user := planTenant(gentianov1alpha1.SingleUserTenantName)
 	if got := mailDomain(user, w.tr.KernelDomain, w.tr.TenancyMode); got != "k.example" {
@@ -1588,7 +1588,7 @@ func TestAFormat2BundleStillRestores(t *testing.T) {
 func TestEveryTenantArtefactIsCapturedPlannedRestoredAndDestroyed(t *testing.T) {
 	ctx := context.Background()
 	w := newGapsWorld(t, mailCluster()...)
-	w.tr.MailServiceMode = mailServiceModeSystem
+	w.tr.MailServiceMode = mailServiceModeInternal
 	w.rights.tuples[authz.Tuple{User: "user:u-support", Relation: "admin", Object: "tenant:demo"}] = true
 
 	// Captured.

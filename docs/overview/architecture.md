@@ -543,11 +543,13 @@ the deployments repository and how a cluster follows a release are in
 
 Mail is **optional** and decided twice.
 
-**Per cluster**, the Cluster claim's `mail.serviceMode` says whether the
-cluster runs its own mail stack. With `system`, Postfix and Dovecot run in
+**Per cluster**, the Cluster claim's `mail.serviceMode` says where the
+cluster's mail is. With `internal`, Postfix and Dovecot run in
 `system-mail` with no load balancer, and a proxy in `system-mail-dmz` takes
 ports 25, 587 and 993 from the internet and holds no mail, no user and no
-key. Otherwise the cluster relays through a provider and neither namespace
+key. With `relay` the cluster sends through a provider and has no mailboxes;
+with `external` a mail server outside the cluster holds them, and the cluster
+sends through it and hands apps its IMAP address. In both, neither namespace
 exists. A cluster behind a tunnel cannot run its own stack.
 
 **Per tenant**, `Tenant.spec.mail.mode` says what the operator registers:

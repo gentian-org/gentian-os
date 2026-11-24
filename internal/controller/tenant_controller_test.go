@@ -323,7 +323,7 @@ func TestMain(m *testing.M) {
 		// The mail tests assert the shared Postfix AND Dovecot artifacts, which
 		// is what kernel mode provisions. With this unset the suite would run as
 		// external, where Dovecot is deliberately not configured at all.
-		MailServiceMode: "system",
+		MailServiceMode: "internal",
 		// This suite has no vault, and says so: without the statement a
 		// tenant's deletion stops at the step that destroys its stored
 		// credentials, which is what a deployment missing its vault must do.

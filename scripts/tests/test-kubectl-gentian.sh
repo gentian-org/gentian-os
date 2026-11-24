@@ -1138,9 +1138,9 @@ echo ""
 echo "kubectl gentian settings"
 echo ""
 
-fresh; reply GET /v1/clusters/c1/settings 200 '{"cluster":"c1","settings":{"tenancyMode":"single","mainAddress.tenant":"","mail.serviceMode":"system"}}'
+fresh; reply GET /v1/clusters/c1/settings 200 '{"cluster":"c1","settings":{"tenancyMode":"single","mainAddress.tenant":"","mail.serviceMode":"internal"}}'
 gentian settings show
-is "show prints the settings and nothing else" "$(jq -c '.' <<<"${OUT}")" '{"tenancyMode":"single","mainAddress.tenant":"","mail.serviceMode":"system"}'
+is "show prints the settings and nothing else" "$(jq -c '.' <<<"${OUT}")" '{"tenancyMode":"single","mainAddress.tenant":"","mail.serviceMode":"internal"}'
 is "... and only reads" "$(cat "${CALLS}")" "GET /v1/clusters/c1/settings "
 
 fresh

@@ -64,7 +64,7 @@ trap cleanup EXIT
 
 # render [extra helm arguments for the edge...] — the charts, as deployed.
 render() {
-    local common=(--set env=dev --set kernelDomain=lab.test --set mailServiceMode=system
+    local common=(--set env=dev --set kernelDomain=lab.test --set mailServiceMode=internal
                   --set edge.namespace=system-mail-dmz --set mailNamespace=system-mail)
     mkdir -p "${W}/render"
     helm template postfix-dev kernel/services/postfix/manifests -n system-mail \

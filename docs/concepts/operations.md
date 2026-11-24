@@ -718,7 +718,7 @@ and each volume claim from what the bundle recorded, on the cluster's default
 storage class.
 
 **Mailboxes.** On a cluster that runs its own mail server
-(`mail.serviceMode: system`) a tenant's mailboxes are the directories below
+(`mail.serviceMode: internal`) a tenant's mailboxes are the directories below
 its mail domain's on the server's volume. They are copied by `doveadm
 backup`, in the mail server's own image, beside the volume and on the node
 the server holds it on: the server's own synchronization takes the server's
