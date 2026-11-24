@@ -14,6 +14,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -53,23 +54,40 @@ func TestTheCallerReachesWhatAnOutsideBridgesGrantRecorded(t *testing.T) {
 	}
 }
 
-// A grant the Tenant records again for other hosts or another digest
-// replaces the one the Component carries, so that what the director
-// recorded reaches the Component; the same record does not.
-func TestARecordedAnswerReplacesTheStoredGrant(t *testing.T) {
+// The same approval with its record filled in reaches the Component in
+// place, in one write: nothing is removed first, so the grant never lapses.
+// A new approval (another approvedAt) for other terms replaces the stored one;
+// for the same terms it is kept as stored.
+func TestARecordedAnswerReachesTheComponentInPlace(t *testing.T) {
 	at := metav1.Now()
+	later := metav1.NewTime(at.Add(time.Hour))
 	stored := []gentianov1alpha1.PrivilegeGrant{
 		{Privilege: "egress/outside", Approver: "tom", ApprovedAt: at},
 		{Privilege: "egress/relay", Approver: "tom", ApprovedAt: at},
+		{Privilege: "egress/again", Approver: "tom", ApprovedAt: at, Hosts: []string{"a.example.org"}},
 		{Privilege: "egress/same", Approver: "tom", ApprovedAt: at, Hosts: []string{"a.example.org", "b.example.org"}},
 	}
 	desired := []gentianov1alpha1.PrivilegeGrant{
 		{Privilege: "egress/outside", Approver: "tom", ApprovedAt: at, Hosts: []string{"graph.microsoft.com"}},
 		{Privilege: "egress/relay", Approver: "tom", ApprovedAt: at, Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
-		{Privilege: "egress/same", Approver: "tom", ApprovedAt: at, Hosts: []string{"b.example.org", "a.example.org"}},
+		{Privilege: "egress/again", Approver: "ann", ApprovedAt: later, Hosts: []string{"c.example.org"}},
+		{Privilege: "egress/same", Approver: "ann", ApprovedAt: later, Hosts: []string{"b.example.org", "a.example.org"}},
 	}
-	got := replacedGrants(stored, desired)
-	if !slices.Equal(got, []string{"egress/outside", "egress/relay"}) {
-		t.Fatalf("replaced = %v, want egress/outside and egress/relay", got)
+	if got := replacedGrants(stored, desired); !slices.Equal(got, []string{"egress/again"}) {
+		t.Fatalf("replaced = %v, want only egress/again (a new approval for other terms)", got)
+	}
+	kept := keepStoredGrants(stored, desired)
+	byName := map[string]gentianov1alpha1.PrivilegeGrant{}
+	for _, g := range kept {
+		byName[g.Privilege] = g
+	}
+	if h := byName["egress/outside"].Hosts; !slices.Equal(h, []string{"graph.microsoft.com"}) {
+		t.Fatalf("the filled-in hosts did not reach the Component in place: %v", h)
+	}
+	if byName["egress/relay"].Digest == "" {
+		t.Fatal("the filled-in digest did not reach the Component in place")
+	}
+	if g := byName["egress/same"]; g.Approver != "tom" {
+		t.Fatalf("the same terms approved again replaced the stored approval: %+v", g)
 	}
 }
