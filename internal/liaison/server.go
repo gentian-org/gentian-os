@@ -30,6 +30,13 @@ import (
 // /api/v1/connections/ a token of that person made out to the liaison
 // alone. No other path is published.
 //
+// The desktop's API, inside the tenant, under /api/v1/connections/ with the
+// person's own token, the one the registrar and the usher accept too: a
+// person manages their connections in the desktop's account panel. A sign-in
+// started there comes back to the liaison's own address, as every sign-in
+// does, and the person is then sent on to the desktop, at the address the
+// platform told the liaison, never one a request names.
+//
 // The chaperone, inside the tenant, under /api/v1/internal/ with the key of
 // the contract between the two: it tells the liaison which outside tool
 // servers the tenant's agent bridges name, and asks for a short credential
@@ -44,6 +51,16 @@ type People interface {
 type Server struct {
 	Service *Service
 	People  People
+	// Edge says which person the token the desktop calls with names: the
+	// person's own token, made out to the platform's edge audience. Nil, the
+	// desktop is not accepted.
+	Edge People
+	// Host is the liaison's own host, where a sign-in comes back to. Empty,
+	// it is the host the request came to, which is right only at the page.
+	Host string
+	// DesktopHost is where the desktop answers. Empty, a sign-in cannot be
+	// started for the desktop.
+	DesktopHost string
 	// ChaperoneKey is what the chaperone presents. Empty, nothing is
 	// accepted from it.
 	ChaperoneKey string
@@ -70,9 +87,9 @@ func NewServer(service *Service, people People, chaperoneKey string, log *slog.L
 
 	s.mux.HandleFunc("GET /connections/{$}", s.person(s.showPage))
 	s.mux.HandleFunc("GET /connections/callback", s.person(s.callback))
-	s.mux.HandleFunc("GET /api/v1/connections/{$}", s.person(s.list))
-	s.mux.HandleFunc("POST /api/v1/connections/{name}/connect", s.person(s.changing(s.connect)))
-	s.mux.HandleFunc("POST /api/v1/connections/{name}/disconnect", s.person(s.changing(s.disconnect)))
+	s.mux.HandleFunc("GET /api/v1/connections/{$}", s.personOrDesktop(s.list))
+	s.mux.HandleFunc("POST /api/v1/connections/{name}/connect", s.personOrDesktop(s.changing(s.connect)))
+	s.mux.HandleFunc("POST /api/v1/connections/{name}/disconnect", s.personOrDesktop(s.changing(s.disconnect)))
 
 	s.mux.HandleFunc("PUT /api/v1/internal/connections", s.chaperone(s.tell))
 	s.mux.HandleFunc("POST /api/v1/internal/credential", s.chaperone(s.credential))
@@ -105,9 +122,23 @@ func fail(w http.ResponseWriter, status int, detail string) {
 type caller struct {
 	person string
 	token  string
+	// desktop: the token is the one the desktop calls with.
+	desktop bool
 }
 
+// person accepts the token the front door hands the page: the person's,
+// made out to the liaison.
 func (s *Server) person(h func(http.ResponseWriter, *http.Request, caller)) http.HandlerFunc {
+	return s.verified(false, h)
+}
+
+// personOrDesktop accepts that token, or the person's own token the desktop
+// calls with.
+func (s *Server) personOrDesktop(h func(http.ResponseWriter, *http.Request, caller)) http.HandlerFunc {
+	return s.verified(true, h)
+}
+
+func (s *Server) verified(desktop bool, h func(http.ResponseWriter, *http.Request, caller)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := bearer(r)
 		if token == "" || s.People == nil {
@@ -115,11 +146,16 @@ func (s *Server) person(h func(http.ResponseWriter, *http.Request, caller)) http
 			return
 		}
 		person, err := s.People.Verify(r.Context(), token)
+		fromDesktop := false
+		if err != nil && desktop && s.Edge != nil {
+			person, err = s.Edge.Verify(r.Context(), token)
+			fromDesktop = err == nil
+		}
 		if err != nil {
 			fail(w, http.StatusUnauthorized, "Sign in to the workspace to manage your connections.")
 			return
 		}
-		h(w, r, caller{person: person, token: token})
+		h(w, r, caller{person: person, token: token, desktop: fromDesktop})
 	}
 }
 
@@ -177,12 +213,29 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, c caller) {
 
 // redirect is the liaison's own address a sign-in comes back to: the host
 // the front door routed this request by.
-func redirect(r *http.Request) string {
-	return "https://" + r.Host + "/connections/callback"
+func (s *Server) redirect(r *http.Request) string {
+	host := s.Host
+	if host == "" {
+		host = r.Host
+	}
+	return "https://" + host + "/connections/callback"
+}
+
+// desktopPage is the desktop's account panel at its Connections tab, with
+// what happened.
+func (s *Server) desktopPage(outcome string) string {
+	return "https://" + s.DesktopHost + "/?account=connections&" + outcome
 }
 
 func (s *Server) connect(w http.ResponseWriter, r *http.Request, c caller) {
-	address, err := s.Service.Begin(r.Context(), c.person, r.PathValue("name"), redirect(r))
+	// The desktop's call: the person goes back to the desktop, which the
+	// liaison can only send them to where the platform told it the desktop
+	// is.
+	if c.desktop && (s.DesktopHost == "" || s.Host == "") {
+		fail(w, http.StatusServiceUnavailable, "This liaison does not know where the desktop is, so a sign-in cannot be started from it.")
+		return
+	}
+	address, err := s.Service.Begin(r.Context(), c.person, r.PathValue("name"), s.redirect(r), c.desktop)
 	if err != nil {
 		s.Log.WarnContext(r.Context(), "a sign-in could not be started", "connection", r.PathValue("name"), "error", err.Error())
 		fail(w, http.StatusBadGateway, err.Error())
@@ -194,19 +247,25 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request, c caller) {
 
 func (s *Server) callback(w http.ResponseWriter, r *http.Request, c caller) {
 	q := r.URL.Query()
-	back := "/connections/"
+	back := func(desktop bool, outcome string) {
+		to := "/connections/?" + outcome
+		if desktop && s.DesktopHost != "" {
+			to = s.desktopPage(outcome)
+		}
+		http.Redirect(w, r, to, http.StatusSeeOther)
+	}
 	if q.Get("error") != "" {
-		http.Redirect(w, r, back+"?failed=declined", http.StatusSeeOther)
+		back(s.Service.Forget(c.person, q.Get("state")), "failed=declined")
 		return
 	}
-	name, err := s.Service.Complete(r.Context(), c.person, c.token, q.Get("state"), q.Get("code"))
+	name, desktop, err := s.Service.Complete(r.Context(), c.person, c.token, q.Get("state"), q.Get("code"))
 	if err != nil {
 		s.Log.WarnContext(r.Context(), "a sign-in could not be completed", "person", c.person, "error", err.Error())
-		http.Redirect(w, r, back+"?failed=1", http.StatusSeeOther)
+		back(desktop, "failed=1")
 		return
 	}
 	s.Log.InfoContext(r.Context(), "connection", "action", "connected", "person", c.person, "connection", name)
-	http.Redirect(w, r, back+"?connected="+url.QueryEscape(name), http.StatusSeeOther)
+	back(desktop, "connected="+url.QueryEscape(name))
 }
 
 func (s *Server) disconnect(w http.ResponseWriter, r *http.Request, c caller) {
@@ -244,7 +303,7 @@ func (s *Server) credential(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrNotConnected):
 		s.Log.InfoContext(r.Context(), "connection", "action", "credential", "outcome", "not connected",
 			"person", body.Person, "connection", body.Connection)
-		fail(w, http.StatusConflict, "This person is not connected to the service: they connect on the connections page.")
+		fail(w, http.StatusConflict, s.notConnected())
 		return
 	case err != nil:
 		s.Log.ErrorContext(r.Context(), "a credential could not be obtained", "person", body.Person,
@@ -255,4 +314,14 @@ func (s *Server) credential(w http.ResponseWriter, r *http.Request) {
 	s.Log.InfoContext(r.Context(), "connection", "action", "credential", "outcome", "handed",
 		"person", body.Person, "connection", body.Connection)
 	write(w, http.StatusOK, map[string]any{"credential": credential, "expires_at": expires})
+}
+
+// notConnected says where a person who is not connected connects: the
+// desktop's account panel, at its address where the liaison knows it.
+func (s *Server) notConnected() string {
+	if s.DesktopHost == "" {
+		return "This person is not connected to the service: they connect in the desktop, under Account, Connections."
+	}
+	return "This person is not connected to the service: they connect in the desktop, under Account, Connections (" +
+		"https://" + s.DesktopHost + "/?account=connections)."
 }

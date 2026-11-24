@@ -124,12 +124,12 @@ const back = "https://liaison.acme.example/connections/callback"
 
 func (w *world) connect(t *testing.T, person string) {
 	t.Helper()
-	address, err := w.service.Begin(context.Background(), person, "recorder", back)
+	address, err := w.service.Begin(context.Background(), person, "recorder", back, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	u, _ := url.Parse(address)
-	if _, err := w.service.Complete(context.Background(), person, person+"-token", u.Query().Get("state"), "code-1"); err != nil {
+	if _, _, err := w.service.Complete(context.Background(), person, person+"-token", u.Query().Get("state"), "code-1"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -140,7 +140,7 @@ func TestAPersonConnectsAndTheLastingCredentialStaysWithTheConfidant(t *testing.
 	if got := w.service.Connections(); len(got) != 1 || got[0].Name != "recorder" {
 		t.Fatalf("known connections: %+v, and one is not https", got)
 	}
-	address, err := w.service.Begin(ctx, "ada", "recorder", back)
+	address, err := w.service.Begin(ctx, "ada", "recorder", back, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,10 +155,10 @@ func TestAPersonConnectsAndTheLastingCredentialStaysWithTheConfidant(t *testing.
 		t.Fatalf("registered as %+v", reg)
 	}
 	// Somebody else cannot finish it, and it cannot be finished twice.
-	if _, err := w.service.Complete(ctx, "grace", "grace-token", q.Get("state"), "code-1"); err == nil {
+	if _, _, err := w.service.Complete(ctx, "grace", "grace-token", q.Get("state"), "code-1"); err == nil {
 		t.Fatal("another person finished the sign-in")
 	}
-	if _, err := w.service.Complete(ctx, "ada", "ada-token", q.Get("state"), "code-1"); err == nil {
+	if _, _, err := w.service.Complete(ctx, "ada", "ada-token", q.Get("state"), "code-1"); err == nil {
 		t.Fatal("a sign-in somebody else tried to finish is still open")
 	}
 	w.connect(t, "ada")
@@ -289,5 +289,103 @@ func TestTheRoutesTakeAPersonOrTheChaperoneAndNeverTheOtherOnes(t *testing.T) {
 	told := `{"connections":[{"name":"other","url":"https://other.example/mcp","issuer":"https://other.example"}]}`
 	if rec := do("PUT", "/api/v1/internal/connections", "chaperone-key", told); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"connections":1`) {
 		t.Fatalf("told: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The desktop manages a person's connections with the person's own token:
+// it lists, starts and ends them, and never opens the page or completes a
+// sign-in with it. A sign-in it starts comes back to the liaison's own host,
+// whatever host the call reached, and sends the person on to the desktop's
+// Connections tab; one started at the page goes back to the page.
+func TestTheDesktopManagesConnectionsAndThePersonGoesBackToIt(t *testing.T) {
+	w := newWorld(t)
+	server := NewServer(w.service, people{"ada-token": "ada"}, "chaperone-key", nil)
+	server.Edge = people{"ada-edge": "ada"}
+	server.Host, server.DesktopHost = "liaison.acme.example", "desktop.acme.example"
+	do := func(method, target, bearer string, headers ...string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, target, nil)
+		r.Host = "liaison:8000"
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		for i := 0; i+1 < len(headers); i += 2 {
+			r.Header.Set(headers[i], headers[i+1])
+		}
+		rec := httptest.NewRecorder()
+		server.ServeHTTP(rec, r)
+		return rec
+	}
+	if rec := do("GET", "/api/v1/connections/", "ada-edge"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"name":"recorder"`) {
+		t.Fatalf("the desktop's list: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do("GET", "/connections/", "ada-edge"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("the page with the desktop's token: %d", rec.Code)
+	}
+	if rec := do("POST", "/api/v1/connections/recorder/connect", "ada-edge"); rec.Code != http.StatusForbidden {
+		t.Fatalf("a change without the header: %d", rec.Code)
+	}
+	start := func(bearer string) url.Values {
+		t.Helper()
+		rec := do("POST", "/api/v1/connections/recorder/connect", bearer, requestHeader, "1")
+		var body struct{ URL string }
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil {
+			t.Fatalf("connect: %d %s", rec.Code, rec.Body)
+		}
+		u, _ := url.Parse(body.URL)
+		if got := u.Query().Get("redirect_uri"); got != "https://liaison.acme.example/connections/callback" {
+			t.Fatalf("the sign-in comes back to %q", got)
+		}
+		return u.Query()
+	}
+	backTo := func(target string) string {
+		t.Helper()
+		rec := do("GET", target, "ada-token")
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("callback: %d %s", rec.Code, rec.Body)
+		}
+		return rec.Header().Get("Location")
+	}
+
+	q := start("ada-edge")
+	if rec := do("GET", "/connections/callback?state="+q.Get("state")+"&code=code-1", "ada-edge"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("a sign-in completed with the desktop's token: %d", rec.Code)
+	}
+	if got := backTo("/connections/callback?state=" + q.Get("state") + "&code=code-1"); got != "https://desktop.acme.example/?account=connections&connected=recorder" {
+		t.Fatalf("a sign-in started in the desktop goes back to %q", got)
+	}
+	q = start("ada-edge")
+	if got := backTo("/connections/callback?state=" + q.Get("state") + "&error=access_denied"); got != "https://desktop.acme.example/?account=connections&failed=declined" {
+		t.Fatalf("a declined sign-in started in the desktop goes back to %q", got)
+	}
+	q = start("ada-token")
+	if got := backTo("/connections/callback?state=" + q.Get("state") + "&code=code-1"); got != "/connections/?connected=recorder" {
+		t.Fatalf("a sign-in started at the page goes back to %q", got)
+	}
+	if rec := do("POST", "/api/v1/connections/recorder/disconnect", "ada-edge", requestHeader, "1"); rec.Code != http.StatusNoContent {
+		t.Fatalf("the desktop's disconnect: %d %s", rec.Code, rec.Body)
+	}
+
+	// Not told where the desktop is, the liaison starts no sign-in for it.
+	server.DesktopHost = ""
+	if rec := do("POST", "/api/v1/connections/recorder/connect", "ada-edge", requestHeader, "1"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("connect for a desktop the liaison does not know: %d", rec.Code)
+	}
+	// Not told to accept the desktop, the liaison refuses its token.
+	server.Edge = nil
+	if rec := do("GET", "/api/v1/connections/", "ada-edge"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("the desktop's token without Edge: %d", rec.Code)
+	}
+}
+
+// A person who is not connected is told where to connect: the desktop's
+// Connections tab, at its address where the liaison knows it.
+func TestNotConnectedNamesTheDesktopsConnectionsTab(t *testing.T) {
+	server := NewServer(newWorld(t).service, people{}, "chaperone-key", nil)
+	if got := server.notConnected(); !strings.Contains(got, "under Account, Connections") || strings.Contains(got, "https://") {
+		t.Fatalf("without the desktop's host: %q", got)
+	}
+	server.DesktopHost = "desktop.acme.example"
+	if got := server.notConnected(); !strings.Contains(got, "https://desktop.acme.example/?account=connections") {
+		t.Fatalf("with it: %q", got)
 	}
 }

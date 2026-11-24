@@ -46,6 +46,13 @@ spec:
     valueMapping:
       platform:
         issuerKey: auth.issuer
+        # The desktop manages a person's connections in its account panel:
+        # it calls with the person's own token (the edge audience), and a
+        # sign-in started there goes back to it. Naming desktopHostKey is
+        # also what lets the desktop's API reach the liaison.
+        audienceKey: auth.edgeAudience
+        hostKey: host
+        desktopHostKey: desktopHost
       integrations:
         # The credential the consumer of the contract presents.
         connections:

@@ -748,6 +748,11 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.ensureDesktopAccess(ctx, comp, tenant.Name, profile); err != nil {
 		return ctrl.Result{}, fmt.Errorf("desktop access: %w", err)
 	}
+	// The desktop's way to it, for a component that asked where the desktop
+	// answers.
+	if err := r.ensureDesktopReach(ctx, comp, tenant.Name, profile); err != nil {
+		return ctrl.Result{}, fmt.Errorf("desktop reach: %w", err)
+	}
 
 	// The package is exactly one of chart, composition, api or addon, and what
 	// "installed" means differs for each. Two of them run nothing at all, and

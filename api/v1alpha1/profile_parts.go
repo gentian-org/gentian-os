@@ -1722,6 +1722,19 @@ type PlatformValueMapping struct {
 	// name it.
 	// +optional
 	DesktopURLKey string `json:"desktopUrlKey,omitempty"`
+
+	// DesktopHostKey receives the host the desktop answers on in the
+	// component's zone, from the desktop profile's first gateway entry, and
+	// the empty string where there is no desktop. A component sends a person
+	// back there after something it started for them in the desktop, at an
+	// address the platform states rather than one a request names.
+	//
+	// Like the URL keys above it is more than a fact: naming it is also what
+	// lets the desktop's API reach the component, in-cluster, on the ports of
+	// the component's own gateway entries, so the desktop can call it with
+	// the person's own token. Only a platform-trust profile may name it.
+	// +optional
+	DesktopHostKey string `json:"desktopHostKey,omitempty"`
 }
 
 // IntegrationValueMapping maps integration credentials to Helm chart keys.

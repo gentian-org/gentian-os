@@ -14,6 +14,14 @@ port: 8000
 auth:
   issuer: ""
   ownAudience: ""
+  # The audience of the person's own token the desktop calls with. Empty,
+  # the desktop is not accepted.
+  edgeAudience: ""
+
+# The liaison's own host, where a sign-in comes back to, and the desktop's,
+# where a person who started it in the desktop goes back to.
+host: ""
+desktopHost: ""
 
 # The Secret the platform keeps the liaison's component key in, with the
 # confidant's address beside it (RIGHTS_CHECK_KEY, CONFIDANT_URL).

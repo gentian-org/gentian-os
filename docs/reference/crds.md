@@ -688,6 +688,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.package.valueMapping.platform.countryKey` | string |  | `CountryKey` receives the tenant's country (spec.country), an ISO 3166-1 alpha-2 code in upper case, and the empty string while the tenant names none. |
 | `spec.package.valueMapping.platform.custodianUrlKey` | string |  | `CustodianURLKey` receives the custodian's in-cluster URL. |
 | `spec.package.valueMapping.platform.defaultLanguageKey` | string |  | `DefaultLanguageKey` receives the tenant's own language, as an ISO 639-1 code (AD-15). |
+| `spec.package.valueMapping.platform.desktopHostKey` | string |  | `DesktopHostKey` receives the host the desktop answers on in the component's zone, from the desktop profile's first gateway entry, and the empty string where… |
 | `spec.package.valueMapping.platform.desktopUrlKey` | string |  | `DesktopURLKey` receives the in-cluster address of the API of the desktop in the component's own namespace, from the desktop profile's "api" entry: http://\<its… |
 | `spec.package.valueMapping.platform.directorUrlKey` | string |  | `DirectorURLKey` receives the director's in-cluster URL. |
 | `spec.package.valueMapping.platform.hostKey` | string |  | `HostKey` receives the host this component answers on in its zone: the host of its first gateway entry, as the operator routes it. |
@@ -1608,6 +1609,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.package.valueMapping.platform.countryKey` | string |  | `CountryKey` receives the tenant's country (spec.country), an ISO 3166-1 alpha-2 code in upper case, and the empty string while the tenant names none. |
 | `status.profileSpec.package.valueMapping.platform.custodianUrlKey` | string |  | `CustodianURLKey` receives the custodian's in-cluster URL. |
 | `status.profileSpec.package.valueMapping.platform.defaultLanguageKey` | string |  | `DefaultLanguageKey` receives the tenant's own language, as an ISO 639-1 code (AD-15). |
+| `status.profileSpec.package.valueMapping.platform.desktopHostKey` | string |  | `DesktopHostKey` receives the host the desktop answers on in the component's zone, from the desktop profile's first gateway entry, and the empty string where… |
 | `status.profileSpec.package.valueMapping.platform.desktopUrlKey` | string |  | `DesktopURLKey` receives the in-cluster address of the API of the desktop in the component's own namespace, from the desktop profile's "api" entry: http://\<its… |
 | `status.profileSpec.package.valueMapping.platform.directorUrlKey` | string |  | `DirectorURLKey` receives the director's in-cluster URL. |
 | `status.profileSpec.package.valueMapping.platform.hostKey` | string |  | `HostKey` receives the host this component answers on in its zone: the host of its first gateway entry, as the operator routes it. |

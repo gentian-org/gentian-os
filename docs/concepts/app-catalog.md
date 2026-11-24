@@ -189,7 +189,7 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 |---|---|---|
 | **Plain** | `package.chart`, `valueMapping`, `extraValues`, `requires.services`, `provides`, `integrations`, `roles` ([app-customization.md §1.2](../guides/app-customization.md)), `secrets`, a gateway entry in `expose` with a tile | At install; who holds a role is given in the tenant, never by the profile |
 | **Needs an approval on the tenant** | `requires.privileges` (pod-security waivers, egress, cluster roles); an `expose` entry for the internet; `clientAuthorization: app` | Only once approved; until then the Component waits or the entry is an ordinary one ([security/design.md §2.14](../security/design.md)) |
-| **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching`; `valueMapping.platform` `directorUrlKey`, `usherUrlKey`, `custodianUrlKey`, `registrarUrlKey`, `storeUrlKey`, `desktopUrlKey` | Refused by the schema otherwise. The annotation `gentianos.io/kernel-egress-namespaces` is ignored below this tier |
+| **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching`; `valueMapping.platform` `directorUrlKey`, `usherUrlKey`, `custodianUrlKey`, `registrarUrlKey`, `storeUrlKey`, `desktopUrlKey`, `desktopHostKey` | Refused by the schema otherwise. The annotation `gentianos.io/kernel-egress-namespaces` is ignored below this tier |
 | **Needs a pinned install from a cluster-wide catalog** | `package.composition` (the bundle's own Composition, which also needs `trustTier: platform`), `identity.sidecar` | Otherwise the operator renders the app, or the Component is held |
 
 ---
@@ -531,8 +531,8 @@ assessment.
 
 **Trust tier: how far it was reviewed.** Required, no default (§4).
 `shared-app`, `forwardToken`, `requires.services.rights`, `.vouching`,
-`.logDestination`, `valueMapping.platform.storeUrlKey` and `.desktopUrlKey`
-need `platform`.
+`.logDestination`, `valueMapping.platform.storeUrlKey`, `.desktopUrlKey` and
+`.desktopHostKey` need `platform`.
 
 ### 13.3 Placement
 
@@ -1008,8 +1008,8 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
 - `launch` is required; `tile` needs a tile on an exposure or on
   `package.api`, and a tile means `launch: tile`;
 - `forwardToken`, `requires.services.rights`, `.vouching`, `.logDestination`,
-  `valueMapping.platform.storeUrlKey` and `.desktopUrlKey` require
-  `trustTier: platform`; so does `requires.services.llm` on a placed profile;
+  `valueMapping.platform.storeUrlKey`, `.desktopUrlKey` and `.desktopHostKey`
+  require `trustTier: platform`; so does `requires.services.llm` on a placed profile;
 - a service's exposures are all `surface: gateway`, its tiles ask
   `object: cluster`, and it declares no `clientAuthorization`;
 - `placement` and the default-placement booleans are for class `app`;
