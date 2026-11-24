@@ -587,7 +587,12 @@ _validate_requirement() {
             local tsig_var
             tsig_var="$(_env_var_for "${name}" tsig-secret)"
             [[ -n "${tsig_var}" && -n "${!tsig_var:-}" ]] || return 0
-            run_validator tsig-secret "${!tsig_var}"
+            # With the server and zone from the claim, when they are known: a
+            # provider without them (or a run before step 0 asked) checks the
+            # key's form alone.
+            run_validator tsig-secret "${!tsig_var}" \
+                "$(_dns_param nameserver || true)" "$(_dns_param zone || true)" \
+                "$(_dns_param tsigKeyName || true)" "$(_dns_param tsigAlgorithm || echo HMACSHA512)"
             ;;
         *)
             error "Requirement '${name}' declares validator '${vtype}', which the installer does not implement."

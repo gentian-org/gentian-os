@@ -17,6 +17,9 @@
 # implementations of the same validator will drift, so the shell one is kept
 # tiny rather than kept in sync.
 #
+# The single exception is tsig-secret's server check, which needs dig and
+# nsupdate and falls back to the key's form when they are absent; see there.
+#
 # Each validator:
 #   - returns 0 on success, non-zero on failure
 #   - prints an actionable message naming the endpoint and the failure class
@@ -521,21 +524,29 @@ validate_oidc_discovery() {
 }
 
 # =============================================================================
-# tsig-secret — the shape of a TSIG key
+# tsig-secret — a TSIG key, and what its nameserver lets it do
 #
-# validate_tsig_secret <secret>
+# validate_tsig_secret <secret> [nameserver zone keyname algorithm]
 #
-# Base64, and long enough to be an HMAC key: 16 bytes, the same floor the
-# custodian holds (tsigSecretShape in internal/custodian/validator.go). It
-# catches the key's name pasted where the key belongs and a secret cut short
-# in copying.
+# First its form: base64, and long enough to be an HMAC key -- 16 bytes, the
+# same floor the custodian holds (tsigSecretShape in
+# internal/custodian/validator.go). That catches the key's name pasted where
+# the key belongs and a secret cut short in copying.
 #
-# It does NOT ask the nameserver. A signed DNS query is beyond curl and
-# openssl, so a well-formed key the server refuses passes here and is reported
-# by cert-manager when the wildcard is ordered.
+# Then, given the server and zone, it asks the server the two things the
+# cluster will: a zone transfer (external-dns reads the zone that way) and a
+# dynamic update (cert-manager's challenge and every record external-dns
+# writes). The update adds a TXT record under the zone and removes it again.
+#
+# The one exception to the curl-or-openssl rule above, and an optional one: a
+# TSIG-signed DNS message is beyond both, and dig and nsupdate are what sign
+# one. The installer already reads DNS with dig where it finds it. Without them
+# the form is all that is checked, said once, and a key the server refuses is
+# reported by cert-manager when the wildcard is ordered.
 # =============================================================================
 validate_tsig_secret() {
-    local secret="$1" body pad bytes
+    local secret="$1" nameserver="${2:-}" zone="${3:-}" keyname="${4:-}" alg="${5:-HMACSHA512}"
+    local body pad bytes
     if [[ ! "${secret}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || (( ${#secret} % 4 != 0 )); then
         _v_fail "the TSIG secret" "not base64" \
             "a TSIG key is entered as the nameserver prints it, not as its name"
@@ -549,9 +560,97 @@ validate_tsig_secret() {
             "it decodes to ${bytes} bytes; a TSIG key is at least 16"
         return 1
     fi
-    return 0
+
+    [[ -n "${nameserver}" && -n "${zone}" && -n "${keyname}" ]] || return 0
+    # The probe runs from this machine, not from the cluster. A server that
+    # admits only the cluster's egress address refuses it while the cluster
+    # itself would be let in; GENTIAN_TSIG_PROBE=0 then skips it, and the
+    # failure message says so.
+    [[ "${GENTIAN_TSIG_PROBE:-1}" == "0" ]] && return 0
+    if ! command -v dig >/dev/null 2>&1 || ! command -v nsupdate >/dev/null 2>&1; then
+        warn "dig and nsupdate are not both installed: the TSIG key's form is checked, not"
+        warn "  whether ${nameserver} accepts it. A refusal shows when the wildcard is ordered."
+        return 0
+    fi
+    _validate_tsig_server "${secret}" "${nameserver}" "${zone%.}" "${keyname%.}" "${alg}"
 }
 
+# _validate_tsig_server <secret> <nameserver> <zone> <keyname> <algorithm>
+#
+# The key goes to dig and nsupdate in a key file, 0600, never on the command
+# line, where any user of the machine could read it from the process list.
+_validate_tsig_server() {
+    local secret="$1" nameserver="$2" zone="$3" keyname="$4" alg="$5"
+    local host port dir keyfile out probe endpoint rc=0
+
+    # The claim's form, which cert-manager reads: IP, IP:port, [v6] or [v6]:port.
+    host="${nameserver}"; port=53
+    if [[ "${host}" =~ ^\[(.*)\](:([0-9]+))?$ ]]; then
+        host="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[3]:-53}"
+    elif [[ "${host}" =~ ^([^:]+):([0-9]+)$ ]]; then
+        host="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[2]}"
+    fi
+    endpoint="${host} port ${port}, zone ${zone}, key ${keyname}"
+
+    # cert-manager's HMACSHA512 is BIND's hmac-sha512.
+    alg="$(printf '%s' "${alg}" | tr '[:upper:]' '[:lower:]')"
+    alg="${alg/hmacsha/hmac-sha}"
+
+    dir="$(mktemp -d)" || return 1
+    keyfile="${dir}/tsig.key"
+    ( umask 077; printf 'key "%s" {\n\talgorithm %s;\n\tsecret "%s";\n};\n' \
+        "${keyname}" "${alg}" "${secret}" > "${keyfile}" )
+
+    # Zone transfer. A refused or unsigned transfer ends without the closing
+    # SOA, so the answer is judged by the records and the comments together.
+    out="$(dig -k "${keyfile}" -p "${port}" +time="${GENTIAN_VALIDATE_TIMEOUT}" +tries=1 \
+        "@${host}" "${zone}" AXFR 2>&1)" || true
+    if [[ "${out}" == *"no servers could be reached"* || "${out}" == *"connection refused"* \
+        || "${out}" == *"timed out"* || "${out}" == *"couldn't get address"* ]]; then
+        _v_fail "${endpoint}" "nameserver unreachable" \
+            "no DNS answer over TCP within ${GENTIAN_VALIDATE_TIMEOUT}s; a zone transfer needs TCP ${port} from this machine and from the cluster"
+        rc=1
+    elif [[ "${out}" == *"tsig verify failure"* || "${out}" == *"BADKEY"* || "${out}" == *"BADSIG"* \
+        || "${out}" == *"BADTIME"* ]]; then
+        # A server that says why (BIND does).
+        _v_fail "${endpoint}" "TSIG key rejected" \
+            "the server does not know this key name, or the secret or algorithm differs from its own; BADTIME means this machine's clock is off"
+        rc=1
+    elif [[ "$(printf '%s\n' "${out}" | awk '$4=="SOA"' | wc -l)" -lt 2 ]]; then
+        # PowerDNS does not say why: an unknown key, a wrong secret and a zone
+        # that does not grant this key a transfer all come back as the same
+        # unsigned refusal. Its log names the cause.
+        _v_fail "${endpoint}" "zone transfer refused" \
+            "the key name is not on the server, its secret or algorithm differs, or the zone does not allow this key a transfer (PowerDNS: TSIG-ALLOW-AXFR on the zone, and the cluster's egress address in allow-axfr-ips); the server's log says which. external-dns reads the zone by AXFR and cannot update or remove a record without it"
+        rc=1
+    fi
+
+    # Dynamic update: add a TXT record and remove it again.
+    if (( rc == 0 )); then
+        probe="_gentian-probe-$$.${zone}."
+        out="$(printf 'server %s %s\nzone %s.\nupdate add %s 60 TXT "gentian install probe"\nsend\nupdate delete %s TXT\nsend\n' \
+            "${host}" "${port}" "${zone}" "${probe}" "${probe}" \
+            | nsupdate -k "${keyfile}" -t "${GENTIAN_VALIDATE_TIMEOUT}" 2>&1)" || rc=1
+        if (( rc != 0 )); then
+            if [[ "${out}" == *"REFUSED"* || "${out}" == *"NOTAUTH"* || "${out}" == *"NOTZONE"* ]]; then
+                _v_fail "${endpoint}" "dynamic update refused" \
+                    "cert-manager and external-dns write records by RFC 2136 update; on PowerDNS set dnsupdate=yes, and on the zone TSIG-ALLOW-DNSUPDATE to this key and ALLOW-DNSUPDATE-FROM to the cluster's egress address (server said: $(printf '%s' "${out}" | tr '\n' ' ' | cut -c1-160))"
+            else
+                _v_fail "${endpoint}" "dynamic update failed" \
+                    "$(printf '%s' "${out}" | tr '\n' ' ' | cut -c1-200)"
+            fi
+        else
+            info "  ${zone} at ${host}:${port}: zone transfer and dynamic update accepted for key ${keyname}"
+        fi
+    fi
+    rm -rf "${dir}"
+    if (( rc != 0 )); then
+        error "  The check ran from this machine. If the nameserver admits only the"
+        error "  cluster's egress address, that refusal is expected: export"
+        error "  GENTIAN_TSIG_PROBE=0 and re-run to check the key's form only."
+    fi
+    return "${rc}"
+}
 
 # =============================================================================
 # Dispatch
