@@ -33,9 +33,12 @@ for d in yaml.safe_load_all(sys.stdin):
 
 for provider in $(python3 -c "import yaml; print(' '.join(k for k,v in yaml.safe_load(open('kernel/platforms.yaml'))['dnsProviders'].items() if v.get('credential')))"); do
     name="$(python3 -c "import yaml,sys; print(yaml.safe_load(open('kernel/platforms.yaml'))['dnsProviders'][sys.argv[1]]['credential']['secretName'])" "${provider}")"
-    # Placeholder params: the guard requires a provider's params, not their values.
+    # Placeholder params. The guard requires a provider's params, and for a
+    # few of them a form (paramPatterns): an address satisfies the one param
+    # that has a form among the required ones, rfc2136's nameserver, and is
+    # as good a placeholder as any for the rest.
     params=()
-    while IFS= read -r p; do [[ -n "${p}" ]] && params+=(--set-string "dnsParams.${p}=x"); done < <(
+    while IFS= read -r p; do [[ -n "${p}" ]] && params+=(--set-string "dnsParams.${p}=192.0.2.1"); done < <(
         python3 -c "import yaml,sys; print('\n'.join(yaml.safe_load(open('kernel/platforms.yaml'))['dnsProviders'][sys.argv[1]].get('requiredParams',[])))" "${provider}")
 
     cm="$(helm template gentian-cert-manager kernel/manifests/cert-manager/chart -f kernel/platforms.yaml \

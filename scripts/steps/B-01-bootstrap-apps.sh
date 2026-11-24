@@ -191,6 +191,13 @@ _v5_render() {
         done
     } > "${dns_zones_values}"
 
+    # What the zone's host needs beyond its credential (the claim's
+    # certificates.dnsParams), the same pairs the cert-manager chart is
+    # rendered with: the solver and external-dns have to name one server.
+    local dns_args=() _dns_arg
+    while IFS= read -r _dns_arg; do dns_args+=("${_dns_arg}"); done \
+        < <(gentian_set_args_from_pairs dnsParams "${DNS_PARAMS:-}")
+
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -f "${tmp}/namespaces.yaml" -f "${tmp}/versions.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
         -f "${signing_values}" -f "${installer_values}" -f "${dns_zones_values}" \
@@ -231,7 +238,8 @@ _v5_render() {
         --set-string "storeNetworkPolicies=${STORE_NETWORK_POLICIES:-true}" \
         --set-string "kernelNetworkPolicies=${KERNEL_NETWORK_POLICIES:-true}" \
         --set-string "usageStatistics.enabled=$(gentian_usage_statistics_enabled)" \
-        --set-string "usageStatistics.url=${GENTIAN_USAGE_STATISTICS_URL:-}"
+        --set-string "usageStatistics.url=${GENTIAN_USAGE_STATISTICS_URL:-}" \
+        "${dns_args[@]+"${dns_args[@]}"}"
     local rc=$?
     rm -rf "${tmp}"
     return ${rc}

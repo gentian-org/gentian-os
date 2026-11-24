@@ -582,6 +582,13 @@ _validate_requirement() {
             # DNS validator, which resolved it from the zone it had to read.
             run_validator cloudflare-tunnel "${CF_TUNNEL_TOKEN}"
             ;;
+        tsig-secret)
+            # The field's own variable, whichever requirement declares it.
+            local tsig_var
+            tsig_var="$(_env_var_for "${name}" tsig-secret)"
+            [[ -n "${tsig_var}" && -n "${!tsig_var:-}" ]] || return 0
+            run_validator tsig-secret "${!tsig_var}"
+            ;;
         *)
             error "Requirement '${name}' declares validator '${vtype}', which the installer does not implement."
             error "  Bootstrap validators are curl/openssl only. A validator that needs more"

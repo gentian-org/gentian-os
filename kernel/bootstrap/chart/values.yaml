@@ -14,6 +14,10 @@ storageClass: ""
 dnsProvider: none
 dnsProviders: {}
 kernelDomain: ""
+# What the provider needs beyond its credential (the claim's
+# certificates.dnsParams): the nameserver and zone of a self-hosted zone, for
+# one. The keys a provider requires are in its entry in kernel/platforms.yaml.
+dnsParams: {}
 # Zones external-dns may write besides the kernel domain's (the claim's
 # certificates.dnsZones): the zones of tenants served on a domain of their
 # own. A list; B-01 writes it from the claim. Empty is the kernel domain alone.

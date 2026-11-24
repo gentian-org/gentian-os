@@ -520,6 +520,38 @@ validate_oidc_discovery() {
     esac
 }
 
+# =============================================================================
+# tsig-secret — the shape of a TSIG key
+#
+# validate_tsig_secret <secret>
+#
+# Base64, and long enough to be an HMAC key: 16 bytes, the same floor the
+# custodian holds (tsigSecretShape in internal/custodian/validator.go). It
+# catches the key's name pasted where the key belongs and a secret cut short
+# in copying.
+#
+# It does NOT ask the nameserver. A signed DNS query is beyond curl and
+# openssl, so a well-formed key the server refuses passes here and is reported
+# by cert-manager when the wildcard is ordered.
+# =============================================================================
+validate_tsig_secret() {
+    local secret="$1" body pad bytes
+    if [[ ! "${secret}" =~ ^[A-Za-z0-9+/]+={0,2}$ ]] || (( ${#secret} % 4 != 0 )); then
+        _v_fail "the TSIG secret" "not base64" \
+            "a TSIG key is entered as the nameserver prints it, not as its name"
+        return 1
+    fi
+    body="${secret%%=*}"
+    pad=$(( ${#secret} - ${#body} ))
+    bytes=$(( ${#secret} * 3 / 4 - pad ))
+    if (( bytes < 16 )); then
+        _v_fail "the TSIG secret" "too short" \
+            "it decodes to ${bytes} bytes; a TSIG key is at least 16"
+        return 1
+    fi
+    return 0
+}
+
 
 # =============================================================================
 # Dispatch
@@ -539,6 +571,7 @@ run_validator() {
         oidc-discovery) validate_oidc_discovery "$@" ;;
         cloudflare-dns) validate_cloudflare_dns "$@" ;;
         cloudflare-tunnel) validate_cloudflare_tunnel "$@" ;;
+        tsig-secret)    validate_tsig_secret "$@" ;;
         *)
             error "Unknown validator type '${type}'."
             error "  Bootstrap validators are curl/openssl only; anything else is phase: runtime."

@@ -258,4 +258,33 @@ check "liaison: a release's image pins that release's chart" \
 check "liaison: placed in no tenant" \
     "$(has "$(li)" 'placement:' && echo 0 || echo 1)"
 
+# A self-hosted zone (rfc2136: BIND, Knot, PowerDNS). external-dns was handed
+# the provider's name and nothing else -- no server, no zone, no key name, and
+# the key under a variable it does not read -- so it published nothing (#1329).
+# Everything it needs comes from the claim's dnsParams through the provider's
+# entry in kernel/platforms.yaml.
+rfc() { render true true true --set-string dnsProvider=rfc2136 --set-string dnsParams.tsigKeyName=gentian-key \
+    --set-string dnsParams.zone=example.org "$@" 2>&1; }
+rfc_out="$(rfc --set-string dnsParams.nameserver=192.0.2.10 --set 'dnsZones={tenant.example}')"
+for arg in '--rfc2136-host=192.0.2.10' '--rfc2136-port=53' '--rfc2136-zone=example.org' '--rfc2136-zone=tenant.example' \
+    '--rfc2136-tsig-keyname=gentian-key' '--rfc2136-tsig-secret-alg=hmac-sha512' '--rfc2136-axfr'; do
+    check "rfc2136: external-dns is started with ${arg}" \
+        "$(grep -qF -- "- \"${arg}\"" <<<"${rfc_out}" && echo 1 || echo 0)"
+done
+check "rfc2136: the key reaches external-dns under the variable it reads" \
+    "$(has "${rfc_out}" 'name: EXTERNAL_DNS_RFC2136_TSIG_SECRET$' && echo 1 || echo 0)"
+rfc_port="$(rfc --set-string 'dnsParams.nameserver=[2001:db8::1]:5353' --set-string dnsParams.tsigAlgorithm=HMACSHA256)"
+check "rfc2136: an address with a port is taken apart, and the algorithm respelled" \
+    "$(grep -qF -- '--rfc2136-host=2001:db8::1"' <<<"${rfc_port}" && grep -qF -- '--rfc2136-port=5353"' <<<"${rfc_port}" \
+        && grep -qF -- '--rfc2136-tsig-secret-alg=hmac-sha256"' <<<"${rfc_port}" && echo 1 || echo 0)"
+check "rfc2136: no zone named stops the render, naming it" \
+    "$(has "$(render true true true --set-string dnsProvider=rfc2136 --set-string dnsParams.tsigKeyName=k \
+        --set-string dnsParams.nameserver=192.0.2.10 2>&1)" 'requires dnsParams\.zone' && echo 1 || echo 0)"
+check "rfc2136: a nameserver by name stops the render (cert-manager takes an address)" \
+    "$(has "$(rfc --set-string dnsParams.nameserver=ns1.example.org)" 'dnsParams\.nameserver is "ns1\.example\.org", which does not match' && echo 1 || echo 0)"
+check "rfc2136: an algorithm only one of the two speaks stops the render" \
+    "$(has "$(rfc --set-string dnsParams.nameserver=192.0.2.10 --set-string dnsParams.tsigAlgorithm=HMACSHA384)" 'dnsParams\.tsigAlgorithm' && echo 1 || echo 0)"
+check "cloudflare: no provider arguments are added" \
+    "$(has "$(render true true true --set-string dnsProvider=cloudflare)" 'rfc2136' && echo 0 || echo 1)"
+
 finish
