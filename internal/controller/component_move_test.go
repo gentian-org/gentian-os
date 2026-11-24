@@ -101,13 +101,30 @@ func (h *digestHarness) setPin(digest, at, by string) {
 }
 
 // markReleaseReady makes the component's Release report ready, as
-// provider-helm does once the chart's workloads are up.
+// provider-helm does once it has deployed what the Release says: a new Helm
+// revision, its workloads up.
 func (h *digestHarness) markReleaseReady() {
+	h.t.Helper()
+	h.reportRelease(true)
+}
+
+// markReleaseStillReady is the Release right after a change was written to
+// it, before provider-helm has deployed it: its conditions still say the
+// revision before is ready, and the revision has not moved.
+func (h *digestHarness) markReleaseStillReady() {
+	h.t.Helper()
+	h.reportRelease(false)
+}
+
+func (h *digestHarness) reportRelease(deployed bool) {
 	h.t.Helper()
 	release := &unstructured.Unstructured{}
 	release.SetGroupVersionKind(helmReleaseGVK)
 	if err := h.c.Get(context.Background(), types.NamespacedName{Name: releaseName(h.comp)}, release); err != nil {
 		h.t.Fatal(err)
+	}
+	if deployed {
+		_ = unstructured.SetNestedField(release.Object, releaseRevision(release)+1, "status", "atProvider", "revision")
 	}
 	_ = unstructured.SetNestedSlice(release.Object, []interface{}{
 		map[string]interface{}{"type": "Ready", "status": "True"},
@@ -201,6 +218,39 @@ func TestAMoveExportsFirstThenRollsOutAndRecordsTheBuild(t *testing.T) {
 	}
 	if ready := componentReadyCondition(got); ready.Status != "True" {
 		t.Fatalf("condition = %+v", ready)
+	}
+}
+
+// A Release keeps reporting the revision before as ready until provider-helm
+// has deployed what was written to it. A move is not done on that report:
+// it waits for a later Helm revision, however ready the old pods look.
+func TestAMoveIsNotDoneBeforeHelmHasDeployedTheNewBuild(t *testing.T) {
+	newer := strings.ReplaceAll(wikiWithData, `version: "1.0.0"`, `version: "2.0.0"`)
+	h, oldDigest, newDigest := startMove(t, wikiWithData, newer)
+
+	got := h.reconcile()
+	h.endExport(got.Status.Rollout.Export, gentianov1alpha1.TenantExportPhaseReady)
+	got = h.reconcile()
+	if got.Status.Rollout.Phase != gentianov1alpha1.RolloutRolling || h.releasedVersion() != "2.0.0" {
+		t.Fatalf("after the export: phase %s, release %q", got.Status.Rollout.Phase, h.releasedVersion())
+	}
+
+	// The new build is written; the Release still says the old one is up.
+	h.markReleaseStillReady()
+	markRenderedReady(t, h.c, h.comp)
+	got = h.reconcile()
+	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutRolling || ro.Digest != oldDigest {
+		t.Fatalf("the move was taken as done before Helm deployed it: %+v", ro)
+	}
+	if msg := componentReadyCondition(got).Message; !strings.Contains(msg, "waiting for the chart to deploy") {
+		t.Fatalf("condition = %+v", componentReadyCondition(got))
+	}
+
+	// Helm deploys it: a later revision.
+	h.markReleaseReady()
+	got = h.reconcile()
+	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutDone || ro.Digest != newDigest {
+		t.Fatalf("after Helm deployed the new build: %+v", ro)
 	}
 }
 
