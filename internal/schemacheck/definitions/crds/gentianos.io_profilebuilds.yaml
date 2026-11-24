@@ -468,6 +468,7 @@ spec:
                               - agents
                               - outside
                               - partner
+                              - platform
                               type: string
                             caller:
                               description: Caller is who opens the calls.

@@ -1305,6 +1305,10 @@ func (s ComponentProfileSpec) Delivery() ComponentDelivery {
 // +kubebuilder:printcolumn:name="Tier",type=string,JSONPath=`.spec.trustTier`
 // +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
 // +kubebuilder:validation:XValidation:rule="!has(self.spec.requires) || !has(self.spec.requires.services) || !has(self.spec.requires.services.identity) || !has(self.spec.requires.services.identity.oidc) || !has(self.spec.requires.services.identity.oidc.audiences) || self.spec.requires.services.identity.oidc.audiences.all(a, a.startsWith(self.metadata.name + '-') && size(a) > size(self.metadata.name) + 1)",message="an audience of requires.services.identity.oidc is the profile's own: its name, a dash and a label"
+// A bridge's own client signs nobody in: it only exchanges the token the
+// chaperone hands the bridge, whose audience is the profile's name, so the
+// client has to be called that, confidential and without a redirect.
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.bridge) || !has(self.spec.requires) || !has(self.spec.requires.services) || !has(self.spec.requires.services.identity) || !has(self.spec.requires.services.identity.oidc) || (self.spec.requires.services.identity.oidc.clientId == self.metadata.name && has(self.spec.requires.services.identity.oidc.accessType) && self.spec.requires.services.identity.oidc.accessType == 'CONFIDENTIAL' && (!has(self.spec.requires.services.identity.oidc.redirectUris) || size(self.spec.requires.services.identity.oidc.redirectUris) == 0))",message="a bridge's requires.services.identity.oidc is a client that only exchanges the chaperone's token: clientId is the profile's name, accessType CONFIDENTIAL, no redirectUris"
 type ComponentProfile struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

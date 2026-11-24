@@ -509,7 +509,9 @@ no app-specific mail logic in the platform.
   makes none of its tokens a mailbox key. It is served where the cluster runs
   its own mail server and the tenant has mailboxes in a realm of its own; the
   kernel realm, and so the platform tenant, has no such scope, and there the
-  declaration grants nothing. The four checks and who makes each are in
+  declaration grants nothing. An agent bridge that declares it has no sign-in:
+  its client, named after the profile, only exchanges the token the chaperone
+  hands it for one call for a `mailbox` token. The four checks and who makes each are in
   [security/design.md](../security/design.md) §2.16.
 - **Rate limits and per-user quotas are not enforced.** Postfix runs with
   `smtpd_client_message_rate_limit = 0`, its default, which is no limit, and

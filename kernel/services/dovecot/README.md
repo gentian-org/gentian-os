@@ -23,7 +23,11 @@ kernel realm for the cluster admin, plus one per tenant using selfhosted mail â€
 because Dovecot's `oauth2` passdb takes a single introspection URL. The operator's
 mail reconciler writes them into the `dovecot-realm-auth` Secret as
 `<realm>.conf` + `<realm>.oauth2.ext`; `dovecot.conf` picks them up with
-`!include_try /etc/dovecot/realms/*.conf`.
+`!include_try /etc/dovecot/realms/*.conf`. The introspection address carries
+`gentian-dovecot` and its secret as its user and password: Dovecot 2.3 sends no
+other credential with an introspection, and Keycloak answers one without a
+credential 401. `scripts/tests/test-mailbox-exchange-lab.sh` signs a person in
+with a token against the pinned Keycloak and this image.
 
 Adding a realm restarts this Pod. Dovecot reads passdb blocks only at startup, so
 the operator stamps a hash of the realm set on the Pod template â€” unlike the

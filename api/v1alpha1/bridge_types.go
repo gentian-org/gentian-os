@@ -50,7 +50,7 @@ const (
 )
 
 // BridgeCallee is who answers the calls of a way.
-// +kubebuilder:validation:Enum=app;agents;outside;partner
+// +kubebuilder:validation:Enum=app;agents;outside;partner;platform
 type BridgeCallee string
 
 const (
@@ -62,6 +62,10 @@ const (
 	BridgeCalleeOutside BridgeCallee = "outside"
 	// BridgeCalleePartner is a service of one of the platform's partners.
 	BridgeCalleePartner BridgeCallee = "partner"
+	// BridgeCalleePlatform is a service the platform itself runs for the
+	// tenant's people, such as the mail server, reached as the person with
+	// what the component's own requirements provide (requires.services).
+	BridgeCalleePlatform BridgeCallee = "platform"
 )
 
 // BridgeProtocolName is the protocol the calls of a way are made in.

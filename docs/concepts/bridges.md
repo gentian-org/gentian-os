@@ -30,7 +30,7 @@ A bridge declares one or more ways. A way is one direction of calls:
 | Field | Values | Says |
 |---|---|---|
 | `caller` | `device`, `outside`, `agents`, `app` | who opens the calls: a program on a person's device, a service outside the platform, the tenant's agents, the app the bridge connects |
-| `callee` | `app`, `agents`, `outside`, `partner` | who answers them: the app the bridge connects, the tenant's agents (started by the call), a service outside the platform, a partner's service |
+| `callee` | `app`, `agents`, `outside`, `partner`, `platform` | who answers them: the app the bridge connects, the tenant's agents (started by the call), a service outside the platform, a partner's service, a service the platform runs for the tenant's people |
 | `protocol` | `mcp`, `webdav`, `caldav`, `carddav` | what the calls are made in; one protocol per way |
 | `speaksAs` | `person`, `tenant` | whom the calls are made for; `tenant` only for what every member of the tenant may see |
 | `paths` | path prefixes | where a caller from outside the platform reaches the app; present exactly for a way from `device` or `outside` to `app` |
@@ -253,6 +253,13 @@ spec:
 - **Callee `partner`.** The bridge names the partner's realm in
   `requires.services.partners.call`, and its token is exchanged for an
   assertion towards the partner.
+- **Callee `platform`.** A service the platform runs for the tenant's people,
+  such as the mail server, reached with what the bridge's own
+  `requires.services` provide. A bridge that opens a person's mailbox declares
+  `requires.services.mail.imap.tokenSignIn` beside a client of its own, named
+  after the profile, confidential and without a redirect: that client only
+  exchanges the token the bridge is handed for one with the scope `mailbox`,
+  for one call ([security/design.md](../security/design.md) §2.16).
 - **Add-ons.** With `addonsValuesPath`, the bridge is told at that chart value
   the IDs of the add-ons selected into the app it connects, and is rendered
   again when they change.

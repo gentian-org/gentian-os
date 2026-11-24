@@ -299,6 +299,7 @@ func TestTheMailboxScopeIsGivenToDeclaringAppsOnly(t *testing.T) {
 		want    []interface{}
 	}{
 		{"app-mailbox-token", append(append([]interface{}{}, keycloaksOwn...), mailboxScopeName)},
+		{"app-mailbox-token-bridge", append(append([]interface{}{}, keycloaksOwn...), mailboxScopeName)},
 		{"app-mailbox-token-withdrawn", keycloaksOwn},
 		{"app-mailbox-token-not-served", nil},
 		{"app-mailbox-token-undeclared", nil},
@@ -339,13 +340,54 @@ func TestTheMailboxScopeIsGivenToDeclaringAppsOnly(t *testing.T) {
 	}
 }
 
-// The mail server's check of a realm, whole. The scope line is the one thing
-// added; the user is still the token's email claim, and the answer still has
-// to say active.
+// An agent bridge reaches a mailbox only by exchange: its client turns the
+// token the chaperone hands it into one with "mailbox", and signs nobody in.
+// An app's client never exchanges.
+func TestABridgesClientOnlyExchanges(t *testing.T) {
+	for _, c := range []struct {
+		fixture  string
+		exchange bool
+	}{
+		{"app-mailbox-token-bridge", true},
+		{"app-mailbox-token", false},
+		{"app-default", false},
+	} {
+		clients := ofKind(renderedObjects(t, c.fixture), "Client")
+		if len(clients) != 1 {
+			t.Fatalf("%s: %d clients rendered, want 1", c.fixture, len(clients))
+		}
+		fp, _, _ := unstructured.NestedMap(clients[0], "spec", "forProvider")
+		exchange, _ := fp["standardTokenExchangeEnabled"].(bool)
+		if exchange != c.exchange {
+			t.Errorf("%s: standardTokenExchangeEnabled %v, want %v", c.fixture, exchange, c.exchange)
+		}
+		if !c.exchange {
+			continue
+		}
+		for _, flow := range []string{"standardFlowEnabled", "directAccessGrantsEnabled", "serviceAccountsEnabled", "fullScopeAllowed"} {
+			if on, _ := fp[flow].(bool); on || fp[flow] == nil {
+				t.Errorf("%s: %s is %v, want false", c.fixture, flow, fp[flow])
+			}
+		}
+		for _, field := range []string{"validRedirectUris", "validPostLogoutRedirectUris", "webOrigins"} {
+			if _, ok := fp[field]; ok {
+				t.Errorf("%s: a bridge's client has %s", c.fixture, field)
+			}
+		}
+		if fp["clientId"] != "demo-app" || fp["accessType"] != "CONFIDENTIAL" {
+			t.Errorf("%s: client %v (%v), want the profile's name, confidential", c.fixture, fp["clientId"], fp["accessType"])
+		}
+	}
+}
+
+// The mail server's check of a realm, whole. The user is the token's email
+// claim, the answer has to say active and the scope mailbox, and the
+// introspection is asked as gentian-dovecot: in the address, which is the
+// only credential Dovecot 2.3 sends with one.
 func TestDovecotRequiresTheMailboxScope(t *testing.T) {
 	conf, ext := dovecotRealmAuthFiles("acme", "https://id.k.example/", "s3cret")
 	wantExt := `introspection_mode = post
-introspection_url = https://id.k.example/realms/acme/protocol/openid-connect/token/introspect
+introspection_url = https://gentian-dovecot:s3cret@id.k.example/realms/acme/protocol/openid-connect/token/introspect
 client_id = gentian-dovecot
 client_secret = s3cret
 username_attribute = email
