@@ -28,11 +28,11 @@ func TestTSIGSecretShape(t *testing.T) {
 		t.Fatalf("a 64-byte key was refused: %v", err)
 	}
 	for name, secret := range map[string]string{
-		"empty":         "",
-		"a key name":    "gentian-key.",
-		"cut short":     base64.StdEncoding.EncodeToString([]byte("short")),
-		"lost padding":  strings.TrimRight(base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 17))), "="),
-		"with a space":  base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))) + " ",
+		"empty":        "",
+		"a key name":   "gentian-key.",
+		"cut short":    base64.StdEncoding.EncodeToString([]byte("short")),
+		"lost padding": strings.TrimRight(base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 17))), "="),
+		"with a space": base64.StdEncoding.EncodeToString([]byte(strings.Repeat("k", 32))) + " ",
 	} {
 		if err := check(secret); err == nil {
 			t.Errorf("%s: accepted %q", name, secret)
