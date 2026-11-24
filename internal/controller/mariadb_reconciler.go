@@ -35,12 +35,13 @@ const (
 // SQL Jobs. It looks up which apps require MariaDB via ComponentProfile ServiceRequirements,
 // then runs a setup Job for each (CREATE DATABASE IF NOT EXISTS + CREATE USER +
 // the grants of backup.MariaDBGrants). Completion of all setup Jobs sets MariaDBReady=True.
-func (r *TenantReconciler) ensureMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	return r.reconcileJobWaitRequirement(ctx, tenant, jobWaitRequirement{
+func (r *TenantReconciler) ensureMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) (ctrl.Result, error) {
+	return r.reconcileJobWaitRequirement(ctx, tenant, waits, jobWaitRequirement{
 		conditionType: conditionMariaDBReady,
 		emptyReason:   "NoMariaDBRequired",
 		readyReason:   "Provisioned",
 		jobNameForApp: mariadbSetupJobName,
+		waitsFor:      "its MariaDB database",
 	}, r.collectMariaDBApps, r.ensureMariaDBSetupJob)
 }
 

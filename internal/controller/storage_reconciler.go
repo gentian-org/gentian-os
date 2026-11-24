@@ -36,7 +36,7 @@ const (
 
 // ensureStorage provisions per-app S3 buckets declared via ComponentProfile
 // ServiceRequirements.Storage.S3.
-func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) (ctrl.Result, error) {
 	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -57,6 +57,7 @@ func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1
 		}
 		if !done {
 			pendingJobs = append(pendingJobs, s3BucketJobName(tenant.Name, appName))
+			waits.add(appName, "its bucket")
 			allDone = false
 		}
 	}

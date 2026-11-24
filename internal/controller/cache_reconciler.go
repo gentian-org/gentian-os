@@ -51,7 +51,7 @@ const (
 // ensureCache provisions per-app ACL users on the shared cache (via a Job) and per-tenant
 // Memcached instances (via Deployment + Service named "memcached"). CacheReady is set
 // to True once all Jobs complete and Memcached reports ready replicas.
-func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) (ctrl.Result, error) {
 	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -75,6 +75,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 		if !done {
 			allDone = false
 			pendingJobs = append(pendingJobs, cacheACLJobName(tenant.Name, appName))
+			waits.add(appName, "its cache user")
 		}
 	}
 
@@ -86,6 +87,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 		}
 		if !done {
 			allDone = false
+			waits.addAll(memcachedApps, "the tenant's Memcached")
 		}
 	}
 

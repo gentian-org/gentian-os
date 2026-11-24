@@ -45,6 +45,14 @@ const (
 // It waits for Crossplane-owned Jobs in the kernel namespace that call the
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
 func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	return r.ensureIdentityFor(ctx, tenant, nil)
+}
+
+// ensureIdentityFor is ensureIdentity recording in waits the apps whose
+// client is not made yet, instead of ending at the first of them: their
+// clients hold back those apps only, and the realm's mail is set up while
+// they wait. With nil waits it ends at a pending client, as ensureIdentity.
+func (r *TenantReconciler) ensureIdentityFor(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) (ctrl.Result, error) {
 	realmName := keycloakRealmName(tenant)
 	if r.adoptsKernelRealm(tenant) {
 		return r.ensureAdoptedRealmIdentity(ctx, tenant)
@@ -119,6 +127,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !done {
 			allDone = false
 			pendingClientJobs = append(pendingClientJobs, clientJobName(tenant.Name, cfg.profileName))
+			waits.add(cfg.profileName, "its sign-in client")
 		}
 	}
 
@@ -130,13 +139,17 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !done {
 			allDone = false
 			pendingClientJobs = append(pendingClientJobs, clientJobName(tenant.Name, cfg.profileName))
+			waits.add(cfg.profileName, "its sign-in client")
 		}
 	}
 
-	if !allDone {
+	clientsPending := func() (ctrl.Result, error) {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 			"ProvisioningClients", "Waiting for OIDC/SAML client Jobs to complete")
 		return r.requeueForPendingJob(ctx, tenant.Name, pendingClientJobs...), nil
+	}
+	if !allDone && waits == nil {
+		return clientsPending()
 	}
 
 	if r.KernelRealm != "" {
@@ -156,6 +169,10 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"ProvisioningTenantSMTP", "Waiting for tenant realm SMTP Job to complete")
 			return r.requeueForPendingJob(ctx, tenant.Name, tenantSMTPJobName(tenant.Name)), nil
 		}
+	}
+
+	if !allDone {
+		return clientsPending()
 	}
 
 	if r.reportRefusedOIDCClients(ctx, tenant, refused) {
