@@ -89,7 +89,10 @@ type pending struct {
 	client     Client
 	verifier   string
 	redirect   string
-	at         time.Time
+	// desktop: the sign-in was started in the desktop, and the person goes
+	// back there.
+	desktop bool
+	at      time.Time
 }
 
 // pendingFor is how long a person has to come back from the service.
@@ -160,8 +163,9 @@ func (s *Service) Connected(ctx context.Context, person, connection string) (boo
 }
 
 // Begin starts a sign-in of person at connection and answers where to send
-// them. redirect is the liaison's own address a sign-in comes back to.
-func (s *Service) Begin(ctx context.Context, person, name, redirect string) (string, error) {
+// them. redirect is the liaison's own address a sign-in comes back to;
+// desktop says the person started it in the desktop and goes back there.
+func (s *Service) Begin(ctx context.Context, person, name, redirect string, desktop bool) (string, error) {
 	connection, ok := s.connection(name)
 	if !ok {
 		return "", fmt.Errorf("no installed agent bridge is named %s, or it names no sign-in", name)
@@ -183,35 +187,49 @@ func (s *Service) Begin(ctx context.Context, person, name, redirect string) (str
 		}
 	}
 	s.waiting[state] = pending{person: person, connection: connection, server: server, client: client,
-		verifier: verifier, redirect: redirect, at: now}
+		verifier: verifier, redirect: redirect, desktop: desktop, at: now}
 	s.mu.Unlock()
 	return AuthorizeURL(server, client, redirect, state, verifier, connection.URL, connection.Scopes), nil
 }
 
 // Complete finishes the sign-in state names, for the person who came back
 // with it. personToken is that person's own token: with it the confidant
-// keeps the first entry for them.
-func (s *Service) Complete(ctx context.Context, person, personToken, state, code string) (string, error) {
-	s.mu.Lock()
-	p, ok := s.waiting[state]
-	delete(s.waiting, state)
-	s.mu.Unlock()
+// keeps the first entry for them. desktop says where the person goes back
+// to, and is known whenever the sign-in was started here by this person.
+func (s *Service) Complete(ctx context.Context, person, personToken, state, code string) (name string, desktop bool, err error) {
+	p, ok := s.take1(state)
 	if !ok || s.Now().Sub(p.at) > pendingFor || code == "" {
-		return "", errors.New("this sign-in was not started here, or took too long: start it again")
+		return "", false, errors.New("this sign-in was not started here, or took too long: start it again")
 	}
 	if p.person != person {
-		return "", errors.New("this sign-in was started by somebody else")
+		return "", false, errors.New("this sign-in was started by somebody else")
 	}
 	grant, err := s.OAuth.Exchange(ctx, p.server.Token, p.client, code, p.verifier, p.redirect, p.connection.URL)
 	if err != nil {
-		return "", err
+		return "", p.desktop, err
 	}
 	entry := kept{Client: p.client, Token: p.server.Token, Revocation: p.server.Revocation, Resource: p.connection.URL}
 	s.take(&entry, grant)
 	if err := s.keep(ctx, person, p.connection.Name, entry, personToken); err != nil {
-		return "", err
+		return "", p.desktop, err
 	}
-	return p.connection.Name, nil
+	return p.connection.Name, p.desktop, nil
+}
+
+// Forget drops the sign-in state names, which the service turned down, and
+// says whether this person started it in the desktop.
+func (s *Service) Forget(person, state string) (desktop bool) {
+	p, ok := s.take1(state)
+	return ok && p.person == person && p.desktop
+}
+
+// take1 removes and returns the sign-in state names.
+func (s *Service) take1(state string) (pending, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.waiting[state]
+	delete(s.waiting, state)
+	return p, ok
 }
 
 // take puts what a token endpoint answered into entry. A service that hands

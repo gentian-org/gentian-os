@@ -44,6 +44,12 @@ spec:
               value: {{ .Values.auth.issuer | quote }}
             - name: OIDC_OWN_AUDIENCE
               value: {{ .Values.auth.ownAudience | quote }}
+            - name: OIDC_EDGE_AUDIENCE
+              value: {{ .Values.auth.edgeAudience | quote }}
+            - name: LIAISON_HOST
+              value: {{ .Values.host | quote }}
+            - name: DESKTOP_HOST
+              value: {{ .Values.desktopHost | quote }}
             - name: CLIENT_NAME
               value: {{ .Values.clientName | quote }}
             - name: CHAPERONE_KEY

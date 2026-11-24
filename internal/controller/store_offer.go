@@ -266,6 +266,13 @@ func (r *ComponentReconciler) placementValues(ctx context.Context, comp *gentian
 		}
 		setPath(out, m.DesktopURLKey, url)
 	}
+	if m.DesktopHostKey != "" {
+		host, err := r.desktopHost(ctx, profile, zone.zoneNames)
+		if err != nil {
+			return nil, fmt.Errorf("read where the desktop answers: %w", err)
+		}
+		setPath(out, m.DesktopHostKey, host)
+	}
 	return out, nil
 }
 

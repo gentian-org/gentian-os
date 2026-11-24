@@ -65,6 +65,15 @@ func run(log *slog.Logger) error {
 
 	service := liaison.NewService(liaison.NewOAuth(nil), confidant, name)
 	server := liaison.NewServer(service, auth.NewOIDC(issuer, audience, nil), chaperoneKey, log)
+	// The desktop calls with the person's own token, made out to the edge
+	// audience, and sends the person to the liaison's own host and back.
+	if edge := os.Getenv("OIDC_EDGE_AUDIENCE"); edge != "" {
+		server.Edge = auth.NewOIDC(issuer, edge, nil)
+	}
+	server.Host, server.DesktopHost = os.Getenv("LIAISON_HOST"), os.Getenv("DESKTOP_HOST")
+	if server.Edge == nil || server.Host == "" || server.DesktopHost == "" {
+		log.Warn("OIDC_EDGE_AUDIENCE, LIAISON_HOST or DESKTOP_HOST is not set: connections are managed on the liaison's own page only")
+	}
 
 	srv := &http.Server{Addr: address, Handler: server, ReadHeaderTimeout: 10 * time.Second}
 	done := make(chan error, 1)

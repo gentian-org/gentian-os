@@ -3552,6 +3552,19 @@ spec:
                               the order is the preference: a tenant listing de then en is saying it is
                               German-speaking and also serves English.
                             type: string
+                          desktopHostKey:
+                            description: |-
+                              DesktopHostKey receives the host the desktop answers on in the
+                              component's zone, from the desktop profile's first gateway entry, and
+                              the empty string where there is no desktop. A component sends a person
+                              back there after something it started for them in the desktop, at an
+                              address the platform states rather than one a request names.
+
+                              Like the URL keys above it is more than a fact: naming it is also what
+                              lets the desktop's API reach the component, in-cluster, on the ports of
+                              the component's own gateway entries, so the desktop can call it with
+                              the person's own token. Only a platform-trust profile may name it.
+                            type: string
                           desktopUrlKey:
                             description: |-
                               DesktopURLKey receives the in-cluster address of the API of the
@@ -5677,6 +5690,12 @@ spec:
               rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
                 || !has(self.__package__.valueMapping.platform.desktopUrlKey) || self.__package__.valueMapping.platform.desktopUrlKey.size()
                 == 0 || self.trustTier == ''platform'''
+            - message: 'desktopHostKey requires trustTier platform: naming it opens
+                the desktop''s API a way to the component'
+              rule: '!has(self.__package__.valueMapping) || !has(self.__package__.valueMapping.platform)
+                || !has(self.__package__.valueMapping.platform.desktopHostKey) ||
+                self.__package__.valueMapping.platform.desktopHostKey.size() == 0
+                || self.trustTier == ''platform'''
             - message: 'requires.services.identity.sidecar.database needs requires.services.database:
                 the database the handler is given is the app''s own'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.identity)

@@ -1273,6 +1273,17 @@ It keeps a person's sign-ins at services outside the cluster:
   liaison registers as a public client at the service (RFC 7591), runs the
   authorization code flow with PKCE, and keeps what the service hands back
   with the confidant.
+- A person manages the same connections in the desktop's account panel,
+  under Connections. The desktop's API calls the liaison in-cluster with the
+  person's own token, the one the registrar and the usher accept
+  (audience `gentian-director`), to list, start and end them; the page and a
+  sign-in's return take only the token the front door hands the liaison. A
+  sign-in started in the desktop comes back to the liaison's own host and
+  sends the person on to `https://<desktop's host>/?account=connections`.
+  Both hosts are the platform's to state (`valueMapping.platform.hostKey`,
+  `.desktopHostKey`), never a request's; naming `desktopHostKey` is also
+  what lets the desktop's pods reach the liaison's
+  (`internal/controller/desktop_reach.go`).
 - A component that was granted the contract `connections` tells the liaison
   which services there are and asks it for a short credential for one call.
   The lasting credential never leaves the liaison.
@@ -1349,7 +1360,7 @@ list of relations and the rules behind them are in
 | **Custodian** | Vault role that writes and cannot read | Overwrite any secret the platform stores. | It cannot read or delete a secret, so the damage is loud: things stop working. No git, no Keycloak, and it cannot change any object that decides configuration. |
 | **Registrar** | One Keycloak client secret per realm | In every realm, the kernel realm included: create, disable or delete any account, set any password, remove any second factor. It can ask the operator to give any position of a tenant to any account. It can also rewrite its own record. And it can write a `MailboxRemoval` for any address and either answer: together with deleting the account, which it can do too, that has the operator archive or delete that person's mailbox. | No git, no vault. In the cluster it can write one kind, `MailboxRemoval`, and no other object. The operator does not act on such a record because it says so: the address must be in the tenant's mail domain, no person of the realm may still hold it, and the mail server must hold no password for it. No client in Keycloak's master realm; its client holds `view-users`, `query-users`, `query-groups` and `manage-users`, so it cannot change a realm's settings (the password policy among them), cannot manage clients or identity providers and cannot impersonate. Keycloak records each change it makes. |
 | **Usher** | Identity for reads at the operator's listener | Read every tenant's live state and show it to anybody; show or hide tiles. | It cannot issue a command, download a backup, read a secret, or change anything. A tile is not access: the bouncer decides each request. |
-| **Bouncer** | Each realm's token-exchange client secret | Let any signed-in person into any address behind it, or refuse everybody. It sees the token of every session that passes and can use each one, while it is valid, at the director, the custodian, the registrar and the usher; with the exchange secret it can also obtain, for any session it sees, a token valid at any app of that realm. | A token it sees is good for five minutes (the lifetime Keycloak gives it in a tenant realm). The exchange client can sign nobody in and gets no token of its own. |
+| **Bouncer** | Each realm's token-exchange client secret | Let any signed-in person into any address behind it, or refuse everybody. It sees the token of every session that passes and can use each one, while it is valid, at the director, the custodian, the registrar, the usher and a tenant's liaison (there to see, start and end the person's connections, never to obtain a credential of theirs); with the exchange secret it can also obtain, for any session it sees, a token valid at any app of that realm. | A token it sees is good for five minutes (the lifetime Keycloak gives it in a tenant realm). The exchange client can sign nobody in and gets no token of its own. |
 | **Arbiter** | The app instance's key | Read and rewrite every component's authorization store, so it can grant anybody anything inside an app that keeps its rights there. | Nothing of the platform's: the kernel's OpenFGA is another instance with another key, and the arbiter holds no token, no git credential and no vault role. The front door still decides who reaches an app at all. |
 | **Concierge** | None | Show a false sign-in page on the cluster's bare domain, and alter the brand files other pages load. | It holds no credential and no session passes through it. |
 
