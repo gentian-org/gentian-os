@@ -63,7 +63,7 @@ func declaresMailboxTokenSignIn(profile *gentianov1alpha1.ComponentProfile) bool
 // realm composes neither gentian-dovecot nor the scope there -- the realm is
 // not its to write -- so there is nothing to give its apps.
 func tenantHasTokenMailboxes(tenant *gentianov1alpha1.Tenant, clusterMailMode, kernelRealm string) bool {
-	if clusterMailMode != mailServiceModeInternal {
+	if canonicalMailServiceMode(clusterMailMode) != mailServiceModeInternal {
 		return false
 	}
 	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" && tenant.Spec.Mail.Mode != gentianov1alpha1.MailModeSelfhosted {

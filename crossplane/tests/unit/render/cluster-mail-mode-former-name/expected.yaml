@@ -135,7 +135,7 @@ spec:
         mail.egressHost: ""
         mail.imapHost: ""
         mail.imapPort: ""
-        mail.serviceMode: internal
+        mail.serviceMode: system
         mail.smtpHost: ""
         mainAddress.mailTenant: ""
         mainAddress.tenant: ""
