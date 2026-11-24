@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -552,6 +553,15 @@ func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1a
 	if content && metadataHolds(existing, obj) {
 		return false, nil
 	}
+	// A release whose chart or values change is deployed by Helm as a new
+	// revision, later; until then its conditions still say how the revision
+	// before went. The one it holds now is noted, and it is not ready until
+	// a later one has been deployed (renderedReady). A release Helm has not
+	// deployed yet has no revision to wait past.
+	var awaited int64
+	if !content && isRelease(obj) && releaseDeploysChange(existing, obj) {
+		awaited = releaseRevision(existing)
+	}
 	patch := client.MergeFrom(existing.DeepCopy())
 	if !content {
 		for k, v := range obj.Object {
@@ -577,11 +587,66 @@ func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1a
 	for k, v := range obj.GetAnnotations() {
 		existingAnnotations[k] = v
 	}
+	if awaited > 0 {
+		existingAnnotations[releaseRevisionBeforeAnnotation] = strconv.FormatInt(awaited, 10)
+	}
 	existing.SetAnnotations(existingAnnotations)
 	if ownedHere(comp, obj) {
 		existing.SetOwnerReferences(obj.GetOwnerReferences())
 	}
 	return !content, r.Patch(ctx, existing, patch)
+}
+
+// releaseRevisionBeforeAnnotation is, on a Release, the Helm revision it had
+// deployed when the operator last changed what it deploys. provider-helm's
+// conditions carry no observed generation: right after the change they
+// still report the revision before as ready.
+const releaseRevisionBeforeAnnotation = "gentianos.io/helm-revision-before"
+
+// releaseDeployedFields are what provider-helm deploys a release from: a
+// change to any of them is a Helm upgrade, a new revision. The chart is
+// compared one way, as the provider fills in beside what is rendered there;
+// the values are the render's own and compared both ways, so a value the
+// render stopped saying counts.
+var (
+	releaseChartPath  = []string{"spec", "forProvider", "chart"}
+	releaseValuePaths = [][]string{
+		{"spec", "forProvider", "values"},
+		{"spec", "forProvider", "set"},
+		{"spec", "forProvider", "valuesFrom"},
+	}
+)
+
+// releaseDeploysChange reports whether writing desired over live changes
+// what Helm deploys.
+func releaseDeploysChange(live, desired *unstructured.Unstructured) bool {
+	have, _, _ := unstructured.NestedFieldNoCopy(live.Object, releaseChartPath...)
+	want, _, _ := unstructured.NestedFieldNoCopy(desired.Object, releaseChartPath...)
+	if !covers(have, want) {
+		return true
+	}
+	for _, path := range releaseValuePaths {
+		have, _, _ := unstructured.NestedFieldNoCopy(live.Object, path...)
+		want, _, _ := unstructured.NestedFieldNoCopy(desired.Object, path...)
+		if !covers(have, want) || !covers(want, have) {
+			return true
+		}
+	}
+	return false
+}
+
+// releaseAwaitsRevision says what a release still waits for when the
+// change last written to it has not been deployed: no revision after the
+// one it held then. Empty when nothing is awaited.
+func releaseAwaitsRevision(release *unstructured.Unstructured) string {
+	before, err := strconv.ParseInt(release.GetAnnotations()[releaseRevisionBeforeAnnotation], 10, 64)
+	if err != nil {
+		return ""
+	}
+	if releaseRevision(release) > before {
+		return ""
+	}
+	return fmt.Sprintf("waiting for the chart to deploy what was written (Helm revision %d is the one before it)", before)
 }
 
 func isJob(obj *unstructured.Unstructured) bool {
@@ -756,6 +821,11 @@ func (r *ComponentReconciler) renderedReady(ctx context.Context, objs []*unstruc
 		}
 		if live == nil {
 			return false, fmt.Sprintf("waiting for %s %s", obj.GetKind(), obj.GetName()), nil
+		}
+		if isRelease(obj) {
+			if waiting := releaseAwaitsRevision(live); waiting != "" {
+				return false, waiting, nil
+			}
 		}
 		if crossplaneObjectReady(live) {
 			continue

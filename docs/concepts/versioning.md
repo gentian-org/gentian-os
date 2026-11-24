@@ -236,7 +236,10 @@ and the operator carries the move out (`internal/controller/component_move.go`):
    exported: its move starts at step 3.
 3. **Materialize** the new build beside the old one and repoint the
    `Component`.
-4. **Verify**: wait for the release, run the profile's
+4. **Verify**: wait for the release to deploy the new build (a later Helm
+   revision than the one it ran: provider-helm's conditions still report the
+   revision before as ready right after the change) and for the app's
+   workloads to roll out to it, then run the profile's
    `spec.backup.restore.verify` command in the app's pod. A build that does
    not come up within fifteen minutes, or does not verify, is rolled back:
    the instance is rendered from the build it ran, which the cluster still
