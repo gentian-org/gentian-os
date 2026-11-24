@@ -30,7 +30,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/gentian-org/gentian-os/api/bundle"
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -1894,6 +1896,31 @@ func appClaimProfile(claim *unstructured.Unstructured) string {
 func (r *TenantExportReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.TenantExport{}).
+		// Woken by its own capture Jobs, wherever they run (the database dumps
+		// run beside the database, not in the tenant's namespace). A unit is
+		// recorded done only when a pass sees its Job complete; waiting for the
+		// next requeue lost the completion to the Job's removal on a busy
+		// operator, and the Job was run again with the app still paused.
+		Watches(&batchv1.Job{}, handler.EnqueueRequestsFromMapFunc(r.exportOfJob)).
 		Named("tenantexport").
 		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.TenantExport{}, r))
+}
+
+// exportOfJob is the TenantExport a capture Job works for, by its labels:
+// the export's name and the tenant whose namespace holds it. Nothing for
+// any other Job, a restore's among them.
+func (r *TenantExportReconciler) exportOfJob(ctx context.Context, obj client.Object) []reconcile.Request {
+	labels := obj.GetLabels()
+	export, tenantName := labels[backup.ExportLabel], labels[meta.TenantLabel]
+	if export == "" || tenantName == "" || labels[meta.ManagedByLabel] != meta.ManagedByValue {
+		return nil
+	}
+	if kind := labels[backup.RunKindLabel]; kind != "" && kind != backup.RunKindExport {
+		return nil
+	}
+	ns, err := tenantNamespaceByName(ctx, r.Client, tenantName)
+	if err != nil || ns == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: export, Namespace: ns}}}
 }
