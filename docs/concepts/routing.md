@@ -33,6 +33,12 @@ The control model is:
 - **Envoy policy CRDs**: security, traffic, and header policy attached to
   Gateway/HTTPRoute resources
 
+Two more fleets of Envoy Gateway sit in the same namespace, each of a class of
+its own: the `inside` Gateway (`gentian-envoy-inside`, a cluster-internal
+address only) for inside entries (§7), and the `outgoing-<n>` Gateways
+(`gentian-envoy-out`) for a tenant's connections to hosts outside. The whole
+edge, both directions, is mapped in [edge.md](edge.md).
+
 ---
 
 ## 2. Resource Topology
@@ -1054,9 +1060,10 @@ allowed by policy resources.
 ## 7. App Catalog Contract
 
 A profile declares each entry point under `expose[]` (`ExposureSpec`): a
-name, a `surface` (`gateway`, behind the zone's session, or `perimeter`, with
-none), a mandatory `authMode` (`oidc` on the gateway; `none` or `app` on the
-perimeter), the host label (`subDomain`, else the
+name, a `surface` (`gateway`, behind the zone's session; `perimeter`, with
+none; or `inside`, with none and reachable from the cluster's own pods
+alone), a mandatory `authMode` (`oidc`, or `bearer` for a token entry, on the
+gateway; `none` or `app` on the perimeter; `app` inside), the host label (`subDomain`, else the
 component's name; `apex` for the bare domain, §5), `paths` and `denyPaths`,
 and the backend Service and port. It has no field for a timeout, a body size
 or a rate: those are the platform's.
@@ -1108,7 +1115,7 @@ read lists it as `requested` with the earlier approval beside it, until it
 is approved as what it is now. An approval request may name the kind the
 approver was shown (`"kind"` in the body, which the command line and the
 console send); the director refuses it with `409` if the entry declares
-another. Before the third kind is approved the entry is served like any
+another. Before a `signInAppAuthorization` entry is approved it is served like any
 other behind sign-in, and the Component's `ClientAuthorization` condition
 says that the app's own calls will fail until then.
 
@@ -1147,7 +1154,10 @@ that Service's address (§10). A component reaches the host only once it was
 granted the host as egress: its network rule then opens that fleet's pods,
 and the DMZ proxy admits that fleet and not the edge. An inside entry is
 never on a bare name and has no alias. The approval read marks it
-`insideOnly`, with `publicAddress` false.
+`insideOnly`, with `publicAddress` false. The `inside` Gateway exists while
+at least one inside entry is approved, with one listener per inside host;
+its class is installed by installer step A-05
+([install-steps.md](../reference/install-steps.md)).
 
 **An alias: a second address directly under the cluster's domain.** A
 published entry answers at `<label>.<the tenant's domain>`. The cluster's

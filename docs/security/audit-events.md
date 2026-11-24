@@ -95,6 +95,7 @@ is empty rather than writing it empty. `kind` is one of `decision`, `change`,
 | Keycloak | events in its database and, as JSON, on stdout: `KC_LOG_CONSOLE_OUTPUT=json`, the jboss-logging listener's success level at `info`, except a successful `CLIENT_LOGIN` (a client taking a token for itself, dozens a minute from the operator and provider-keycloak) at `debug`; `eventsExpiration` thirty days on every tenant realm |
 | Envoy edge | a JSON format on the `gentian-edge` EnvoyProxy: time, request id, method, host, path without query, status, flags, duration, upstream, client address, and the subject header the bouncer sets |
 | perimeter proxy | the same JSON fields, without subject |
+| outgoing gateway | one JSON line per connection on the `gentian-outgoing` EnvoyProxy's stdout: time, host (the TLS server name), port, client address (the caller's pod), bytes in each direction, duration, flags, upstream. No path, method or header, because TLS is not opened; the caller's name is not resolved, and the line is no audit envelope ([concepts/edge.md §3.4](../concepts/edge.md)) |
 
 ## 4. Forwarder
 

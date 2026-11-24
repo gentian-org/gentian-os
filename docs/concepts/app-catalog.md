@@ -676,8 +676,11 @@ spec:
           scope: odoo
           reason: "Odoo writes its filestore under /var/lib/odoo."
       egress:
+        - name: microsoft-graph
+          hosts: [graph.microsoft.com]  # by name, through the outgoing gateway
+          reason: "Reads the calendars of people who connected their account."
         - name: smtp-relay
-          rule: {...}                 # a NetworkPolicyEgressRule
+          rule: {...}                 # a NetworkPolicyEgressRule, by address
           reason: "Outbound mail to the tenant's relay."
       clusterRoles:
         - name: read-nodes
@@ -729,9 +732,21 @@ lacks adds it in the same step
 ([security/design.md §3.0](../security/design.md)). One requirement block with one approval
 path means egress is held to the same standard as a waiver, by construction.
 
-A profile the platform ships itself, which no catalog brought, has its egress
-requests answered by the platform: nobody in a tenant chose it, and what it
-reaches is decided with the release that ships it.
+An egress request states exactly one of three forms: `hosts` (names, port 443
+unless stated; a profile names all its hosts in one such request, so they are
+answered once), `hostsAtApproval: true` (the approver names the hosts, and the
+grant carries them in `hosts`), or `rule` (a NetworkPolicy egress rule, for a
+protocol that names no host or an address chosen at run time). The first two
+pass the outgoing gateway; a rule is opened in the component's own policy
+([edge.md §3](edge.md)).
+
+A request by `hosts` whose every host is in or under a trusted domain, the
+cluster's (`PlatformSecurityPolicy.spec.trustedDomains`) or the tenant's own
+once delegated (`Tenant.spec.trustedDomains`), is answered by that list. A
+profile the platform ships itself, which no catalog brought, has its `hosts`
+and `rule` requests answered by the platform: nobody in a tenant chose it, and
+what it reaches is decided with the release that ships it. A
+`hostsAtApproval` request is answered by a person in either case.
 
 Whoever installs an app and is the tenant's perimeter approver can answer its
 egress requests in the install. The director says what a build asks for before
@@ -739,7 +754,8 @@ it is installed (`GET /v1/tenants/{t}/catalogues/{s}/entries/{p}/asks?digest=`:
 the app's requests and those of the apps it comes with that nobody answered
 yet, and whether the caller may approve them). The install then names the
 requests approved (`approve` in its body), and each is written as that
-person's grant once the app is installed. A request the build does not state
+person's grant once the app is installed. A `hostsAtApproval` request is not
+approved with an install: it waits for an approval that names its hosts. A request the build does not state
 refuses the install; so does an approval by somebody who is not the approver.
 An install without `approve` leaves the requests waiting.
 
@@ -924,8 +940,9 @@ component captured at its own sign-in (AD-13,
 
 The profile declares what **may** be published. What **is** published is
 recorded on the instance. Gateway entries need no enablement: they carry the
-session and are always on. A perimeter entry, and an entry asking
-`clientAuthorization: app`, are off until a perimeter approver enables them
+session and are always on. A perimeter entry, an inside entry, a token
+entry (`authMode: bearer`), and an entry asking `clientAuthorization: app`,
+are off until a perimeter approver enables them
 (`can_expose` on the tenant, [security/design.md §2.14](../security/design.md)); the director
 writes the enablement from the caller's token and commits it to the tenant's
 registry.
@@ -1000,8 +1017,9 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
   `agents` ([bridges.md](bridges.md));
 - on an entry: a perimeter entry is `none` or `app`, never `oidc`, and the
   four modes nothing checks (`jwt`, `bearer`, `basic`, `signature`) are refused
-  there; `forwardToken` is meaningless on one; `authMode: app` is perimeter
-  only; `signInCookies` is a perimeter entry of `authMode: app`; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
+  there; `forwardToken` is meaningless on one; `authMode: app` is for a
+  perimeter or inside entry; an inside entry is `authMode: app` and names a
+  `subDomain`; `signInCookies` is a perimeter entry of `authMode: app`; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
   exclude `forwardToken` and each other; `apex` is a perimeter entry with
   `authMode: none` and no `subDomain`; a gateway entry is `oidc`;
 - an OIDC audience is the profile's own name, a dash and a label;

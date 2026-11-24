@@ -244,8 +244,10 @@ spec:
   A tool the way does not name is not called. `version` is raised when a
   tool is reviewed again. `signIn.oauth` names the authorization server a
   person signs in at (its metadata is read at
-  `/.well-known/oauth-authorization-server`, RFC 8414); the component that
-  keeps people's connections obtains the credential a call carries. The list
+  `/.well-known/oauth-authorization-server`, RFC 8414); the liaison, the
+  component that keeps people's connections, obtains the credential a call
+  carries. The bridge declares no egress for that host: the liaison reaches
+  it once the bridge's own requests are answered ([edge.md §3.3](edge.md)). The list
   entry of such a bridge carries the address, the bridge itself as `app`,
   and the whole of `outside`.
 - **Callee `partner`.** The bridge names the partner's realm in

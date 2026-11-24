@@ -77,6 +77,7 @@ Implementation, split by concern rather than by kind:
 | `authz/`, `membership/` | The Keycloak admin client; keeping OpenFGA's group memberships equal to Keycloak's. |
 | `catalogue/`, `profilebundle/`, `bundlestore/` | Resolving a tenant's app to a profile; checking that a profile is the build an install was pinned to; reaching a bundle in object storage. |
 | `addresses/`, `hostnames/` | Where a component's entries answer; the address names an app may not take. |
+| `egress/`, `liaison/` | What carries a component's connections to hosts outside the cluster: the outgoing Gateways, a listener and Services per granted host, and the rules between callers and the fleet ([edge.md](../concepts/edge.md)); the liaison, which keeps people's sign-ins at outside services. |
 | `tiles/`, `tilecatalogue/` | The tiles a desktop shows, and the format the operator writes them in. |
 | `customization/` | Generic customization-ladder ordering and policy (L0–L6). App-neutral by rule — see [app-customization.md](../guides/app-customization.md). |
 | `backup/` | What a tenant is made of, and capturing it. |
