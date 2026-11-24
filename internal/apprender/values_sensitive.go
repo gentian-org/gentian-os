@@ -200,8 +200,9 @@ func (r *valuesRender) sensitiveValues() *valuesSensitive {
 		set(vm.LLM.APIKeyKey, "llm-api-key")
 	}
 	// Mail is optional: provider-helm refuses an empty set value, which a
-	// cluster without the relay's credentials has, so SMTP goes through
-	// optional valuesFrom documents instead.
+	// cluster without the relay's credentials has, and a cluster that relays
+	// has no IMAP server to name, so SMTP and IMAP go through optional
+	// valuesFrom documents instead.
 	if m := vm.SMTP; m != nil {
 		v.optional(secret, ns, m.HostKey, "smtp-host", false)
 		v.optional(secret, ns, m.PortKey, "smtp-port", true)
@@ -209,8 +210,8 @@ func (r *valuesRender) sensitiveValues() *valuesSensitive {
 		v.optional(secret, ns, m.PasswordKey, "smtp-password", false)
 	}
 	if m := vm.IMAP; m != nil {
-		set(m.HostKey, "imap-host")
-		set(m.PortKey, "imap-port")
+		v.optional(secret, ns, m.HostKey, "imap-host", false)
+		v.optional(secret, ns, m.PortKey, "imap-port", true)
 	}
 	for _, contract := range integrations {
 		m := vm.Integrations[contract]

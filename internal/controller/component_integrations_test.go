@@ -636,8 +636,8 @@ func mustRenderInput(t *testing.T, r *ComponentReconciler, comp *gentianov1alpha
 
 // Object storage, the cache and mail reach the chart as the app Composition
 // gave them: each read from where the tenant's stores wrote it for the app,
-// and mail -- optional, empty on a cluster without the relay's credentials --
-// as a values document of its own that the release reads only when it is
+// and mail -- optional, empty on a cluster without the relay's credentials,
+// and IMAP on a cluster that relays -- as a values document of its own that the release reads only when it is
 // there.
 func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
 	profile := chartProfileFixture("oci://x")
@@ -645,7 +645,7 @@ func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
 		S3:    &gentianov1alpha1.S3ValueMapping{EndpointKey: "s3.endpoint", BucketKey: "s3.bucket"},
 		Cache: &gentianov1alpha1.CacheValueMapping{HostKey: "cache.host", PasswordKey: "cache.password"},
 		SMTP:  &gentianov1alpha1.SMTPValueMapping{HostKey: "mail.smtp.host", PortKey: "mail.smtp.port", PasswordKey: "mail.smtp.password"},
-		IMAP:  &gentianov1alpha1.IMAPValueMapping{HostKey: "mail.imap.host"},
+		IMAP:  &gentianov1alpha1.IMAPValueMapping{HostKey: "mail.imap.host", PortKey: "mail.imap.port"},
 	}
 	in := chartRenderInput("app", profile)
 	in.Namespace, in.TenantName = "tenant-demo", "demo"
@@ -661,7 +661,7 @@ func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
 		"s3-endpoint": apps + "s3#endpoint", "s3-bucket": apps + "s3#bucket",
 		"cache-host": apps + "cache#host", "cache-password": apps + "cache#password",
 		"smtp-host": apps + "smtp#host", "smtp-port": apps + "smtp#port", "smtp-password": apps + "smtp#password",
-		"imap-host": apps + "imap#host",
+		"imap-host": apps + "imap#host", "imap-port": apps + "imap#port",
 	} {
 		if read[key] != want {
 			t.Errorf("%s reads %q, want %q", key, read[key], want)
@@ -671,7 +671,7 @@ func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
 	for _, e := range setEntries {
 		set = append(set, e["name"].(string))
 	}
-	if want := []string{"s3.endpoint", "s3.bucket", "cache.host", "cache.password", "mail.imap.host"}; !reflect.DeepEqual(set, want) {
+	if want := []string{"s3.endpoint", "s3.bucket", "cache.host", "cache.password"}; !reflect.DeepEqual(set, want) {
 		t.Errorf("set = %v, want %v: mail is no set entry", set, want)
 	}
 	es := renderedNamed(objs, "ExternalSecret", "app-sensitive-values")
@@ -680,6 +680,8 @@ func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
 		"values-smtp-host":     `{{ with index . "smtp-host" }}{"mail":{"smtp":{"host":{{ . | toJson }}}}}{{ end }}`,
 		"values-smtp-password": `{{ with index . "smtp-password" }}{"mail":{"smtp":{"password":{{ . | toJson }}}}}{{ end }}`,
 		"values-smtp-port":     `{{ with index . "smtp-port" }}{"mail":{"smtp":{"port":{{ . }}}}}{{ end }}`,
+		"values-imap-host":     `{{ with index . "imap-host" }}{"mail":{"imap":{"host":{{ . | toJson }}}}}{{ end }}`,
+		"values-imap-port":     `{{ with index . "imap-port" }}{"mail":{"imap":{"port":{{ . }}}}}{{ end }}`,
 	} {
 		if documents[doc] != want {
 			t.Errorf("%s = %q, want %q", doc, documents[doc], want)
@@ -689,7 +691,7 @@ func TestStorageTheCacheAndMailAreToldAsTheCompositionTellsThem(t *testing.T) {
 	for _, release := range renderedOfKind(objs, "Release") {
 		valuesFrom, _, _ = unstructured.NestedSlice(release.Object, "spec", "forProvider", "valuesFrom")
 	}
-	if len(valuesFrom) != 3 {
+	if len(valuesFrom) != 5 {
 		t.Fatalf("valuesFrom = %v, want one optional read per mail value", valuesFrom)
 	}
 	for _, f := range valuesFrom {
