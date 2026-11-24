@@ -551,6 +551,11 @@ that declare `mail.smtp` send straight to the address the claim names
 (`mail.host`), all with the one login of the `smtp-relay` credential (§5d,
 §6).
 
+A cluster whose claim was stored as `system`, the former name of `internal`,
+keeps its mail stack: the Composition and the ApplicationSets read the stored
+word as `internal` until the claim is edited, and the schema refuses it on
+the next edit.
+
 What differs between the two is *mailboxes*. A `relay` cluster has none that
 the platform knows of: outbound and notification mail work, and an app that
 declares `mail.imap` is handed an empty record. An `external` cluster has

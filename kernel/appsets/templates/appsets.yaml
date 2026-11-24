@@ -44,7 +44,10 @@
      namespaces, so a cluster that runs neither gets neither namespace nor
      workload -- rather than an empty namespace and an Application with
      nowhere to sync. */}}
-{{- if and (hasSuffix "-mail.yaml" $path) (ne ($.Values.mailServiceMode | default "relay") "internal") }}
+{{- /* "system" is what internal was called, and what the values of a cluster
+     installed under that name still say until its next install run: read as
+     anything else, its mail ApplicationSet would be taken away. */}}
+{{- if and (hasSuffix "-mail.yaml" $path) (not (has ($.Values.mailServiceMode | default "relay") (list "internal" "system"))) }}
 {{- /* skipped: mail.serviceMode is {{ $.Values.mailServiceMode | default "relay" }}, so this cluster runs no mail stack of its own */ -}}
 {{- else if and (hasSuffix "-llm.yaml" $path) (ne (toString ($.Values.llmEnabled | default "false")) "true") }}
 {{- /* skipped: this cluster serves no models */ -}}

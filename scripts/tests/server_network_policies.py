@@ -797,6 +797,10 @@ def modes_mail(apps):
     for mode in ("relay", "external", "none"):
         if mail_applications(mode):
             raise Failure(f"mail.serviceMode={mode}: the mail ApplicationSet is still rendered")
+    # A cluster installed when the mode was called "system" still says so in
+    # its values until its next install run, and keeps its mail servers.
+    if not mail_applications("system"):
+        raise Failure("mail.serviceMode=system, the former name of internal: the mail ApplicationSet is taken away")
     # Dovecot without a certificate serves no IMAPS, on either port, and the
     # policy lists neither.
     check_shape("dovecot", apps, "--set", "tls.secretName=")
