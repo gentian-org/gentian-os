@@ -18,7 +18,7 @@ perimeter: 37d5d8f6ebfd446d
   .spec.template.spec.securityContext {"runAsNonRoot":true,"runAsUser":101,"seccompProfile":{"type":"RuntimeDefault"}}
 psql: bda87b1359fe9ade
   .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"seccompProfile":{"type":"RuntimeDefault"}}
-sign-in: 7581427327a4d12b
+sign-in: de4ad567e1ca4c66
   .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true,"runAsNonRoot":true}
   .spec.template.spec.securityContext {"runAsGroup":1000,"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}
 turn a: 7617609d1e9b5736

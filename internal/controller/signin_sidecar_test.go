@@ -1064,3 +1064,37 @@ func TestTheSidecarsRoutesAreAdmittedByTheGatewayAPI(t *testing.T) {
 		}
 	}
 }
+
+// The sidecar reads its Secret once, at start, and the Secret fills in after
+// the pod may already run: the app's own secrets are synced into it as they
+// come, and rotated later. A sidecar that kept what it started with refused
+// every sign-in (#1303), so Reloader is asked to restart it when the Secret
+// changes, and a Deployment written before that is given the request too,
+// without losing the annotations that are the Deployment controller's.
+func TestTheSidecarRestartsWhenItsSecretChanges(t *testing.T) {
+	h := signInHarness(t)
+	ctx := context.Background()
+	h.reconcile()
+	key := types.NamespacedName{Name: "notes-sign-in", Namespace: h.comp.Namespace}
+
+	deploy := &appsv1.Deployment{}
+	if err := h.c.Get(ctx, key, deploy); err != nil {
+		t.Fatal(err)
+	}
+	if got := deploy.Annotations[signInSecretReloadAnnotation]; got != "notes-sign-in" {
+		t.Fatalf("the sidecar asks Reloader to watch %q, want its own Secret notes-sign-in", got)
+	}
+
+	// A Deployment from before: no request, and one of the controller's own.
+	deploy.Annotations = map[string]string{"deployment.kubernetes.io/revision": "3"}
+	if err := h.c.Update(ctx, deploy); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcile()
+	if err := h.c.Get(ctx, key, deploy); err != nil {
+		t.Fatal(err)
+	}
+	if deploy.Annotations[signInSecretReloadAnnotation] != "notes-sign-in" || deploy.Annotations["deployment.kubernetes.io/revision"] != "3" {
+		t.Fatalf("the sidecar written before is annotated %v", deploy.Annotations)
+	}
+}
