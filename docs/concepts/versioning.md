@@ -97,8 +97,8 @@ minor too, where the index says it is applied in place; the commits name
 `policy:autoUpgrade`. A release the mode does not take stays `pending`, on
 the status, in the console and in `kubectl gentian release show`, until a
 person sets it, and the cluster's administrators are told once: a notice in
-the platform tenant's console, and a mail to the members of the platform
-admin group through the platform's own mail settings
+the platform tenant's console, and a mail to the cluster's administrators the Cluster claim names
+(`spec.platformAccess.roleHolders`, role `admin`) through the platform's own mail settings
 (`keycloak-smtp-credentials`), sent by the operator on the director's behalf
 (`POST /v1/actions/notify-administrators`). A move the mover made is
 announced the same way. The director names only the event and the

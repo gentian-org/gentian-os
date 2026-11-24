@@ -370,6 +370,14 @@ Administering is given by an administrator. A tenant's last administrator
 cannot lose the position. The tenant's first administrator is given it by
 the operator, once.
 
+**Taking ends sessions.** A token carries what its person held when it was
+written. So whenever something is taken from a person -- directly, by a
+change of what a position holds or includes, by a position no longer
+declared, or by the sign-in (`signInFrom[].holding`) -- the operator ends
+their sessions in the realm, and the next sign-in carries what they hold
+now (§1.8). A role on an app that is uninstalled ends no session. What is
+given takes effect at the next sign-in.
+
 **Who administers gives a second factor.** The account of whoever
 administers a tenant or the cluster carries a mark the realm's sign-in flow
 reads (`gentianRequiresMFA`). The operator writes it from the rights store
@@ -380,6 +388,26 @@ every request ([routing.md §4.1](routing.md)); the platform's own services
 ask the store for each call ([authorization.md](authorization.md)). What a
 person holds, and through which position, is shown on the console's *Access*
 screen.
+
+### 1.2a The registrar's rights routes
+
+What a person holds is given and taken at the registrar, which asks the
+operator to write it. A person's token opens the first three, under
+`can_manage_users` on the tenant; a component's key the last two
+(`RIGHTS_CHECK_KEY` from its Secret `rights-check-<profile>`, which then also
+carries `REGISTRAR_URL`).
+
+| Route | Body | Answer |
+|---|---|---|
+| `POST /v1/tenants/{t}/actions/give` | `{"person", "position"}`, or `{"person", "app", "role"}`; `{"person", "role"}` for a role on the tenant | `200 {"person", "changed", "holds": true, "position"` or `"app", "role"}`, with `"totpRequired": true` when the person now administers |
+| `POST /v1/tenants/{t}/actions/take` | the same | the same, `"holds": false`; `409` for the tenant's last administrator |
+| `GET /v1/tenants/{t}/people/{id}/assignments` | | `200 {"tenant", "person", "assignments": [{"position"}` or `{"app"?, "role"}]}`: what was given, not what follows |
+| `POST /v1/tenants/{t}/actions/give-position` | `{"person", "position"}` | as `give`; `403` unless `spec.positionGivers` of `{t}` names the component with that position, and for a position that administers |
+| `POST /v1/tenants/{t}/actions/take-position` | the same | as `take`, with the same refusals |
+
+A person, position, app or role the tenant does not have is `404`, the
+store out of reach `502`. A take ends the person's sessions; a give takes
+effect at their next sign-in (§1.2).
 
 ### 1.3 What each kind of person sees
 
@@ -575,13 +603,17 @@ declares its own, and they reach the app it is activated in.
 
 - **The sign-in token.** The platform's mapper in Keycloak
   (`gentian-app-roles`) asks the rights store, through the usher, for every
-  token it writes for the app, and writes two claims: `gentian_app_roles`
-  (or the claim the profile names), the in-app names of the roles held, and
-  the same name followed by `_mapped`, every in-app name the platform
-  decides. The app gives the first and takes the rest of the second; what
-  is in neither is the app's own. A client with no in-app names carries the
-  roles in the platform's names. When the store cannot be asked, a sign-in
-  fails; a renewed token keeps the roles of the one before.
+  token it writes. On the app's own client, where the profile gives at least
+  one role an in-app name, it writes two claims: `gentian_app_roles` (or the
+  claim the profile names), the in-app names of the roles held, and the same
+  name followed by `_mapped`, every in-app name the platform decides. The app
+  gives the first and takes the rest of the second; what is in neither is the
+  app's own. A token the front door exchanges for the app (`exchangeToken`)
+  carries `gentian_app_roles` in the platform's names: `user`, `admin`, the
+  declared roles, and an add-on's as `<add-on>/<role>`. When the store
+  cannot be asked, a sign-in fails; a renewed token keeps the roles of the
+  one before. The app author's view is
+  [app-customization.md §1.2](../guides/app-customization.md).
 - **An app that cannot read a token.** The operator hands the app's
   administrators and users, as the store names them, to the profile's sync
   Job (`spec.hooks.provisioning.syncJob`) in the tenant's namespace, and
@@ -589,10 +621,10 @@ declares its own, and they reach the app it is activated in.
   (`internal/controller/app_privilege_reconciler.go`). An app behind the
   sign-in sidecar reads the roles from the signed answer (§1.11).
 - **A role that is taken away.** The front door stops a person who holds no
-  role on the app at their next request. For a role taken while another
-  stays, the operator ends the person's sessions in the realm; every app
-  that is told of a sign-out (§1.12) drops its own, and the next sign-in
-  carries the roles as they are. This holds however it was taken: from the
+  role on the app at their next request. Whatever is taken, the operator
+  ends the person's sessions in the realm; every app that is told of a
+  sign-out (§1.12) drops its own, and the next sign-in carries the roles as
+  they are. This holds however it was taken: from the
   person, from a position they hold or one it includes (a role or an
   inclusion removed, a position no longer declared), or by the sign-in when
   they no longer hold at home what `signInFrom[].holding` asks; the person

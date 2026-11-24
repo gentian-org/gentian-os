@@ -37,18 +37,18 @@ import (
 //
 // Uninstalling an app keeps its data, and nothing else on the cluster says
 // so afterwards: the app is gone from the tenant's manifest and from the
-// list of what is installed, and its database, files, credentials and access
-// group sit there unlisted until somebody purges them or installs the app
+// list of what is installed, and its database, files, credentials and who
+// holds a role on it sit there unlisted until somebody purges them or installs the app
 // again. This read is that list. The state it reports is "retained": an app
 // that is uninstalled, data retained.
 //
 // It is built on the names and the matching a purge uses -- the same
 // database record, the same volume-claim rule, the same vault paths, the
-// same group name -- so that what it reports for an app is what a purge of
+// same entries of the rights store -- so that what it reports for an app is what a purge of
 // that app would destroy.
 //
 // It reads, and only reads: objects from the API server, names (never
-// values) from the vault, group names from the identity provider. It runs
+// values) from the vault, entries from the rights store. It runs
 // nothing. A bucket, a cache user and a MariaDB database cannot be asked of
 // the API server, and were reported as unknown for that reason; provisioning
 // now records each store it makes (backup.Provisioned), a purge takes the

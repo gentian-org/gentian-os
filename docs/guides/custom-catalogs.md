@@ -295,6 +295,10 @@ spec:
       repository: oci://registry.example.com/acme/charts
       name: notes
       version: "1.0.0"
+  roles:                               # app-customization.md §1.2
+    admin: {inApp: [notes-admin]}
+    declared:
+      - {name: editor, title: Editor, inApp: [notes-editor]}
   expose:
     - name: web
       surface: gateway
@@ -602,7 +606,24 @@ tenant `<t>` names the component, by its tenant and profile, and the positions i
 `spec.positionGivers`, which an administrator writes in git: the tenant whose positions are given is
 the one that consents. The registrar admits it for exactly those positions of that tenant, never one
 that holds `admin` on the tenant or an app (itself or through an inclusion) and no role; the person is
-one of `<t>`'s, and the operator records the component as who acted.
+one of `<t>`'s, and the operator records the component as who acted. The tenant's side:
+
+```yaml
+# Tenant <t>
+spec:
+  positions:
+    - {name: customer, title: Customer, roles: [{app: acme-shop, role: user}]}
+  positionGivers:
+    - {tenant: shop, component: acme-checkout, positions: [customer]}
+```
+
+A position that administers is refused when the tenant is written: `app-administrator` or
+`tenant-administrator` by the schema (`422`), a position of the tenant's own that holds `admin`,
+itself or through one it includes, by the admission webhook (`403`). At the registrar, a key that is
+no position giver's, a position the tenant does not name for the component, and one that
+administers are each `403`; a person who is not `<t>`'s is `404`. A take ends the person's sessions
+in the realm ([iam.md §1.2](../concepts/iam.md)); a give takes effect at their next sign-in. The
+routes and their answers: [iam.md §1.2a](../concepts/iam.md#12a-the-registrars-rights-routes).
 
 **A component that calls apps of other clusters for the person**, or takes such calls, declares
 `spec.requires.services.partners` with `call` and `accept` (docs/guides/app-customization.md §1.1).

@@ -256,9 +256,9 @@ director:
     limits:
       memory: 256Mi
 
-# The registrar: what keeps the list of people -- invites them, puts them in
-# groups, removes them -- at Keycloak, for the person the authorization store
-# allows. A Deployment of its own with a ServiceAccount of its own, which may
+# The registrar: what keeps the list of people -- invites them, removes them
+# -- at Keycloak, and asks the operator to give and take their positions and
+# roles, for the person the authorization store allows. A Deployment of its own with a ServiceAccount of its own, which may
 # read the tenants and the Cluster claim and nothing else in the cluster. It
 # holds the per-realm Keycloak credential the operator hands it
 # (Secret gentian-registrar-realms), and the director holds none.
@@ -871,18 +871,17 @@ usage:
           memory: 512Gi
           storage: 800Gi
 
-# Who is in which group, as Keycloak states it.
+# What only a realm sees happen to a person, as Keycloak states it.
 #
-# A listener inside Keycloak posts a user's complete group set, signed, every
-# time it changes, and the operator projects that into the authorization graph
-# beside the structure it already projects. This used to be the director's
-# endpoint, which is why the director's OpenFGA token had to be able to write;
-# it is here so that token can be read-only.
+# A listener inside Keycloak posts, signed, a person arriving from another
+# realm, registering, or removed. The operator gives an arrival what the
+# tenant declares for it (spec.signInFrom, spec.signUp) and takes what a
+# removed person held. Who holds what is the rights store's, written by the
+# operator; no event carries a right.
 #
 # Off until keysSecretRef names something. A cluster with no key accepts no
-# membership, so every permission that follows from a group is refused to
-# everyone -- which the operator says at start rather than leaving to be
-# discovered as a login that grants nothing.
+# event, so nobody who arrives or registers is given anything and nothing of
+# a removed person is taken -- which the operator says at start.
 membershipListener:
   port: 8090
   platformRealm: kernel
@@ -951,7 +950,7 @@ grafana:
 # the operator POSTs a signed JSON body to `url`. The body holds the cluster's
 # id and address, each tenant's address and number of accounts, and each app
 # installed through the App Store with its digest and the number of people
-# entitled to it -- no names, addresses of people, user ids or group names.
+# holding a role on it -- no names, addresses of people, user ids or group names.
 # Nothing in the cluster is blocked by the answer, and the last report is
 # kept, exactly as sent, in the ConfigMap `gentian-usage-statistics` beside the
 # operator.

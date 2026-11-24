@@ -27,9 +27,8 @@ import (
 //
 // With the credential the operator already configures realms with, and no
 // other: the report needs two numbers per tenant, and neither is worth a
-// second way into Keycloak. Both are asked of the realm and the group the
-// identity reconciler made for the tenant, by the names it made them under,
-// which is why the counting is here beside it.
+// second way into Keycloak. Accounts are asked of the tenant's realm, and
+// who holds what of the rights store.
 type UsageStatisticsCounts struct {
 	Client client.Reader
 	// Rights is the rights store, for the counts that follow from who holds

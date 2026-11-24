@@ -376,7 +376,7 @@ administration console and the App Store app ([iam.md §1.6](iam.md)). Both
 are given in the
 [administration console](admin-console.md).
 
-**How a tenant is administered.** Tenant admins manage people, groups and
+**How a tenant is administered.** Tenant admins manage people, positions and
 installed apps in the administration console, and install apps with the
 **App Store app** or `kubectl gentian apps`. The store's data is served from
 outside the cluster and its interface is an app on the cluster. Every change

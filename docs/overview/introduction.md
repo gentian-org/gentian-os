@@ -21,7 +21,7 @@ software, and runs it for many organizations on one cluster.
 ## 2. What you get
 
 - **A workplace per organization.** Each organization is a *tenant*: it has
-  its own sign-in, its own people and groups, its own addresses such as
+  its own sign-in, its own people and positions, its own addresses such as
   `files.acme.example`, and its own data, kept apart from every other tenant
   on the same machines.
 - **Apps from a catalog.** An administrator picks an app and the platform
@@ -88,7 +88,7 @@ of them.
 |---|---|
 | Cluster | A set of machines run as one by Kubernetes; one Gentian OS installation. |
 | Tenant | One organization on a cluster: its people, apps, addresses and data. |
-| Realm | A tenant's sign-in domain in Keycloak: its accounts, groups and sessions. |
+| Realm | A tenant's sign-in domain in Keycloak: its accounts and sessions. |
 | Namespace | A Kubernetes compartment; each tenant's apps run in their own. |
 | App | An application installed into a tenant from a catalog, with its own address. |
 | Profile | The catalog entry that says how an app is installed and what it needs. |

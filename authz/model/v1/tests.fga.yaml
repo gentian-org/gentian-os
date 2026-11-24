@@ -94,7 +94,7 @@ tuples:
   - {user: role:demo/odoo-sales/configurator, relation: declared, object: app:demo/odoo-sales}
   - {user: role:demo/odoo-sales/manager, relation: included_in, object: role:demo/odoo-sales/salesman}
 
-  # --- positions of tenant demo beyond the three every tenant has: Sales
+  # --- positions of tenant demo beyond the four every tenant has: Sales
   # manager holds the add-on's role, Executive includes Sales manager,
   # Engineer is a person of the tenant and nothing in sales
   - {user: tenant:demo, relation: tenant, object: position:demo/sales-manager}

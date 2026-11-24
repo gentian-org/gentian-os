@@ -249,8 +249,10 @@ components:
           type: [integer, "null"]
           minimum: 0
           description: |
-            The number of enabled accounts in the tenant's realm. `null`
-            when they could not be counted, which is not the same as none.
+            The number of enabled accounts in the tenant's realm; for a
+            tenant people sign up to themselves, the enabled accounts holding
+            the tenant's position `user`. `null` when they could not be
+            counted, which is not the same as none.
         apps:
           type: array
           description: |
@@ -276,7 +278,7 @@ components:
         users:
           type: [integer, "null"]
           minimum: 0
-          description: The number of people entitled to the app — the members of its group. `null` when they could not be counted.
+          description: The number of enabled accounts holding a role on the app, as the cluster's rights store names them. `null` when they could not be counted.
         addons:
           type: array
           description: |
@@ -307,4 +309,4 @@ components:
         users:
           type: [integer, "null"]
           minimum: 0
-          description: The number of people entitled to the add-on — the members of its own group. `null` when they could not be counted.
+          description: The number of enabled accounts holding a role on the add-on, counted as an app's are. `null` when they could not be counted.

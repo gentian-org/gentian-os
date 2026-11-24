@@ -508,7 +508,7 @@ commit unless marked as a command.
 | Backup bundles | Upload or inspect a bundle; declare the storage outside the cluster an import may read from, or a tenant's own store its exports are written to, and fetch a bundle from either; restore (as part of an import). |
 | Records | Read the history of changes to a tenant or the cluster (from the commits). |
 | Commands relayed to the dispatcher | Take a backup; delete a backup. |
-| Commands relayed to the operator | Send a notice to a tenant's people; purge the data of an uninstalled app; give an installed app to everybody who is a member now; remove one object the catalog left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
+| Commands relayed to the operator | Send a notice to a tenant's people; purge the data of an uninstalled app; remove one object the catalog left behind, for the cluster or, on a cluster with one user tenant, for that tenant and one of its apps. |
 | One live read | Download a backup bundle. This is the only read of live state the director serves. |
 
 When an app is installed from a catalog, the director fetches the app's
@@ -643,7 +643,7 @@ OpenFGA store and its model, and writes four things into it:
   is not written. While the claim names no administrator, the account the
   install made holds that role.
 - **Tenants**: each tenant attached to the cluster, with its positions: the
-  three every tenant has and the ones it declares, each with the roles it
+  four every tenant has and the ones it declares, each with the roles it
   holds.
 - **Apps**: each installed app and add-on attached to its tenant, with the
   roles its profile declares.
@@ -795,7 +795,8 @@ sent, for a platform admin to read
 **If it is unavailable**
 
 Running apps keep running and people can still sign in and use them. Nothing
-new is rolled out, memberships changed in Keycloak do not reach OpenFGA,
+new is rolled out, nobody is given or taken a position or a role, what the
+realm reports about arrivals and removals is not acted on,
 commands and the usher's live reads fail, the director refuses commits that
 set fields (it cannot run the definitions check), and a Tenant object cannot
 be created or changed.

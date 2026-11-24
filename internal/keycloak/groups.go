@@ -20,22 +20,20 @@ func tenantPrefix(tenant string) string {
 	return "gentian:tenant:" + tenant + ":"
 }
 
-// TenantMembersGroup is the Keycloak group for all tenant members.
+// TenantMembersGroup is the name of the members' group a realm made before
+// no group carried a right; PlatformGroupPattern still finds such groups in
+// an old bundle, and the platform makes none.
 func TenantMembersGroup(tenant string) string {
 	return tenantPrefix(tenant) + "members"
 }
 
-// PartnerRoleAttribute is the group attribute that names the role a partner
-// assertion carries for the group's members, under the claim
-// PartnerRolesClaim of the scope partner-<name> and nowhere else: the
-// mapper on that scope aggregates it over the person's groups, and no other
-// mapper reads it (groupAttributeNames in the operator leaves it out). The
-// admins group carries PartnerRoleTenantAdmin, the platform-admins group
-// PartnerRoleClusterAdmin; a person in neither has no claim.
-//
-// The attribute is the groups' alone: the realm's user profile declares no
-// such attribute, and Keycloak admits no unmanaged attribute on an account,
-// so the claim can only ever follow from group membership.
+// PartnerRolesClaim is the claim of the scope partner-<name> that names a
+// person's role on the tenant in a partner assertion, and nowhere else:
+// PartnerRoleTenantAdmin for an administrator of the tenant,
+// PartnerRoleClusterAdmin for an administrator of the cluster, as the
+// platform's mapper (gentian-partner-roles) asks the rights store; a person
+// who is neither has no claim. PartnerRoleAttribute names no attribute the
+// platform writes: no group or account carries the role.
 const (
 	PartnerRoleAttribute    = "gentianPartnerRole"
 	PartnerRolesClaim       = "gentian_roles"

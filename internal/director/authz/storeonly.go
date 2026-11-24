@@ -77,7 +77,7 @@ func tenantDefaults(cluster, tenant string) (standing, once []Tuple) {
 // nothing else.
 //
 // apps are the tenant's installed apps and positions its declared positions
-// (the three every tenant has among them), as the projections are given
+// (the four every tenant has among them), as the projections are given
 // them. held are further app names the tenant holds something of -- apps
 // that were uninstalled with their data kept -- whose objects are read too:
 // a right granted on such an app is still in the store.

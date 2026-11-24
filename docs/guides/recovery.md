@@ -204,8 +204,8 @@ kubectl gentian tenants import <tenant>-<export>.gentian --identity-file <key>
 ```
 
 A tenant this cluster retired keeps its name reserved: its import is refused
-until `--reuse-name` approves it, and then it takes back the rights and
-memberships the tenant left
+until `--reuse-name` approves it, and then it takes back the rights the
+tenant left
 ([data-lifecycle.md §4](../concepts/data-lifecycle.md)).
 
 A bundle that is still in a bucket the cluster can reach needs no file:

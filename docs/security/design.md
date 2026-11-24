@@ -542,7 +542,7 @@ What follows from this: OpenFGA is reachable from the programs that ask it and f
 | The cluster's perimeter approver | A person of the platform tenant named the same way, scope `cluster`: `cluster#perimeter_approver`, which every tenant's `perimeter_approver` derives from | The same |
 | The cluster's administrator | The model: `admin from cluster`, in every tenant by default, a tenant that administers itself too: the perimeter is the cluster's. No tuple of its own, and nothing else in the tenant by it | No longer being named `admin` on the Cluster claim |
 
-A tenant's own administrators approve nothing at the perimeter by being administrators. Naming one is the cluster's administrator's alone (`can_configure`); the director refuses a person of a tenant who is not in its `admins` group as the store holds it. Nothing a tenant's administrator manages decides who approves: the role is on the Cluster claim, not in a group of the tenant's realm.
+A tenant's own administrators approve nothing at the perimeter by being administrators. Naming one is the cluster's administrator's alone (`can_configure`); the director refuses a person of a tenant who does not administer it as the store holds it. Nothing a tenant's administrator manages decides who approves: the role is on the Cluster claim, not in the tenant's realm or its positions.
 
 A perimeter entry is answered by a publishing proxy in the tenant's DMZ (AD-6). The proxy checks nobody, and holds every request to the following, whatever the profile says (`internal/controller/component_perimeter_config.go`):
 
@@ -973,7 +973,7 @@ on every Keycloak upgrade.
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). The model holds people, positions, the cluster, tenants, apps and their roles. | Apache 2.0 |
 | **Director** | Turns an authorized request into a signed commit to the deployments repository. It asks OpenFGA before each one and writes nothing there. Keycloak decides no permission; OpenFGA changes no identity. | `cmd/director` |
 | **Operator, as the store's writer** | The authorization store is written by the operator and by nothing else on purpose: role holders from the Cluster claim, tenants, apps and positions from what Argo CD applied, and who holds a position or a role when the registrar asks. The process holding the push credential holds no reason to write a relation. What enforces "on purpose" is weak: OpenFGA cannot tell its preshared keys apart, and each can write. | `authz_projection_reconciler.go`, `internal/applifecycle/http_assignments.go` |
-| **Provisioning bridge** | The operator makes an `IntegrationBinding` for each pair of installed apps that share a contract and turns an `AppGrant` into the network path and the keys of §3.4. Neither reaches the graph. Group membership arrives as events (row above). The operator holds Keycloak's master administrator credential, for the Jobs that configure realms. | `integration_binding_controller.go`, `contract_keys.go` |
+| **Provisioning bridge** | The operator makes an `IntegrationBinding` for each pair of installed apps that share a contract and turns an `AppGrant` into the network path and the keys of §3.4. Neither reaches the graph. The realm's events carry arrivals and removals only, never a right. The operator holds Keycloak's master administrator credential, for the Jobs that configure realms. | `integration_binding_controller.go`, `contract_keys.go` |
 | **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission. | Apache 2.0 / OSS |
 | **PEP** | Named enforcement points calling OpenFGA `Check`: the bouncer behind the Gateway, the director, the custodian, the usher and the registrar call it (§3.0), over OpenFGA's own API. The usher asks a tile list's checks together, in `BatchCheck`, and so do both `/me` routes. | OSS |
 
@@ -981,7 +981,7 @@ on every Keycloak upgrade.
 
 For a greenfield, cloud-only OS:
 
-- **Keycloak-native identity.** Keycloak owns identities per tenant realm, backed by its own Postgres, and is the only place membership is changed. OpenFGA holds a projection of it, fed by Keycloak's event listener, to compute *may* — authority is separated, not copies (principle 2).
+- **Keycloak-native identity.** Keycloak owns accounts and sessions per tenant realm, backed by its own Postgres. Who holds which position and role is in OpenFGA alone, written by the operator; the realm's event listener tells the operator only of arrivals and removals — authority is separated, not copies (principle 2).
 - **OpenFGA ReBAC** replaces coarse group-only RBAC. One relationship graph holds people, positions, the cluster, tenants and apps (§3.0) — no role explosion.
 - **Layered isolation** (§2) — MAC backbone, identity, and authorization are independent enforcement planes.
 
@@ -1010,7 +1010,7 @@ flowchart TD
     Users --> Keycloak
     Keycloak -.->|"OIDC / OAuth2 / SAML brokering<br>RFC 8693 Token Exchange → tokens"| Apps
     
-    Keycloak -->|"event-listener feed: signed membership statements"| Director
+    Keycloak -->|"event-listener feed: signed arrivals and removals"| Director
     
     
     Shell -->|"installs, grants<br>(commits by the director,<br>applied by Argo CD)"| Director
@@ -2233,5 +2233,5 @@ CA once, at start, and `B-01` restarts it when the CA has changed.
 
 ## 14. Caveats
 
-- **Dual-write consistency:** membership lives in Keycloak and is projected into OpenFGA from events, which leaves a window and, if an event is lost, a difference nothing repairs (§3.0).
+- **Events the operator misses:** a person arriving from another realm, registering or removed reaches the rights store through the realm's signed events; an event lost while the operator is away is not repaired by itself (a sign-in through `signInFrom` asks again at the next arrival) (§3.0).
 - **Operational cost:** Keycloak (JVM) + OpenFGA + OpenBao + the MAC backbone is more moving parts than a single binary. Budget DevOps capacity.

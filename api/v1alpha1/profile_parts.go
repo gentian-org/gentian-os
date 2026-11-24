@@ -40,12 +40,15 @@ const DefaultRolesClaim = "gentian_app_roles"
 // other role of the app. A profile may leave either without a name inside
 // the app, and then the token says nothing for it.
 //
-// The token of a person who signs in to the app carries two claims: the
-// claim named here, with the in-app names of the roles the person holds on
-// the app and on the add-ons activated in it, and that claim's name followed
-// by "_mapped", with every in-app name the platform decides. An app sets the
+// Where at least one role has a name inside the app, the token of a person
+// who signs in through the app's own client carries two claims: the claim
+// named here, with the in-app names of the roles the person holds on the app
+// and on the add-ons activated in it, and that claim's name followed by
+// "_mapped", with every in-app name the platform decides. An app sets the
 // first and takes away the rest of the second; what is in neither is its own
-// to keep.
+// to keep. A token the front door exchanges for the app (exchangeToken)
+// carries gentian_app_roles in the platform's names instead: user, admin,
+// the declared roles, and an add-on's as <add-on>/<role>.
 type ProfileRoles struct {
 	// Claim is the token claim the roles are written to. An add-on's is not
 	// read: its roles are written to the claim of the app it is activated in.
@@ -520,11 +523,10 @@ type AuthorizationRequirement struct {
 	// +kubebuilder:validation:MaxLength=65536
 	Model string `json:"model"`
 
-	// Groups "mirror" is accepted and has no effect. It had the platform
-	// keep the tenant realm's group memberships in the store; no group of
-	// the realm carries a right any more, so nothing is written for it. A
-	// component's own key still cannot write a tuple whose user or object
-	// is a group.
+	// Groups "mirror" is accepted and has no effect: no group of the realm
+	// carries a right, and the platform writes nothing for it. Remove it
+	// from a profile. A component's own key cannot write a tuple whose user
+	// or object is a group.
 	// +optional
 	// +kubebuilder:validation:Enum=mirror
 	Groups string `json:"groups,omitempty"`
@@ -834,8 +836,8 @@ type RightsRequirement struct {
 	Audit bool `json:"audit,omitempty"`
 	// BreakGlass lets the same key ask one question more, for a person of
 	// the platform tenant: do they hold break_glass on the cluster now
-	// (cluster#break_glass): through the realm's break-glass group, or by
-	// name until their expiresAt. It is for a component that hands such a
+	// (cluster#break_glass): named on the Cluster claim, until their
+	// expiresAt. It is for a component that hands such a
 	// person a short-lived credential, and is honored for a component of the
 	// platform tenant only, as Audit is.
 	// +optional
@@ -1615,7 +1617,7 @@ type PlatformValueMapping struct {
 
 	// RegistrarURLKey receives the registrar's in-cluster URL: where a
 	// console relays, with the person's own token, the managing of a
-	// tenant's people and groups. Like the two above, naming it is what
+	// tenant's people and what they hold. Like the two above, naming it is what
 	// opens the component's egress to the control namespace.
 	//
 	// The registrar serves the paths the director served for people, so a

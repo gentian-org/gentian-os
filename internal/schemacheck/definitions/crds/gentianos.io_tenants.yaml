@@ -1162,11 +1162,12 @@ spec:
                 properties:
                   adminsEnter:
                     description: |-
-                      AdminsEnter says the members of the platform's administrators' group
-                      may sign in to this tenant, through the kernel realm, and hold its
-                      admins group for as long as they hold that one: the tenant's realm
-                      composes the identity provider "kernel" while this is on. Off unless
-                      the tenant's own administrators turn it on.
+                      AdminsEnter says the cluster's administrators (the Cluster claim's
+                      role holders admin) may sign in to this tenant, through the kernel
+                      realm, and are given its position tenant-administrator, which is taken
+                      again when this goes off: the tenant's realm composes the identity
+                      provider "kernel" while this is on. Off unless the tenant's own
+                      administrators turn it on.
                     type: boolean
                 type: object
               positionGivers:
@@ -1224,8 +1225,9 @@ spec:
                 x-kubernetes-list-type: map
               positions:
                 description: |-
-                  Positions are the tenant's own positions, beside the three every
-                  tenant has; see TenantPosition.
+                  Positions are the tenant's own positions, beside the four every
+                  tenant has (user, all-apps, app-administrator, tenant-administrator);
+                  see TenantPosition.
                 items:
                   description: |-
                     TenantPosition is a position of the tenant: a named set of roles a kind of

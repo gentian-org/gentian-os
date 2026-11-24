@@ -51,8 +51,8 @@ does with it, and when a kind of thing a bundle can hold is copied by a backup
 and not put back by a restore, or destroyed by a deletion that the list says
 keeps it.
 
-**Order of creation:** the records, stored credentials, the access group, the
-sign-in scope, databases, bucket, cache user, model key, sign-in client, the
+**Order of creation:** the records, stored credentials, the app's entries in
+the rights store, the sign-in scope, databases, bucket, cache user, model key, sign-in client, the
 running app, and with it the files.
 **Order of removal:** the same list backwards. Nothing is destroyed while
 something made after it still needs it.
@@ -98,7 +98,7 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | Cache user | made | not copied | — | made new | kept | removed; its keys stay | kept | removed; its keys stay |
 | The app's own secrets (in the vault): what its profile has the platform generate, and its data is written with | generated | copied, encrypted by the operator | set to the bundle's values; the app is handed them and restarted | set to the bundle's values, at the new tenant's own paths | kept | destroyed | kept | destroyed |
 | Its other stored credentials (in the vault): a database's, a bucket's, a cache's, a sign-in client's, a model key | generated | never copied | — | generated new | kept | destroyed | kept | destroyed |
-| Access group and who is in it | made | copied, inside the realm | kept under its id, its roles and who is in it put back | made by the platform; who is in it put back | kept | destroyed | kept | destroyed |
+| The app's entries in the rights store: who holds a role on it | written | a person's own role copied, in the manifest with the tenant's rights; what positions hold follows from git | put back, from a bundle this cluster signed | what positions hold written from git; a person's own not brought, and named | kept | destroyed | kept | destroyed |
 | Sign-in scope | made | not copied | — | made new | kept | destroyed | kept | destroyed |
 | Sign-in client | made | copied, inside the realm, its secret masked | kept: the bundle's is not put over it | made new by the platform, never from the bundle | removed | — | removed, with the running app | destroyed |
 | Model key (an app that declared the model gateway, on a cluster that serves models) | made | not copied | — | made new | kept | removed | kept | removed |
@@ -108,7 +108,7 @@ with it. *destroyed* = deleted with what it held. "—" = not touched.
 | **What a tenant owns that is no app's** | | | | | | | | |
 | The tenant's entry in git | committed | its settings are copied | — | committed from the bundle | the app is taken off it | — | removed | removed |
 | The namespace | made | — | — | made new | — | — | kept | destroyed |
-| The realm: people, groups, roles | made | copied | clients, roles and groups here kept under their ids, groups given back their roles and attributes; the tenant's missing ones added (a client with a new secret, at this domain); missing people added | made new, then filled | — | — | kept, switched off | destroyed |
+| The realm: people, and any groups and roles the tenant made | made | copied | clients, roles and groups here kept under their ids, groups given back their roles and attributes; the tenant's missing ones added (a client with a new secret, at this domain); missing people added | made new, then filled | — | — | kept, switched off | destroyed |
 | People's passwords | set by each person | never copied | not put back | not brought | — | — | kept | destroyed |
 | The desktop's database | made | copied | put back | made new, then filled | — | — | kept | destroyed (the platform tenant's is emptied: the database itself is the cluster's) |
 | The tenant's own stored credentials (in the vault) | generated | never copied | — | generated new | — | — | kept | destroyed |
@@ -326,8 +326,8 @@ the dependency the bundle exists to remove ([data-ownership.md](data-ownership.m
 
 **Uninstall and purge.** This is the critical difference. *Uninstalling*
 removes the running app and its sign-in client. Everything the app stored
-stays: databases, bucket, files, stored credentials, cache user, the access
-group with its members. The app is then **retained**: gone from the tenant's
+stays: databases, bucket, files, stored credentials, cache user, and who
+holds a role on it in the rights store. The app is then **retained**: gone from the tenant's
 screen, data still there. Installing it again finds all of it. *Purging* is
 asked for separately, is refused while the app is still installed, and
 destroys everything that was retained. It cannot be undone. Until then the

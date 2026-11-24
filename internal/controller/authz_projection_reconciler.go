@@ -132,7 +132,7 @@ func (r *AuthzProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Reques
 	}
 
 	// What each tenant has installed, so that an app's tile and its route can
-	// be asked about, and the positions each tenant has: the three every
+	// be asked about, and the positions each tenant has: the four every
 	// tenant has, and the ones it declares.
 	apps, positions, err := r.declared(ctx)
 	if err != nil {

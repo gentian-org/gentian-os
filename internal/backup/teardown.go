@@ -52,8 +52,8 @@ const (
 	// provisioning seeds for each store below, and the secrets generated for
 	// the app and for its extensions.
 	KindCredentials Kind = "credentials"
-	// KindAccessGroup is the identity provider's group that says who may use
-	// the app, and its memberships.
+	// KindAccessGroup is what the rights store holds on the app: who was
+	// given a role on it. The name is the one the answers carry.
 	KindAccessGroup Kind = "accessGroup"
 	// KindDatabase is the app's relational database and its login role.
 	KindDatabase Kind = "database"
@@ -73,8 +73,8 @@ const (
 	// (requires.services.authorization).
 	KindAuthorization Kind = "authorization"
 	// KindSignInClient is the app's OIDC or SAML client in the tenant's
-	// realm, with what is part of it: its client role, its default-scope
-	// assignments, and the access group's mapping to that role.
+	// realm, with what is part of it: its client role and its default-scope
+	// assignments.
 	KindSignInClient Kind = "signInClient"
 	// KindWorkloads is the app's Helm release: everything its chart renders
 	// except the volume claims.

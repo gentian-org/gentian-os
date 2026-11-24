@@ -192,8 +192,9 @@ anything else.
 
 - `tenants[].users` is the number of enabled accounts in the tenant's realm
   -- or, for a tenant people sign up to themselves (`spec.signUp.enabled`),
-  the number of its members: an account made on the registration page is in
-  no group of the tenant and is not a user of it.
+  the number of its people, the holders of the position User: an account
+  made on the registration page holds no position of the tenant unless
+  `spec.signUp.positions` gives one, and is not a user of it.
 - `tenants[].uid` is the tenant's `metadata.uid`: random, never reused and
   not derived from its name, so a tenant deleted and made again under the
   same name is another tenant to the receiver. A store names its partner
@@ -204,11 +205,11 @@ anything else.
   it (AD-17).
 - `apps` lists only the apps installed through the App Store: the entries of
   `Tenant.spec.apps` that carry a `digest`. `users` is the number of people
-  entitled to the app, the members of its group.
+  holding a role on the app, as the rights store names them.
 - `addons` lists, under each listed app, the add-ons of it that are pinned to
   a build: the entries of that app's `addonPins` whose add-on is in its
-  `addons`. `users` is the number of people entitled to the add-on, the
-  members of its own group, counted as an app's are. The key is always sent,
+  `addons`. `users` is the number of people holding a role on the add-on,
+  counted as an app's are. The key is always sent,
   `[]` for an app with none. An add-on activated with no pin is not listed,
   as an app with no `digest` is not. The director pins an add-on only inside
   an app that is itself pinned, so a pinned add-on always has a listed app to
@@ -467,7 +468,7 @@ In provisioning order.
 | --- | --- | --- |
 | Provisioning records | every provisioning Job, and the operator's labeled Secrets, from the first step on | Jobs, their pods and labeled Secrets; found by the tenant's and the app's labels. A teardown's own Jobs are records too, which is why they go last. |
 | Stored credentials | the tenant reconciler's seeders, before each store and for generated secrets | Vault paths `…/apps/<app>` and `…/apps/<app>-<extension>`. A tenant's deletion removes them with the tenant's whole vault subtree. |
-| Access group and memberships | the tenant's identity Job, from `Tenant.spec.apps` | Carried inside the realm export; a purge destroys it in the tenant's own realm. |
+| The app's entries in the rights store | the operator, from `Tenant.spec.apps` and from what is given on the app | Who holds a role on the app. A person's own role is carried in the bundle's manifest with the tenant's rights; what positions hold follows from the tenant's entry in git. A purge removes every entry on the app and on each extension. |
 | Sign-in scope | the tenant's identity Job, from the OIDC pack the app's profile names | The client scope with its mappers. Kept at an uninstall: taking it away there would need the uninstall to talk to the identity provider, and an uninstall is a commit nobody waits on. A purge destroys it unless an installed app names the same scope or it is one of Keycloak's own, and with it the app's client if one is left: the identity Job makes the client before the release is rendered, so an install that never got that far leaves one its uninstall does not remove. |
 | Database and role | a role Job and a CloudNativePG Database, or a MariaDB setup Job | A bundle holds a dump of the provisioned database and of every other database that is the app's (§9.3). A restore replaces the provisioned one; each other one is created if missing and replaced, under the provisioned name here when that is not the one in the bundle -- the tenant's database prefix differs between where the bundle was taken and here (`<source>_x` becomes `<target>_x`; on PostgreSQL any other name `y` becomes `<target>_y`); one that is the app's now and that the bundle does not hold is left, and named. A PostgreSQL database owned by another role is never replaced: the restore fails first. |
 | Object storage | the bucket Job | A restore makes the bucket, its user and its policy with the code install uses, then writes the objects, removing objects the bundle does not hold. |
@@ -480,7 +481,7 @@ In provisioning order.
 | Bundle companions | applied with the profile, from the same file | The Composition, OIDC pack catalog, ConfigMaps and customization records a profile's bundle brings. Kept by every act. |
 
 So the teardown order is: files, workloads, sign-in client, model key, cache,
-object storage, database, sign-in scope, access group, stored credentials,
+object storage, database, sign-in scope, the rights store's entries, stored credentials,
 provisioning records. A purge of an app runs the steps of that list that
 destroy (the workloads and the client went with the uninstall). A tenant's
 deletion removes the workloads first — its Components, and with each the App
@@ -535,8 +536,9 @@ which captures what an uninstalled app left (§9.4); the read answers
 `present` or `absent` for a bucket, a cache user and a MariaDB database from
 it without running anything, and `unknown` only when the record could not be
 read. A PostgreSQL database is also found through the CloudNativePG Database
-object; files, credentials and the access group by the claims, vault paths and
-group names themselves.
+object; files and credentials by the claims and vault paths themselves, and
+the rights store's entries by asking the store for what it holds on the app
+(`internal/applifecycle/retained.go`).
 
 Which databases are an app's is one rule that export, restore and purge
 share. The provisioned database is. On PostgreSQL so is every other database

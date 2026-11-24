@@ -35,7 +35,7 @@ import (
 // the platform made by itself. The director holds no credential, not for
 // mail and not for Keycloak; the operator holds both already -- the SMTP
 // settings it configures every realm with, and the admin client it reads
-// groups with -- so it sends on the director's behalf, as it publishes the
+// people with -- so it sends on the director's behalf, as it publishes the
 // director's notices into the console.
 //
 // The director names an event, never the words: each event's subject and
