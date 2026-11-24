@@ -428,7 +428,7 @@ func (s *Server) routes() {
 	// and by the component itself.
 	s.linking("POST /v1/tenants/{t}/vouching/{profile}/link", s.linkVouching)
 	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people", s.vouchingPeople)
-	s.linkHolders("GET /v1/tenants/{t}/vouching/{profile}/people/{id}", s.vouchingLinked)
+	s.linkReaders("GET /v1/tenants/{t}/vouching/{profile}/people/{id}", s.vouchingLinked)
 	s.linkHolders("DELETE /v1/tenants/{t}/vouching/{profile}/people/{id}", s.unlinkVouching)
 
 	// Positions a tenant lets a component give its people and take again

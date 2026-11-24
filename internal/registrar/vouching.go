@@ -11,11 +11,13 @@ SPDX-License-Identifier: MPL-2.0
 package registrar
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
@@ -69,7 +71,45 @@ import (
 // and a key is not a token, so everywhere else it is a caller nobody could
 // identify.
 func (s *Server) linkHolders(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
-	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc(pattern, s.holders(pattern, h, false))
+}
+
+// linkReaders registers the route that says whether one person is linked:
+// for the three callers of linkHolders, and for the component's consent
+// page, by its own key. The page asks so that it can tell a person to link
+// before the component needs it, and learns nothing else: no other route
+// takes its key, and a link it could make or take away it can only ask
+// about.
+func (s *Server) linkReaders(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
+	s.mux.HandleFunc(pattern, s.holders(pattern, h, true))
+}
+
+// consentReader is the entry whose consent page's key the request carries,
+// for the tenant and the component in its path, or nil.
+func (s *Server) consentReader(r *http.Request) *VouchingKey {
+	bearer := guard.Bearer(r)
+	if bearer == "" {
+		return nil
+	}
+	hash := []byte(componentkeys.Hash(bearer))
+	tenant, profile := r.PathValue("t"), r.PathValue("profile")
+	return s.cfg.VouchingKeys.Where(func(v VouchingKey) bool {
+		return v.ConsentKeyHash != "" && v.Tenant == tenant && v.Component == profile &&
+			subtle.ConstantTimeCompare(hash, []byte(v.ConsentKeyHash)) == 1
+	})
+}
+
+func (s *Server) holders(pattern string, h func(http.ResponseWriter, *http.Request, call), pageReads bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if pageReads {
+			if reader := s.consentReader(r); reader != nil {
+				h(w, r, call{
+					component: "component:" + reader.Tenant + "/" + reader.Consent,
+					decision:  "consent_page_key vouching:" + reader.Tenant + "/" + reader.Component,
+				})
+				return
+			}
+		}
 		if holder := s.cfg.VouchingKeys.Find(guard.Bearer(r)); holder != nil {
 			if c, ok := s.admitComponent(w, r, pattern, holder); ok {
 				h(w, r, c)
@@ -85,7 +125,7 @@ func (s *Server) linkHolders(pattern string, h func(http.ResponseWriter, *http.R
 		if c, ok := s.authorizeAs(w, r, pattern, relation, tenantObject); ok {
 			h(w, r, c)
 		}
-	})
+	}
 }
 
 // consentIssuedTo is the client the front door exchanges a session's token

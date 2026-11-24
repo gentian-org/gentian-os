@@ -68,6 +68,12 @@ type Commission struct {
 type Vouching struct {
 	Key
 	Consent string `json:"consent,omitempty"`
+	// ConsentKeyHash is the hash of the consent page's own key (the one its
+	// component holds for the rights check), where Consent names a page. The
+	// registrar takes that key for one question about this component:
+	// whether one person is linked to it. Empty where Consent is, or where
+	// the page's component holds no key.
+	ConsentKeyHash string `json:"consentKeyHash,omitempty"`
 }
 
 // PositionGiver is an entry of the registrar's list of position givers: a
