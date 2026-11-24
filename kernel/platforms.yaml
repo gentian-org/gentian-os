@@ -319,17 +319,55 @@ dnsProviders:
   # A zone this cluster's operator runs themselves — BIND, Knot, PowerDNS —
   # updated over dynamic DNS. The self-hosted answer to DNS-01, and the only
   # one that needs no account anywhere.
+  #
+  # What the nameserver has to allow, for the one TSIG key named here:
+  #
+  #   dynamic updates (RFC 2136)   cert-manager writes the DNS-01 challenge
+  #                                and external-dns writes every record
+  #   zone transfers (AXFR)        the only way external-dns can read a zone
+  #                                back over this protocol; without it, it
+  #                                never updates or removes a record
+  #
+  # On PowerDNS that is dnsupdate=yes, and on the zone the metadata
+  # TSIG-ALLOW-DNSUPDATE, ALLOW-DNSUPDATE-FROM and TSIG-ALLOW-AXFR, with the
+  # cluster's egress address in allow-axfr-ips. A server that offers only an
+  # HTTP API is not this entry.
   rfc2136:
     displayName: Self-hosted zone (RFC2136 dynamic update)
     requiredParams:
+      # The authoritative server's address, as IP or IP:port, an IPv6 address
+      # in square brackets. Port 53 when none is given. An address and not a
+      # name: cert-manager's solver refuses a hostname here.
       - nameserver
       - tsigKeyName
+      # The zone itself. Asked for, because the kernel domain is a hostname
+      # and commonly sits below the zone: external-dns transfers the zone by
+      # name, and a name that is not a zone is refused by the server.
+      - zone
+    # What a param has to look like, as a regular expression over the whole
+    # value. Checked by the installer before anything is applied and by both
+    # charts at render, so a value one consumer would refuse stops there
+    # rather than at the first certificate order.
+    paramPatterns:
+      nameserver: '^([0-9]{1,3}(\.[0-9]{1,3}){3}|\[[0-9A-Fa-f:]+\])(:[0-9]{1,5})?$'
+      # The algorithms cert-manager and external-dns both speak.
+      tsigAlgorithm: '^HMACSHA(1|256|512)$'
     credential:
       secretName: rfc2136-credentials
       vaultPath: gentian-os/kernel/dns/rfc2136
       displayName: RFC2136 TSIG Secret
+      # Bootstrap, because the kernel wildcard is ordered during the install
+      # and nothing can order it without this. The custodian that collects
+      # runtime credentials is served under that very certificate.
+      phase: bootstrap
       description: >
-        The TSIG key material the nameserver accepts dynamic updates under.
+        The TSIG key material the nameserver accepts dynamic updates and zone
+        transfers under, base64 as the nameserver prints it.
+      # The shape of the secret and nothing more: a signed DNS query is beyond
+      # curl and openssl, which is the ceiling on an install-time probe. A key
+      # the server refuses is therefore reported by cert-manager at the first
+      # order, not here.
+      validate: tsig-secret
       fields:
         - key: tsig-secret
           format: token
@@ -347,6 +385,28 @@ dnsProviders:
       provider: rfc2136
       secretKeys:
         rfc2136_tsig_secret: tsig-secret
+      # external-dns reads a flag's value from EXTERNAL_DNS_<FLAG>, so the
+      # variable is named rather than derived from the key above.
+      env:
+        EXTERNAL_DNS_RFC2136_TSIG_SECRET: rfc2136_tsig_secret
+      # Arguments external-dns needs beyond its credential. Each is a Go
+      # template rendered against the bootstrap chart's values; one that
+      # renders several lines is several arguments, and an empty one is
+      # dropped.
+      args:
+        # nameserver is cert-manager's spelling, host and port in one value;
+        # external-dns takes them apart, and its default port is 0.
+        - '--rfc2136-host={{ regexReplaceAll ":[0-9]+$" .Values.dnsParams.nameserver "" | trimPrefix "[" | trimSuffix "]" }}'
+        - '--rfc2136-port={{ regexFind ":[0-9]+$" .Values.dnsParams.nameserver | trimPrefix ":" | default "53" }}'
+        - '--rfc2136-zone={{ .Values.dnsParams.zone }}'
+        # The zones of tenants served on a domain of their own, which the same
+        # server and key have to cover.
+        - '{{ range .Values.dnsZones }}--rfc2136-zone={{ . }}{{ "\n" }}{{ end }}'
+        - '--rfc2136-tsig-keyname={{ .Values.dnsParams.tsigKeyName }}'
+        # One setting, two spellings: cert-manager's HMACSHA512 is
+        # external-dns's hmac-sha512.
+        - '--rfc2136-tsig-secret-alg={{ .Values.dnsParams.tsigAlgorithm | default "HMACSHA512" | lower | replace "hmacsha" "hmac-sha" }}'
+        - '--rfc2136-axfr'
 
   # ── Providers reached through a webhook ────────────────────────────────────
   # Neither Hetzner DNS nor Infomaniak has a solver built into cert-manager, and

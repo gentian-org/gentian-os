@@ -538,6 +538,9 @@ ensure_cluster_deployment() {
         prompt_mail_mode
         prompt_cluster_settings
     fi
+    # Asked or read from the claim, the DNS provider's params are checked
+    # either way, before the first step runs.
+    check_dns_params
     scaffold_cluster_deployment
 }
 

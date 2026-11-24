@@ -180,4 +180,36 @@ out="$(run GENTIAN_NONINTERACTIVE=1 GENTIAN_DEPLOYMENTS_REPO=https://git.example
 is "with it, the run goes on with that address" "${out}" "https://git.example.test/d main"
 if ! grep -q 'git\.example\.domain' scripts/lib/common.sh; then ok "the example address is no longer in the installer"; else bad "the example address is no longer in the installer"; fi
 
+# --- the DNS provider's params -----------------------------------------------
+# Read from the claim and never checked, so a provider chosen without them
+# stopped the install several steps in, at the first chart that needed one.
+params='check_dns_params; echo "rc=$?"'
+out="$(run DNS_PROVIDER=rfc2136 DNS_PARAMS=nameserver=192.0.2.10:53,tsigKeyName=k,zone=example.org -- "${params}")"
+is "rfc2136 with its nameserver, key name and zone: the run goes on" "${out}" "rc=0"
+out="$(run DNS_PROVIDER=rfc2136 DNS_PARAMS=nameserver=192.0.2.10,tsigKeyName=k -- "${params}")"
+has "rfc2136 without a zone: the run stops before the first step and names it" "${out}" "requires certificates.dnsParams.zone" "rc="
+out="$(run DNS_PROVIDER=rfc2136 DNS_PARAMS=nameserver=ns1.example.org,tsigKeyName=k,zone=example.org -- "${params}")"
+has "a nameserver by name is refused: cert-manager takes an address" "${out}" "certificates.dnsParams.nameserver is 'ns1.example.org'" "rc="
+is "under another issuer mode the params are nobody's business" \
+    "$(run DNS_PROVIDER=rfc2136 CERT_ISSUER_MODE=self-signed -- "${params}")" "rc=0"
+is "cloudflare requires none" "$(run DNS_PROVIDER=cloudflare -- "${params}")" "rc=0"
+is "unattended, a missing param is not asked for; the check reports it" \
+    "$(run GENTIAN_NONINTERACTIVE=1 DNS_PROVIDER=rfc2136 -- 'prompt_dns_params; echo "[${DNS_PARAMS:-}]"')" "[]"
+is "asked for, the answers join DNS_PARAMS, which the scaffold writes to the claim" \
+    "$(printf '192.0.2.10\nk\nexample.org\n' | run DNS_PROVIDER=rfc2136 -- 'prompt_dns_params; echo "[${DNS_PARAMS:-}]"')" \
+    "[nameserver=192.0.2.10,tsigKeyName=k,zone=example.org]"
+
+# --- the TSIG secret ---------------------------------------------------------
+# Its shape only: a signed DNS query is beyond curl and openssl.
+tsig='validate_tsig_secret "$1" >/dev/null 2>&1; echo "rc=$?"'
+tsig_rc() { run -- "set -- '$1'; ${tsig}"; }
+is "a 64-byte key, as pdnsutil prints one, passes" \
+    "$(tsig_rc "$(head -c 64 /dev/zero | openssl base64 -A)")" "rc=0"
+is "the key's name is not the key" "$(tsig_rc "gentian-key.")" "rc=1"
+is "a key cut short is refused" "$(tsig_rc "c2hvcnQ=")" "rc=1"
+is "rfc2136's credential is collected at install, where the wildcard needs it" \
+    "$(run DNS_PROVIDER=rfc2136 -- 'catalogue_names bootstrap | grep -c "^acme-dns-rfc2136$"')" "1"
+is "and a malformed one fails its requirement" \
+    "$(run DNS_PROVIDER=rfc2136 GENTIAN_DNS_TSIG_SECRET=not-a-key -- '_validate_requirement acme-dns-rfc2136 >/dev/null 2>&1; echo "rc=$?"')" "rc=1"
+
 finish

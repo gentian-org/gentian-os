@@ -1474,6 +1474,87 @@ prompt_claim_value() {
     return 0
 }
 
+# _dns_param <key> — one value out of DNS_PARAMS (k=v,k=v), or nothing.
+_dns_param() {
+    local want="$1" pair
+    while IFS= read -r pair; do
+        if [[ "${pair%%=*}" == "${want}" && "${pair}" == *=* ]]; then
+            printf '%s' "${pair#*=}"
+            return 0
+        fi
+    done < <(printf '%s\n' "${DNS_PARAMS:-}" | tr ',' '\n')
+    return 1
+}
+
+# _dns_provider_list <yq filter under the provider's entry> — one item a line.
+_dns_provider_list() {
+    yq_get ".dnsProviders.\"${DNS_PROVIDER:-cloudflare}\"$1" \
+        "${GENTIAN_PLATFORMS_FILE:-${SCRIPT_DIR}/kernel/platforms.yaml}" 2>/dev/null || true
+}
+
+# prompt_dns_params — what the zone's host needs beyond its credential.
+#
+# Each DNS provider names its required params in kernel/platforms.yaml
+# (certificates.dnsParams on the claim): the nameserver, zone and key name of a
+# self-hosted zone, Route 53's region. They were read from the claim and never
+# asked for, so a first install that chose such a provider wrote a claim
+# without them and stopped several steps in, at the first chart that needed
+# one. Asked here instead, and added to DNS_PARAMS so the scaffold writes them.
+prompt_dns_params() {
+    [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]] || return 0
+    local key value
+    for key in $(_dns_provider_list '.requiredParams[]'); do
+        _dns_param "${key}" >/dev/null && continue
+        [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]] && continue   # check_dns_params reports it
+        value=""
+        while [[ -z "${value}" ]]; do
+            read -rp "  certificates.dnsParams.${key} (required by dnsProvider ${DNS_PROVIDER}): " value
+            if [[ "${value}" == *,* || "${value}" == *=* ]]; then
+                warn "A value may not contain ',' or '='."
+                value=""
+            fi
+        done
+        DNS_PARAMS="${DNS_PARAMS:+${DNS_PARAMS},}${key}=${value}"
+    done
+    export DNS_PARAMS
+    return 0
+}
+
+# check_dns_params — stop before anything is applied when the provider's
+# params are missing or malformed.
+#
+# The charts make the same two checks at render (requiredParams and
+# paramPatterns, both from kernel/platforms.yaml), but the first of them
+# renders at A-06, with half a cluster already installed. This is the same
+# answer at the point where stopping costs nothing.
+check_dns_params() {
+    [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]] || return 0
+    local key value pattern failed=0
+    for key in $(_dns_provider_list '.requiredParams[]'); do
+        if ! _dns_param "${key}" >/dev/null; then
+            error "dnsProvider ${DNS_PROVIDER} requires certificates.dnsParams.${key}."
+            failed=1
+        fi
+    done
+    for key in $(_dns_provider_list '.paramPatterns | keys | .[]'); do
+        value="$(_dns_param "${key}" || true)"
+        [[ -n "${value}" ]] || continue
+        pattern="$(_dns_provider_list ".paramPatterns.${key}")"
+        if [[ -n "${pattern}" && ! "${value}" =~ ${pattern} ]]; then
+            error "certificates.dnsParams.${key} is '${value}', which dnsProvider ${DNS_PROVIDER} does not accept."
+            error "  It has to match ${pattern}"
+            failed=1
+        fi
+    done
+    if (( failed )); then
+        error "  Set them under spec.certificates.dnsParams on the Cluster claim"
+        error "  (or DNS_PARAMS=key=value,key=value for a first install); see the"
+        error "  provider's entry in kernel/platforms.yaml for what each one is."
+        exit 1
+    fi
+    return 0
+}
+
 # prompt_cluster_settings — the rest of what the Cluster claim decides.
 #
 # The exposure model, the issuer and the mail model are asked by their own
@@ -1523,6 +1604,7 @@ prompt_cluster_settings() {
     if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]; then
         prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" cloudflare \
             "cloudflare route53 clouddns azuredns rfc2136 hetzner infomaniak"
+        prompt_dns_params
     fi
     # Written to the platform tenant, not the claim: the same spec.admin every
     # tenant's administrator is handed over by.

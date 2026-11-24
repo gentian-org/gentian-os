@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package custodian
 
 import (
+	"encoding/base64"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -92,6 +93,8 @@ func (v *EndpointValidator) Validate(ctx context.Context, kind, host string, fie
 		return v.smtpProbe(ctx, fields)
 	case "cloudflare-dns":
 		return v.cloudflareZoneProbe(ctx, fields["api-token"])
+	case "tsig-secret":
+		return tsigSecretShape(fields["tsig-secret"])
 	default:
 		return fmt.Errorf("unknown validator type %q", kind)
 	}
@@ -284,6 +287,31 @@ func (a loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unexpected AUTH LOGIN challenge %q", string(fromServer))
 	}
+}
+
+// tsigSecretMinBytes is the shortest key accepted: 128 bits, below which an
+// HMAC key is weaker than any algorithm it would be used with.
+const tsigSecretMinBytes = 16
+
+// tsigSecretShape checks that a TSIG secret is what a nameserver prints for
+// one: standard base64 of a key at least tsigSecretMinBytes long.
+//
+// The shape and nothing more, the same check the installer makes
+// (validate_tsig_secret in scripts/lib/validators.sh). It catches a key name
+// pasted where the key belongs and a secret cut short in copying; whether the
+// nameserver accepts the key is not asked here.
+func tsigSecretShape(secret string) error {
+	if secret == "" {
+		return fmt.Errorf("the tsig-secret is empty")
+	}
+	key, err := base64.StdEncoding.DecodeString(secret)
+	if err != nil {
+		return fmt.Errorf("the tsig-secret is not base64: a TSIG key is entered as the nameserver prints it, not as its name")
+	}
+	if len(key) < tsigSecretMinBytes {
+		return fmt.Errorf("the tsig-secret decodes to %d bytes; a TSIG key is at least %d", len(key), tsigSecretMinBytes)
+	}
+	return nil
 }
 
 // cloudflareZoneProbe checks that the token can reach the zone DNS-01 has to

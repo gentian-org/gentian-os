@@ -174,7 +174,10 @@ type CredentialValidation struct {
 	// grant, where cloudflare-dns's is zone-scoped, so a token can pass one and
 	// fail the other. It is a separate value here for the same reason it is a
 	// separate credential — see kernel/platforms.yaml's edgeIngress table.
-	// +kubebuilder:validation:Enum=oci-registry;git-https;oidc-discovery;cloudflare-dns;cloudflare-tunnel;smtp;noop
+	// tsig-secret checks the shape of a TSIG key and nothing else: that it is
+	// base64 and long enough to be an HMAC key. Whether the nameserver accepts
+	// it takes a signed DNS query, which is beyond curl and openssl.
+	// +kubebuilder:validation:Enum=oci-registry;git-https;oidc-discovery;cloudflare-dns;cloudflare-tunnel;tsig-secret;smtp;noop
 	Type string `json:"type"`
 
 	// Host is the endpoint probed, when the validator needs one that is not
