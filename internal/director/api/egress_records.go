@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -109,13 +110,31 @@ func egressRecord(e *gentianov1alpha1.EgressRequest) (hosts []string, digest str
 	return slices.Compact(hosts), digest, nil
 }
 
-// startEgressRecords runs the pass once beside the requests, when the
-// program asks for it.
+// egressRecordsRetry is how long the pass waits before it tries again a
+// tenant it could not write: while a rollout puts this director beside an
+// operator of another release, the repository refuses fields it cannot
+// confirm, and the next try after the rollout succeeds.
+var egressRecordsRetry = 5 * time.Minute
+
+// startEgressRecords runs the pass beside the requests, when the program
+// asks for it, and again while a tenant's grants could not be written: until
+// one pass leaves nothing it could not write, or the director stops.
 func (s *Server) startEgressRecords() {
 	if !s.cfg.RecordEgressAnswers {
 		return
 	}
-	s.watch(func(ctx context.Context) { s.RecordEgressAnswers(ctx) })
+	s.watch(func(ctx context.Context) {
+		for {
+			if _, failed := s.recordEgressAnswers(ctx); failed == 0 {
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(egressRecordsRetry):
+			}
+		}
+	})
 }
 
 // RecordEgressAnswers is the pass: for every tenant, every egress grant that
@@ -125,17 +144,25 @@ func (s *Server) startEgressRecords() {
 // read is left as it is. It writes nothing a second time: a grant that
 // records its answer is not touched. It returns how many grants it recorded.
 func (s *Server) RecordEgressAnswers(ctx context.Context) (recorded int) {
+	recorded, _ = s.recordEgressAnswers(ctx)
+	return recorded
+}
+
+// recordEgressAnswers is RecordEgressAnswers, also counting the tenants whose
+// grants it could not read or write.
+func (s *Server) recordEgressAnswers(ctx context.Context) (recorded, failed int) {
 	log := s.cfg.Log.With("worker", "egress-records")
 	tenants, err := s.cfg.Repo.Tenants(ctx)
 	if err != nil {
 		log.WarnContext(ctx, "the tenants could not be listed; no grant was recorded", "error", err.Error())
-		return 0
+		return 0, 1
 	}
 	meta := gitops.Meta{Principal: egressRecordsPrincipal, Decision: "a grant records what it answered"}
 	for _, tenant := range tenants {
 		grants, err := s.cfg.Repo.TenantPrivileges(ctx, tenant)
 		if err != nil {
 			log.WarnContext(ctx, "the tenant's grants could not be read", "tenant", tenant, "error", err.Error())
+			failed++
 			continue
 		}
 		var apps []gitops.App
@@ -147,6 +174,7 @@ func (s *Server) RecordEgressAnswers(ctx context.Context) (recorded int) {
 			if apps == nil {
 				if apps, err = s.cfg.Repo.Apps(ctx, tenant); err != nil {
 					log.WarnContext(ctx, "the tenant's apps could not be read", "tenant", tenant, "error", err.Error())
+					failed++
 					break
 				}
 			}
@@ -167,6 +195,7 @@ func (s *Server) RecordEgressAnswers(ctx context.Context) (recorded int) {
 		res, err := s.cfg.Repo.RecordPrivilegeAnswers(ctx, tenant, records, meta)
 		if err != nil {
 			log.WarnContext(ctx, "what the tenant's egress grants answered could not be recorded", "tenant", tenant, "error", err.Error())
+			failed++
 			continue
 		}
 		if res.Changed {
@@ -174,5 +203,5 @@ func (s *Server) RecordEgressAnswers(ctx context.Context) (recorded int) {
 			log.InfoContext(ctx, "recorded what the tenant's egress grants answered", "tenant", tenant, "grants", len(records), "commit", res.Commit)
 		}
 	}
-	return recorded
+	return recorded, failed
 }
