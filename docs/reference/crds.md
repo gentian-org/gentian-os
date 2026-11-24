@@ -1141,7 +1141,7 @@ OIDCPackCatalog is a cluster-scoped catalog of OIDC packs for tenant apps. Shipp
 | `spec.packs` | map[string]object |  | `Packs` maps OIDC clientId to pack configuration. |
 | `spec.packs{}.clientRole` | string |  | `ClientRole` is the Keycloak client role made on the pack's client. |
 | `spec.packs{}.defaultScopes` | []string |  | `DefaultScopes` are realm default scopes attached before the pack scope. |
-| `spec.packs{}.entitlementGroup` | string |  | `EntitlementGroup` is read by nothing: no group is made and none is mapped to the client role, since no group of the realm carries a right. |
+| `spec.packs{}.entitlementGroup` | string |  | `EntitlementGroup` is accepted and ignored: no group is made and none is mapped to the client role, since no group of the realm carries a right. |
 | `spec.packs{}.fullScopeAllowed` | boolean |  | `FullScopeAllowed` controls Keycloak fullScopeAllowed on the client. |
 | `spec.packs{}.mappers` | []string |  | `Mappers` lists mapper template keys from spec.mapperTemplates. |
 | `spec.packs{}.publicClient` | boolean |  | `PublicClient` marks the OIDC client as PUBLIC (PKCE, no secret). |

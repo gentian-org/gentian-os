@@ -176,7 +176,7 @@ func renderSignIn(tenant string, doc signInPatch) string {
 	}
 	var b strings.Builder
 	b.WriteString("# Managed by the director: tenants of this cluster whose people sign in here\n")
-	b.WriteString("# (signInFrom, with the groups they are given), and tenants this one's people\n")
+	b.WriteString("# (signInFrom, with the positions they are given), and tenants this one's people\n")
 	b.WriteString("# sign in to (signInTo). A sign-in takes both tenants' line.\n")
 	writeTenantHead(&b, tenant)
 	if len(doc.Spec.SignInFrom) > 0 {

@@ -76,11 +76,9 @@ func (s *Server) roleHolders(w http.ResponseWriter, r *http.Request, _ call) {
 }
 
 // reviewedMembers are the registrar's answer for the platform tenant's role
-// holders, as the kernel realm knows them, as the reviewer was shown it. The
-// registrar sends no group; Group stays empty.
+// holders, as the kernel realm knows them, as the reviewer was shown it.
 type reviewedMembers struct {
 	Role    string `json:"role"`
-	Group   string `json:"group"`
 	Members []struct {
 		Username string `json:"username"`
 		Email    string `json:"email"`
@@ -101,7 +99,7 @@ func (s *Server) reviewAccess(w http.ResponseWriter, r *http.Request, c call) {
 		Members      []reviewedMembers `json:"members"`
 		NextReviewAt string            `json:"nextReviewAt"`
 	}
-	usage := `body must be {"members": [{"role", "group", "members": [{"username", "email"}]}], "nextReviewAt": "<RFC 3339, optional>"}: ` +
+	usage := `body must be {"members": [{"role", "members": [{"username", "email"}]}], "nextReviewAt": "<RFC 3339, optional>"}: ` +
 		`the members as the registrar's platform-role-members answered`
 	if err := decode(r, &body); err != nil || body.Members == nil || len(body.Members) > 16 {
 		s.fail(w, r, http.StatusBadRequest, usage)
@@ -138,7 +136,7 @@ func (s *Server) reviewAccess(w http.ResponseWriter, r *http.Request, c call) {
 		case len(who) == 0:
 			who = []string{"(nobody)"}
 		}
-		lines = append(lines, fmt.Sprintf("  - %s through %s: %s", reviewText(g.Role, ""), reviewText(g.Group, ""), strings.Join(who, ", ")))
+		lines = append(lines, fmt.Sprintf("  - %s: %s", reviewText(g.Role, ""), strings.Join(who, ", ")))
 	}
 	for _, h := range holders {
 		until := ""

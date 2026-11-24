@@ -257,9 +257,10 @@ keycloakx:
       value: "true"
     - name: KC_HOSTNAME_STRICT
       value: "false"
-    # Where the listener states a user's groups, and the key it signs with.
-    # The director believes a statement only from a key it lists, and only
-    # about groups the stating realm is entitled to speak for.
+    # Where the listener tells the director of arrivals (a sign-in from
+    # another realm, a registration) and removals, and the key it signs
+    # with. The director believes a statement only from a key it lists, and
+    # only about the realm the key is entitled to speak for.
     - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_DIRECTOR_URL
       value: {{ .Values.global.eventListener.directorURL | quote }}
     - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_KEY_ID
