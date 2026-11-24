@@ -251,5 +251,5 @@ composes each one the set names, and a component that declared an engine waits
 until it answers. An engine is never taken out of the set because the last
 component that declared it went: its data may be all that is left of a removed
 app. A person asks for it to go, and the engine is purged. Mail and LLM are
-switched on by the claim (`mail.serviceMode: system`, `llm.enabled`), and a
+switched on by the claim (`mail.serviceMode: internal`, `llm.enabled`), and a
 cluster that relays mail through a provider composes no mail namespace at all.

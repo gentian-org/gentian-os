@@ -41,16 +41,16 @@ spec:
     # acmeEnv:                   staging until the cluster is proven
     dnsProvider: cloudflare
   mail:
-    serviceMode: system
+    serviceMode: internal
 `
 
 func TestASettingIsReplacedInPlaceAndTheCommentsSurvive(t *testing.T) {
 	t.Parallel()
-	out, changed, err := setClaimValue(claimFixture, "mail.serviceMode", "external")
+	out, changed, err := setClaimValue(claimFixture, "mail.serviceMode", "relay")
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
-	if !strings.Contains(out, "    serviceMode: external") {
+	if !strings.Contains(out, "    serviceMode: relay") {
 		t.Fatalf("value not written:\n%s", out)
 	}
 	for _, comment := range []string{
@@ -131,7 +131,7 @@ func TestAMissingSettingIsInsertedUnderItsParent(t *testing.T) {
 // Setting a value it already has is not a commit.
 func TestSettingWhatIsAlreadyThereChangesNothing(t *testing.T) {
 	t.Parallel()
-	out, changed, err := setClaimValue(claimFixture, "mail.serviceMode", "system")
+	out, changed, err := setClaimValue(claimFixture, "mail.serviceMode", "internal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestAListSettingIsWrittenAsABlockAndReadBackJoined(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("changed=%v err=%v", changed, err)
 	}
-	if strings.Contains(shorter, "gentian.org") || !strings.Contains(shorter, "    dnsZones:\n      - example.ch\n  mail:\n    serviceMode: system") {
+	if strings.Contains(shorter, "gentian.org") || !strings.Contains(shorter, "    dnsZones:\n      - example.ch\n  mail:\n    serviceMode: internal") {
 		t.Fatalf("list not replaced:\n%s", shorter)
 	}
 
@@ -366,7 +366,7 @@ func TestEverySettingsDefaultComesFromTheSchema(t *testing.T) {
 	for path, want := range map[string]string{
 		"certificates.acmeEnv":                 "production",
 		"certificates.issuerMode":              "acme-dns01",
-		"mail.serviceMode":                     "external",
+		"mail.serviceMode":                     "relay",
 		"mail.port":                            "587",
 		"mail.starttls":                        "true",
 		"mail.ssl":                             "false",

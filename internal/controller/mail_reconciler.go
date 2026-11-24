@@ -346,17 +346,17 @@ func mailSharedPostfixHost(kernelDomain string) string {
 //
 // The operator configured it unconditionally: a Keycloak client per realm, a
 // Job per reconcile, a realm-auth Secret and a domains ConfigMap — all for an
-// IMAP server that, with mail.serviceMode external, is not deployed at all.
+// IMAP server that, unless mail.serviceMode is internal, is not deployed at all.
 // Nothing failed, which is why it went unnoticed; it simply provisioned into
 // a void and left Keycloak clients behind for a service that never existed.
 //
-// Empty means external, the safer default: configuring an absent Dovecot is
+// Empty means not internal, the safer default: configuring an absent Dovecot is
 // silent waste, while skipping a present one breaks IMAP authentication
 // visibly and is fixed by setting the value.
 //
 // Read from the claim through gentian-cluster-config rather than from the
-// MailServiceMode field, which is a Helm value and was answering external on a
-// cluster whose claim said kernel — so Dovecot ran, unprovisioned, and the
+// MailServiceMode field, which is a Helm value and was answering relay on a
+// cluster whose claim said internal — so Dovecot ran, unprovisioned, and the
 // ApplicationSet that would have managed it was never rendered. The field
 // remains as the fallback for a cluster whose ConfigMap cannot answer yet.
 // mailFunctionPresent reports whether the mail function's namespace exists.
@@ -373,14 +373,14 @@ func (r *TenantReconciler) mailFunctionPresent(ctx context.Context) (bool, error
 }
 
 func (r *TenantReconciler) dovecotDeployed(ctx context.Context) bool {
-	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == mailServiceModeSystem
+	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == mailServiceModeInternal
 }
 
 // defaultTenantMailMode — what a tenant gets when it does not say.
 //
 // selfhosted unconditionally, before: it means "register in the shared kernel
-// Postfix and Dovecot", and a cluster running mail.serviceMode external has no
-// Dovecot to register in. The default therefore named a stack that did not
+// Postfix and Dovecot", and a cluster running mail.serviceMode relay or
+// external has no Dovecot to register in. The default therefore named a stack that did not
 // exist on every cluster that relays through a provider, which is the common
 // deployment rather than an edge case.
 //
@@ -446,7 +446,7 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 		r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse,
 			"ClusterCannotHost",
 			"spec.mail.mode is selfhosted, and this cluster runs no kernel mail stack "+
-				"(Cluster spec.mail.serviceMode is not 'kernel'), so there is no Postfix or "+
+				"(Cluster spec.mail.serviceMode is not 'internal'), so there is no Postfix or "+
 				"Dovecot to register this tenant in. Use mode 'transport-only' for outbound "+
 				"only, 'external' with an SMTP relay secret, or ask a platform administrator "+
 				"to run the cluster's mail function.")
@@ -1778,7 +1778,8 @@ func (r *TenantReconciler) appMailNeeds(ctx context.Context, tenant *gentianov1a
 // seedPerAppMailRecords writes the per-app mail records that need no mail
 // stack of the tenant's own: an empty SMTP and IMAP record for every app that
 // declares them, and, on a cluster that composes no mail function, the
-// external relay's login in each SMTP record. ensureMail writes the real ones
+// login of the relay or of the mail server outside the cluster in each SMTP
+// record and that server's address in each IMAP record. ensureMail writes the real ones
 // where the tenant has mail, and they replace the empty ones.
 //
 // It runs before the tenant's apps are reconciled, not with the rest of the
@@ -1791,7 +1792,9 @@ func (r *TenantReconciler) seedPerAppMailRecords(ctx context.Context, tenant *ge
 	if err == nil {
 		var present bool
 		if present, err = r.mailFunctionPresent(ctx); err == nil && !present {
-			err = r.seedPerAppRelaySMTP(ctx, tenant)
+			if err = r.seedPerAppRelaySMTP(ctx, tenant); err == nil {
+				err = r.seedPerAppExternalIMAP(ctx, tenant)
+			}
 		}
 	}
 	if err != nil {
@@ -1829,9 +1832,10 @@ func (r *TenantReconciler) seedPerAppEmptyMailSecrets(ctx context.Context, tenan
 }
 
 // seedPerAppRelaySMTP fills the SMTP record of each app that declares one
-// with the cluster's external relay, on a cluster that relays (mail.serviceMode
-// external) and composes no mail function, so there is no per-tenant login
-// to give the app. Every app sends as the relay's one login.
+// with the address and login the cluster sends through, on a cluster that
+// composes no mail function: a relay (mail.serviceMode relay) or a mail
+// server outside the cluster (external). There is no per-tenant login to
+// give the app, so every app sends as that one login.
 //
 // The relay is read from keycloak-smtp-credentials, which the operator already
 // reads for the tenant realms' mail: the ExternalSecret that writes it is the
@@ -1863,8 +1867,39 @@ func (r *TenantReconciler) seedPerAppRelaySMTP(ctx context.Context, tenant *gent
 	return nil
 }
 
-// clusterRelaySMTP is the external relay's address and login, or nil while
-// the relay credential has not been supplied.
+// seedPerAppExternalIMAP fills the IMAP record of each app that declares one
+// with the address of the mail server outside the cluster, on a cluster whose
+// mail is there (mail.serviceMode external). Host and port only, as on a
+// cluster with its own mail: who may open which mailbox is that server's to
+// say, and the cluster holds no login of any person there.
+//
+// The record follows the claim: a server named anew reaches every app.
+func (r *TenantReconciler) seedPerAppExternalIMAP(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	if r.Seeder == nil {
+		return nil
+	}
+	host, port := clusterExternalIMAP(ctx, r.Client)
+	if host == "" {
+		return nil
+	}
+	needs, err := r.appMailNeeds(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	for appName, n := range needs {
+		if !n.imap {
+			continue
+		}
+		if err := r.Seeder.SyncIMAP(ctx, tenant.Name, appName, secrets.IMAPCreds{Host: host, Port: port}); err != nil {
+			return fmt.Errorf("seed external imap for %s: %w", appName, err)
+		}
+	}
+	return nil
+}
+
+// clusterRelaySMTP is the address and login the cluster sends through, a
+// relay's or an external mail server's, or nil while the credential has not
+// been supplied.
 func (r *TenantReconciler) clusterRelaySMTP(ctx context.Context) (*secrets.SMTPCreds, error) {
 	sec := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace}, sec)

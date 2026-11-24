@@ -133,9 +133,9 @@ installer_smtp() ( # <realm> <mode>
     export SMTP_SSL="${KC_SMTP_SSL}" SMTP_STARTTLS="${KC_SMTP_STARTTLS}" SMTP_FROM="${KC_SMTP_FROM}"
     _keycloak_smtp_configure_shell | sh -eu >/dev/null
 )
-new_realm kernel-own;   installer_smtp kernel-own system
+new_realm kernel-own;   installer_smtp kernel-own internal
 expect_login "kernel realm, the cluster's own mail" kernel-own "gentian-system@example.org"
-new_realm kernel-relay; installer_smtp kernel-relay external
+new_realm kernel-relay; installer_smtp kernel-relay relay
 expect_login "kernel realm, a relay" kernel-relay "relay-user"
 
 # ── a tenant realm: the operator's Job script, with the Job's environment ──
@@ -143,7 +143,7 @@ job_smtp() ( # <realm> <mode>
     export REALM_SMTP_LAB_REALM="$1" MAIL_SERVICE_MODE="$2" KEYCLOAK_URL="${KC}"
     export KEYCLOAK_CLIENT_ID=gentian-operator KEYCLOAK_CLIENT_SECRET="${ADMIN_PW}"
     export SMTP_CONFIGURE=true SMTP_PORT=587 SMTP_SSL=false SMTP_STARTTLS=true SMTP_FROM=noreply@example.org SMTP_FROM_NAME="Example Cloud"
-    if [[ "$2" == "system" ]]; then
+    if [[ "$2" == "internal" ]]; then
         # keycloak-smtp-credentials holds the kernel realm's login here, and
         # mail-submission-<tenant> the tenant realm's own.
         export SMTP_HOST=mail.example.org SMTP_USER=gentian-system@example.org SMTP_PASSWORD="${KERNEL_PW}"
@@ -153,9 +153,9 @@ job_smtp() ( # <realm> <mode>
     fi
     go test ./internal/controller/ -run 'TestTenantSMTPScriptAgainstKeycloak$' -count=1 >"${W}/job.log" 2>&1 || { cat "${W}/job.log" >&2; exit 1; }
 )
-new_realm tenant-own;   job_smtp tenant-own system
+new_realm tenant-own;   job_smtp tenant-own internal
 expect_login "tenant realm, the cluster's own mail" tenant-own "noreply@team.example.org"
-new_realm tenant-relay; job_smtp tenant-relay external
+new_realm tenant-relay; job_smtp tenant-relay relay
 expect_login "tenant realm, a relay" tenant-relay "relay-user"
 
 # ── what Keycloak does with a write that leaves the password out ───────────
@@ -168,7 +168,7 @@ expect_login "the mask written back with the login unchanged keeps the password"
 set_smtp tenant-own "$(smtp_of tenant-own '.smtpServer | del(.password)')"
 if [[ -z "$(sends tenant-own)" ]]; then ok "a mail server written without its password loses it: nothing is sent"
 else bad "a mail server written without its password still sends: the writers no longer need to carry it"; fi
-job_smtp tenant-own system
+job_smtp tenant-own internal
 expect_login "the Job run again puts the password back" tenant-own "noreply@team.example.org"
 set_smtp tenant-own "$(smtp_of tenant-own '.smtpServer | .user = "relay-user"')"
 if [[ -z "$(sends tenant-own)" ]]; then ok "the mask beside a changed login drops the password: nothing is sent"

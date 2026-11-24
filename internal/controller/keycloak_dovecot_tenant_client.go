@@ -109,7 +109,7 @@ func (r *TenantReconciler) dovecotTenantClientReady(ctx context.Context, tenant 
 // KERNEL realm, where the cluster admin and every tenant that adopts the realm
 // have their mailboxes.
 //
-// cluster-default composes it, on a cluster whose mail.serviceMode is system,
+// cluster-default composes it, on a cluster whose mail.serviceMode is internal,
 // with the secret read from dovecot-admin where Dovecot keeps it. It replaces a
 // Job that created the same client and could not be given that secret outside
 // Dovecot's namespace.

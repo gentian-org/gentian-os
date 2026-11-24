@@ -512,24 +512,27 @@ func findCondition(tenant *gentianov1alpha1.Tenant, condType string) *metav1.Con
 //
 // Tested on the predicate rather than through a reconcile, because the envtest
 // harness runs one reconciler for the whole suite in kernel mode; the point
-// here is what the predicate answers, and that empty is external.
+// here is what the predicate answers, and that empty is not internal.
 func TestDovecotDeployed(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		mode string
 		want bool
 	}{
-		{"system", true},
+		{"internal", true},
+		{"relay", false},
+		// A mail server outside the cluster is no Dovecot here either.
 		{"external", false},
-		// Unset is external: configuring an absent Dovecot is silent waste,
+		// Unset is not internal: configuring an absent Dovecot is silent waste,
 		// while skipping a present one fails IMAP visibly and is fixed by
 		// setting the value. Of the two, prefer the loud one.
 		{"", false},
-		// Anything unrecognized is not the system stack. A typo must not
-		// provision -- and neither must "kernel", the value this was called
-		// before the rename: a claim that still says it means nothing now,
-		// and meaning "external" is the safe reading of nothing.
-		{"System", false},
+		// Anything unrecognized is not the cluster's own stack. A typo must
+		// not provision -- and neither must "system" or "kernel", the values
+		// this was called before: a claim that still says one means nothing
+		// now, and "no mail stack here" is the safe reading of nothing.
+		{"Internal", false},
+		{"system", false},
 		{"kernel", false},
 		{"selfhosted", false},
 	} {
@@ -543,7 +546,7 @@ func TestDovecotDeployed(t *testing.T) {
 // The mail-mode default.
 //
 // selfhosted unconditionally, before — which means "register in the shared
-// kernel Postfix and Dovecot" on a cluster whose mail.serviceMode is external
+// kernel Postfix and Dovecot" on a cluster whose mail.serviceMode is relay
 // and has neither. Every tenant on a relaying cluster therefore defaulted to a
 // stack that does not exist, and the operator published an MX naming a host
 // with no address to go with it.
@@ -558,17 +561,18 @@ func TestDefaultTenantMailMode(t *testing.T) {
 		mode string
 		want gentianov1alpha1.MailMode
 	}{
-		{"system", gentianov1alpha1.MailModeSelfhosted},
-		// The relaying cluster: Postfix is deployed for outbound, Dovecot is
-		// not. transport-only is exactly that shape — a registered domain and
-		// SMTP credentials, no mailbox, and no MX claiming inbound.
+		{"internal", gentianov1alpha1.MailModeSelfhosted},
+		// The relaying cluster: no mailbox here, and no MX claiming inbound.
+		{"relay", gentianov1alpha1.MailModeTransportOnly},
+		// Mail on a server outside the cluster: no mailbox here either.
 		{"external", gentianov1alpha1.MailModeTransportOnly},
-		// Unset is external, same as the Dovecot gate: defaulting to a stack
+		// Unset is not internal, same as the Dovecot gate: defaulting to a stack
 		// that may not exist is the failure this whole change is about.
 		{"", gentianov1alpha1.MailModeTransportOnly},
-		// A typo must not provision the system mail stack, and neither must
-		// the value this used to be called.
-		{"System", gentianov1alpha1.MailModeTransportOnly},
+		// A typo must not provision the cluster's own mail stack, and neither
+		// must the values this used to be called.
+		{"Internal", gentianov1alpha1.MailModeTransportOnly},
+		{"system", gentianov1alpha1.MailModeTransportOnly},
 		{"kernel", gentianov1alpha1.MailModeTransportOnly},
 	} {
 		r := &controller.TenantReconciler{MailServiceMode: tc.mode}
@@ -641,7 +645,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	t.Run("kernel mail publishes", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 		r := &controller.TenantReconciler{
-			Client: c, KernelDomain: "example.org", MailServiceMode: "system",
+			Client: c, KernelDomain: "example.org", MailServiceMode: "internal",
 		}
 		if err := r.SyncTenantMailDNSForTest(context.Background(), newTenant()); err != nil {
 			t.Fatalf("sync: %v", err)
@@ -667,7 +671,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 		} {
 			cl := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 			r := &controller.TenantReconciler{
-				Client: cl, KernelDomain: "example.org", MailServiceMode: "system", TenancyMode: c.mode,
+				Client: cl, KernelDomain: "example.org", MailServiceMode: "internal", TenancyMode: c.mode,
 			}
 			tenant := newTenant()
 			tenant.Name = c.name
@@ -702,7 +706,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	t.Run("external mail publishes nothing", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 		r := &controller.TenantReconciler{
-			Client: c, KernelDomain: "example.org", MailServiceMode: "external",
+			Client: c, KernelDomain: "example.org", MailServiceMode: "relay",
 		}
 		if err := r.SyncTenantMailDNSForTest(context.Background(), newTenant()); err != nil {
 			t.Fatalf("sync: %v", err)
@@ -718,7 +722,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 			t.Fatalf("precondition: seeded endpoint missing: %v", err)
 		}
 		r := &controller.TenantReconciler{
-			Client: c, KernelDomain: "example.org", MailServiceMode: "external",
+			Client: c, KernelDomain: "example.org", MailServiceMode: "relay",
 		}
 		if err := r.SyncTenantMailDNSForTest(context.Background(), newTenant()); err != nil {
 			t.Fatalf("sync: %v", err)
@@ -755,8 +759,8 @@ func TestMail_SelfhostedIsRefusedWhenTheClusterRunsNone(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).
 		WithObjects(mailNS, tenant).Build()
 
-	// MailServiceMode external: the relay is deployed, Dovecot is not.
-	r := &controller.TenantReconciler{Client: c, MailServiceMode: "external"}
+	// MailServiceMode relay: Dovecot is not deployed.
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "relay"}
 	if err := r.EnsureMailForTest(context.Background(), tenant); err != nil {
 		t.Fatalf("a refusal is a condition, not an error: %v", err)
 	}
@@ -770,7 +774,7 @@ func TestMail_SelfhostedIsRefusedWhenTheClusterRunsNone(t *testing.T) {
 	}
 	// The message has to name the setting that is wrong and an answer that
 	// works, or it is just a different way of failing silently.
-	for _, want := range []string{"serviceMode", "transport-only", "external"} {
+	for _, want := range []string{"serviceMode", "internal", "transport-only", "external"} {
 		if !strings.Contains(cond.Message, want) {
 			t.Errorf("message does not mention %q: %s", want, cond.Message)
 		}
@@ -794,7 +798,7 @@ func TestMail_SelfhostedIsHonouredWhenTheClusterRunsIt(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).
 		WithObjects(mailNS, tenant).Build()
 
-	r := &controller.TenantReconciler{Client: c, MailServiceMode: "system"}
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "internal"}
 	_ = r.EnsureMailForTest(context.Background(), tenant)
 
 	cond := findCondition(tenant, "MailReady")

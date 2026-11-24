@@ -172,7 +172,7 @@ BAO_ADDR="http://127.0.0.1:$(cat "${SB}/kv/port")"
 # seed <store> <mode> — run the seeding script against one store.
 seed() {
     env -i PATH="${PATH}" HOME="${SB}" BAO_ADDR="${BAO_ADDR}" BAO_TOKEN="$1" SECRET_MODE="$2" \
-        MASTER_PASSWORD="${MASTER}" DERIVATION_SALT="${SALT}" KERNEL_DOMAIN=example.test MAIL_SERVICE_MODE=system \
+        MASTER_PASSWORD="${MASTER}" DERIVATION_SALT="${SALT}" KERNEL_DOMAIN=example.test MAIL_SERVICE_MODE=internal \
         bash "${REPO}/scripts/bootstrap/seed-openbao.sh" > "${SB}/seed.log" 2>&1
 }
 # held <store> <path> <field> — what a store holds.

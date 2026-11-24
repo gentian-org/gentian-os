@@ -613,27 +613,40 @@ validate_config() {
     _file_header "${cluster_claim_file}" "Cluster checks (the Cluster claim)"
 
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
-    if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "system" ]]; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'system' (set in ${cluster_claim_file})"
+    if ! mail_mode_valid "${MAIL_SERVICE_MODE}"; then
+        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'relay', 'external' or 'internal' (set in ${cluster_claim_file})"
+        local _renamed
+        _renamed="$(mail_mode_renamed_message "${MAIL_SERVICE_MODE}")"
+        [[ -z "${_renamed}" ]] || echo "             ${_renamed}"
         (( errors++ )) || true
     else
-        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when system)"
+        echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when internal)"
     fi
-    if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
-        _opt_from EXTERNAL_SMTP_HOST "relay address — mail.host on the Cluster claim" "claims/cluster.yaml"
-        _opt_from EXTERNAL_SMTP_PORT "relay port, default 587 — mail.port on the claim" "claims/cluster.yaml"
+    if mail_mode_sends_through_login "${MAIL_SERVICE_MODE}"; then
+        _opt_from EXTERNAL_SMTP_HOST "where mail is submitted — mail.host on the Cluster claim" "claims/cluster.yaml"
+        _opt_from EXTERNAL_SMTP_PORT "its port, default 587 — mail.port on the claim" "claims/cluster.yaml"
         echo "  [OK]       SMTP relay credentials  (runtime: supplied to the custodian after install)"
     else
         echo "  [OK]       SMTP relay  (not used for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
     fi
+    if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
+        if [[ -z "${MAIL_IMAP_HOST:-}" ]]; then
+            echo "  [INVALID]  MAIL_SERVICE_MODE=external needs mail.imap.host on the Cluster claim"
+            echo "             Where the mail server outside the cluster is read."
+            echo "             A cluster that only sends through a provider is 'relay', which is what 'external' used to mean."
+            (( errors++ )) || true
+        else
+            echo "  [OK]       MAIL_IMAP_HOST=${MAIL_IMAP_HOST}  (mail.imap.host: where apps read mail)"
+        fi
+    fi
 
     NETWORK_MODE="${NETWORK_MODE:-tunnel}"
     if ! mail_network_mode_compatible "${MAIL_SERVICE_MODE}" "${NETWORK_MODE}"; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=system with NETWORK_MODE=tunnel"
-        echo "             A cluster running its own mail stack needs a reachable SMTP ingress; use MAIL_SERVICE_MODE=external with an SMTP relay on tunnel clusters."
+        echo "  [INVALID]  MAIL_SERVICE_MODE=internal with NETWORK_MODE=tunnel"
+        echo "             A cluster running its own mail stack needs a reachable SMTP ingress; use MAIL_SERVICE_MODE=relay with an SMTP relay on tunnel clusters."
         (( errors++ )) || true
-    elif [[ "${MAIL_SERVICE_MODE}" == "system" ]]; then
-        echo "  [OK]       MAIL_SERVICE_MODE=system with NETWORK_MODE=${NETWORK_MODE}"
+    elif [[ "${MAIL_SERVICE_MODE}" == "internal" ]]; then
+        echo "  [OK]       MAIL_SERVICE_MODE=internal with NETWORK_MODE=${NETWORK_MODE}"
     fi
 
     # KERNEL_DOMAIN has exactly one authored copy — the cluster's Crossplane
@@ -1029,7 +1042,7 @@ load_deployments_cluster_settings() {
              LLM_SUPPORT LLM_CONSOLE GPU_ACCELERATION \
              LETSENCRYPT_EMAIL KV_MOUNT OPENBAO_STORAGE ACME_ENV CERT_ISSUER_MODE \
              DNS01_RECURSIVE_NAMESERVERS METRICS_SERVER_KUBELET_INSECURE_TLS \
-             MAIL_EGRESS_HOST MAIL_SUBMISSION MAIL_IMAPS; do
+             MAIL_EGRESS_HOST MAIL_SUBMISSION MAIL_IMAPS MAIL_IMAP_HOST MAIL_IMAP_PORT; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1081,8 +1094,12 @@ load_deployments_cluster_settings() {
         # Whether metrics-server verifies the kubelets' certificates. Read at
         # A-07, before the Cluster XR exists.
         claim_setting METRICS_SERVER_KUBELET_INSECURE_TLS metricsServer.kubeletInsecureTLS "${claim_file}"
-        # The external relay, when mail.serviceMode is external. Same object,
-        # same claim; EXTERNAL_SMTP_* were only ever the shell's names for them.
+        # Where mail is submitted, when mail.serviceMode is relay or external:
+        # the relay or the mail server outside the cluster. Same object, same
+        # claim; EXTERNAL_SMTP_* were only ever the shell's names for them.
+        # MAIL_IMAP_* is where mail is read, in external mode alone.
+        claim_setting MAIL_IMAP_HOST         mail.imap.host "${claim_file}"
+        claim_setting MAIL_IMAP_PORT         mail.imap.port "${claim_file}"
         claim_setting MAIL_EGRESS_HOST       mail.egressHost "${claim_file}"
         claim_setting EXTERNAL_SMTP_HOST     mail.host     "${claim_file}"
         claim_setting EXTERNAL_SMTP_PORT     mail.port     "${claim_file}"
@@ -1281,47 +1298,59 @@ explain_issuer_mode() {
 # =============================================================================
 # prompt_mail_mode — where this cluster's mail goes.
 #
-# Asked because both answers need something else supplied with them: external
-# needs a relay address here and a credential at install time, kernel needs
-# static-ip. A silent default leaves a cluster that cannot send an invitation
-# or a password reset, and nothing reports that until someone tries.
+# Asked because every answer needs something else supplied with it: relay
+# needs a relay address here and a credential after the install, external
+# needs the mail server's two addresses and the same credential, internal
+# needs static-ip. A silent default leaves a cluster that cannot send an
+# invitation or a password reset, and nothing reports that until someone tries.
 # =============================================================================
 prompt_mail_mode() {
-    # "kernel" is what this question used to offer and what install.env files
-    # may still say; the claim's word for it is "system". Written verbatim,
-    # "kernel" is a claim the schema refuses.
-    [[ "${MAIL_SERVICE_MODE:-}" == "kernel" ]] && MAIL_SERVICE_MODE="system"
-    if [[ -z "${MAIL_SERVICE_MODE:-}" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
-        # Not a question on a tunnel: the tunnel carries HTTP and HTTPS only,
-        # so nothing can deliver mail to the cluster on port 25, and in-cluster
-        # mail is not on offer.
-        MAIL_SERVICE_MODE="external"
-        echo ""
-        _decided "mail.serviceMode: external — a tunnel carries HTTP(S) only, so mail goes out through a relay. In-cluster mail needs networkMode static-ip."
-    elif [[ -z "${MAIL_SERVICE_MODE:-}" ]]; then
+    # A word the claim no longer takes is refused here, as the schema refuses
+    # it: "system" and "kernel" are what "internal" used to be called.
+    local renamed
+    renamed="$(mail_mode_renamed_message "${MAIL_SERVICE_MODE:-}")"
+    if [[ -n "${renamed}" ]]; then
+        error "${renamed}"
+        exit 1
+    fi
+    if [[ -z "${MAIL_SERVICE_MODE:-}" ]]; then
+        # internal is not on offer on a tunnel: the tunnel carries HTTP and
+        # HTTPS only, so nothing can deliver mail to the cluster on port 25.
+        local offer="relay|external|internal"
+        [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]] || offer="relay|external"
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            MAIL_SERVICE_MODE="external"
+            MAIL_SERVICE_MODE="relay"
         else
             echo ""
-            info "Mail — how this cluster sends mail:"
-            info "  external : relay through an SMTP provider. Needs its address and credentials."
-            info "  system   : in-cluster Postfix/Dovecot, at nodeIp."
+            info "Mail — where this cluster's mail is:"
+            info "  relay    : send through an SMTP provider; no mailboxes. Needs its address and credentials."
+            info "  external : a mail server outside the cluster holds the mailboxes. Needs its"
+            info "             submission and IMAP addresses, and credentials to send with."
+            if [[ "${offer}" == *internal* ]]; then
+                info "  internal : in-cluster Postfix/Dovecot, at nodeIp."
+            else
+                info "  (internal, in-cluster mail, needs networkMode static-ip: a tunnel carries HTTP(S) only.)"
+            fi
             local v
             while true; do
-                read -rp "  mail.serviceMode [external|system] (default: external): " v
-                v="${v:-external}"
-                [[ "$v" == "kernel" ]] && v="system"
-                [[ "$v" == "external" || "$v" == "system" ]] && break
-                warn "Invalid value '${v}'."
+                read -rp "  mail.serviceMode [${offer}] (default: relay): " v
+                v="${v:-relay}"
+                [[ "|${offer}|" == *"|${v}|"* ]] && break
+                renamed="$(mail_mode_renamed_message "${v}")"
+                warn "Invalid value '${v}'.${renamed:+ ${renamed}}"
             done
             MAIL_SERVICE_MODE="$v"
         fi
     fi
     export MAIL_SERVICE_MODE
 
-    if [[ "${MAIL_SERVICE_MODE}" == "system" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
-        error "mail.serviceMode=system requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
-        error "  Choose external, or re-run with NETWORK_MODE=static-ip."
+    if ! mail_mode_valid "${MAIL_SERVICE_MODE}"; then
+        error "mail.serviceMode '${MAIL_SERVICE_MODE}' is not one of relay, external, internal."
+        exit 1
+    fi
+    if [[ "${MAIL_SERVICE_MODE}" == "internal" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
+        error "mail.serviceMode=internal requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
+        error "  Choose relay or external, or re-run with NETWORK_MODE=static-ip."
         exit 1
     fi
 
@@ -1337,7 +1366,7 @@ prompt_mail_mode() {
     # the node that carries it, publishes the A record and pins Postfix there
     # (mail_dnsendpoint.go, mail_egress_node.go), and the pre-flight refuses a
     # cluster where no node does (check_mail_egress).
-    if [[ "${MAIL_SERVICE_MODE}" == "system" && -z "${MAIL_EGRESS_HOST:-}" ]]; then
+    if [[ "${MAIL_SERVICE_MODE}" == "internal" && -z "${MAIL_EGRESS_HOST:-}" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
             echo ""
             info "  The name outbound mail leaves from, e.g. mail-egress.${KERNEL_DOMAIN:-example.com}."
@@ -1367,17 +1396,49 @@ prompt_mail_mode() {
         fi
     fi
 
-    # Only external mode has a relay to name.
+    # relay and external have a server outside the cluster to name: where mail
+    # is submitted. external has a second address, where it is read, asked
+    # first because a claim without it is refused.
     #
+    # Not blank: 'external' without mail.imap.host is what a relay used to be
+    # called, and the schema refuses it so that no claim written before the
+    # rename silently means something else.
+    if [[ "${MAIL_SERVICE_MODE}" == "external" && -z "${MAIL_IMAP_HOST:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            error "mail.serviceMode=external needs mail.imap.host (MAIL_IMAP_HOST): where the mail server outside the cluster is read."
+            error "  A cluster that only sends through a provider is 'relay', which is what 'external' used to mean."
+            exit 1
+        fi
+        echo ""
+        info "  The mail server's IMAP hostname, e.g. imap.example.com: where mail is"
+        info "  read, on port 993 with TLS. Apps that read mail are handed it."
+        info "  Mailboxes and their logins are made on that server, not by the cluster."
+        while true; do
+            read -rp "  mail.imap.host: " MAIL_IMAP_HOST
+            if [[ ! "${MAIL_IMAP_HOST}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ || "${MAIL_IMAP_HOST}" != *.* ]]; then
+                warn "A lower-case host name with a domain in it, e.g. imap.example.com."
+                continue
+            fi
+            break
+        done
+    fi
+    if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
+        export MAIL_IMAP_HOST
+    fi
+
     # The address is asked for and the credentials are not, which is worth
     # saying out loud: the address is configuration and belongs on the claim in
     # Git, while the username and password are a credential and belong in
     # OpenBao. Asking for all three together would put a password in a file the
     # operator is about to commit.
-    if [[ "${MAIL_SERVICE_MODE}" == "external" && -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
+    if mail_mode_sends_through_login "${MAIL_SERVICE_MODE}" && [[ -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
             echo ""
-            info "  The relay's ADDRESS only — its hostname, e.g. smtp.gmail.com."
+            if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
+                info "  Where mail is submitted — the mail server's hostname, e.g. smtp.example.com."
+            else
+                info "  The relay's ADDRESS only — its hostname, e.g. smtp.gmail.com."
+            fi
             info "  The username and password are supplied after the install, through"
             info "  the custodian. They are not asked for here and are not"
             info "  written to Git."
@@ -2065,7 +2126,7 @@ check_prereqs() {
         # the installer a second, stricter opinion about the same credential, and
         # the catalog is the one that decides (§4).
         #
-        # It aborted every external-mail install, which is the default. The
+        # It aborted every install that relays, which is the default. The
         # values used to arrive from install.secrets.env; nothing has loaded that
         # file since it was removed, so the check could no longer be satisfied by
         # the means it was written for.
@@ -2073,7 +2134,7 @@ check_prereqs() {
         # A cluster with no relay credential comes up and cannot send mail. That
         # is a reported gap, not a failed install: `make check-credentials` names
         # it, and the claim that needs it says so itself.
-        if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
+        if mail_mode_sends_through_login "${MAIL_SERVICE_MODE}"; then
             if [[ -n "${SMTP_RELAY_USERNAME:-}" && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
                 success "SMTP relay credentials present; they will be seeded with the rest"
             else
@@ -2213,7 +2274,7 @@ except Exception:
 }
 
 check_mail_egress() {
-    [[ "$(gentian_mail_service_mode)" == "system" ]] || return 0
+    [[ "$(gentian_mail_service_mode)" == "internal" ]] || return 0
     local host="${MAIL_EGRESS_HOST:-}"
     if [[ -z "${host}" ]]; then
         warn "mail.egressHost is not set: outbound mail leaves from the provider's shared address,"
@@ -2403,16 +2464,17 @@ gentian_services_namespace() {
 }
 
 # =============================================================================
-# gentian_mail_service_mode — the cluster's mail stack, resolved once.
+# gentian_mail_service_mode — where the cluster's mail is, resolved once.
 #
-# kernel runs Postfix and Dovecot here with local mailboxes; external relays
-# through a smarthost and has no Dovecot at all. Eighteen sites decided that by
+# internal runs Postfix and Dovecot here with local mailboxes; relay sends
+# through a smarthost and external through a mail server outside the cluster,
+# and neither has a Dovecot at all. Eighteen sites decided that by
 # writing $(gentian_mail_service_mode), which is a second default beside the
 # one the Cluster XRD declares — they agree only until the XRD moves, and then
 # half the callers are left behind.
 #
-# That is not a hypothetical here. The claim said kernel while the operator,
-# reading its own Helm value, said external: Dovecot ran unprovisioned and the
+# That is not a hypothetical here. The claim said the cluster ran its own mail
+# while the operator, reading its own Helm value, said it relayed: Dovecot ran unprovisioned and the
 # ApplicationSet that would have managed it was never rendered, with git showing
 # the correct answer the whole time.
 #

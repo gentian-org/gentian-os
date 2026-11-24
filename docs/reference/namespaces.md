@@ -35,8 +35,8 @@ The cluster's namespace layout by tier, as `kernel/namespaces.yaml` declares it:
 | `system-s3` | s3 | SeaweedFS, the object store apps take buckets from |  |
 | `system-authorization` | authorization | the app instance of OpenFGA, with the components' authorization stores, and the arbiter, the one way into it | requires.services.authorization |
 | `system-turn-dmz` | turn-dmz | the TURN edge — STUNner's daemon, its load balancer, its certificate and the record of turn.\<kernel domain>; it relays only to its own pods | requires.services.turn |
-| `system-mail` | mail | Postfix (the MTA and the DKIM signer, with the per-tenant keys) and Dovecot (the mailbox store); nothing here has a load balancer | mail.serviceMode=system |
-| `system-mail-dmz` | mail-dmz | the mail edge — a proxy on :25, :587 and :993 that holds no mail, no user and no key — its load balancer, and the DNS records that point at it | mail.serviceMode=system |
+| `system-mail` | mail | Postfix (the MTA and the DKIM signer, with the per-tenant keys) and Dovecot (the mailbox store); nothing here has a load balancer | mail.serviceMode=internal |
+| `system-mail-dmz` | mail-dmz | the mail edge — a proxy on :25, :587 and :993 that holds no mail, no user and no key — its load balancer, and the DNS records that point at it | mail.serviceMode=internal |
 | `system-llm` | llm | the LiteLLM proxy, its database, and the vLLM instances the claim lists | llm.enabled=true |
 
 ## 3. `labelled`

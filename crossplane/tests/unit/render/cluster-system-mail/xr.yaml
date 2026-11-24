@@ -39,6 +39,6 @@ spec:
   certManager:
     letsencryptEmail: admin@platform.example.test
   mail:
-    serviceMode: system
+    serviceMode: internal
   compositeDeletePolicy: Background
   resourceRefs: []

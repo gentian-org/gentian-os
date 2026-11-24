@@ -15,12 +15,13 @@ Three layers are easy to conflate:
 
 | Layer | Knob | What it controls |
 |---|---|---|
-| **Cluster** | `mail.serviceMode` on the Cluster claim (`external` \| `system`) | Whether the cluster runs its own Postfix and Dovecot, or relays everything to an external SMTP host. A claim that says `kernel`, the value's former name, is refused |
+| **Cluster** | `mail.serviceMode` on the Cluster claim (`relay` \| `external` \| `internal`) | Where the cluster's mail is: sent through a provider with no mailboxes (`relay`), on a mail server outside the cluster (`external`, §8a), or on the cluster's own Postfix and Dovecot (`internal`). A claim that says `system` or `kernel`, the former names of `internal`, is refused, and so is one that says `external` and names no `mail.imap.host`, which is what `relay` used to be called |
 | **Per tenant** | `Tenant.spec.mail.mode` | What the operator provisions: the tenant's mail domain, its entries in the Postfix maps, and its Dovecot realm auth |
 | **Per app** | `ComponentProfile` `spec.requires.services.mail.smtp` / `.imap` | Whether the operator hands an app kernel or external mail endpoints |
 | **Cluster** | `mailAdminContact` and `mailAliases` in the chart's values | Where `abuse@` and `postmaster@` of every hosted domain, and any other listed address, are forwarded: an address off the cluster, written into Postfix's `virtual_alias` map by the operator |
 
-Postfix and Dovecot run in `system-mail`, and the operator writes what they
+On a cluster with its own mail (`internal`), Postfix and Dovecot run in
+`system-mail`, and the operator writes what they
 mount into that namespace: a Pod can only mount a ConfigMap or a Secret from
 its own (§5a). Neither has a load balancer. What the internet reaches is a
 proxy in `system-mail-dmz` (§9b). Services are named per stage:
@@ -85,15 +86,16 @@ Selected via `Tenant.spec.mail.mode`:
 | `disabled` | — | — | App → SMTP relay (outbound only) | Outbound notifications only |
 
 A tenant that names no mode gets `selfhosted` on a cluster whose
-`mail.serviceMode` is `system`, and `transport-only` on one that relays
-(`external`), which has no Dovecot to hold a mailbox. The mode is set with
+`mail.serviceMode` is `internal`, and `transport-only` on one that relays
+(`relay`) or whose mail is on a server outside it (`external`): neither has
+a Dovecot to hold a mailbox. The mode is set with
 `kubectl gentian tenants mail-mode <name> <mode>`, one commit of the tenant's
 manifest through the director ([commands.md §3](../reference/commands.md)).
 
-If `MAIL_SERVICE_MODE=external` at install time, Dovecot and LMTP are
-absent; tenants in `selfhosted` mode still get operator-managed
-secrets but full delivery requires switching install mode to `system`
-and re-running `./install.sh`, which converges.
+A tenant's mode is acted on only where the cluster has its own mail (§8).
+Elsewhere a tenant that states `selfhosted` gets no mailbox; it is honored
+once the claim says `internal` and `./install.sh` has been re-run, which
+converges.
 
 ## 3. Shared Infrastructure with Tenant-Scoped Configuration
 
@@ -238,7 +240,7 @@ mailboxes ([data-lifecycle.md](data-lifecycle.md) has the whole table):
 ## 5c. A removed person's mailbox
 
 **Who is asked, and when.** Only where the person has a mailbox here: the
-cluster runs its own mail server (`mail.serviceMode: system`), the tenant's
+cluster runs its own mail server (`mail.serviceMode: internal`), the tenant's
 mail is on it (`spec.mail.mode: selfhosted`, the default there), and the
 person's address is in the tenant's mail domain. The operator reports that
 domain on the tenant (`status.mailboxDomain`); the registrar reports the
@@ -367,10 +369,10 @@ realm names (`smtpServer`), logged in:
 
 | Realm | Mail mode | Login | Written by |
 |---|---|---|---|
-| kernel | `system` | `gentian-system@<kernelDomain>`, password derived by the installer | step `D-03` (`scripts/lib/portal-login-bootstrap.sh`), which also leaves it in `keycloak-smtp-credentials` |
-| kernel | `external` | the relay's | step `D-03`, from `keycloak-smtp-credentials`, which an ExternalSecret builds from the relay credential |
-| tenant | `system` | `noreply@<tenant domain>`, from `mail-submission-<tenant>` | the tenant's Composition, which declares every field, and the Job `keycloak-tenant-smtp-<tenant>`, which writes the same fields with the password |
-| tenant | `external` | the relay's, from `keycloak-smtp-credentials` | the same two, the Composition naming the password in `keycloak-smtp-credentials` |
+| kernel | `internal` | `gentian-system@<kernelDomain>`, password derived by the installer | step `D-03` (`scripts/lib/portal-login-bootstrap.sh`), which also leaves it in `keycloak-smtp-credentials` |
+| kernel | `relay`, `external` | the relay's or the external mail server's | step `D-03`, from `keycloak-smtp-credentials`, which an ExternalSecret builds from the relay credential |
+| tenant | `internal` | `noreply@<tenant domain>`, from `mail-submission-<tenant>` | the tenant's Composition, which declares every field, and the Job `keycloak-tenant-smtp-<tenant>`, which writes the same fields with the password |
+| tenant | `relay`, `external` | the relay's or the external mail server's, from `keycloak-smtp-credentials` | the same two, the Composition naming the password in `keycloak-smtp-credentials` |
 
 **What a tenant's realm is declared with is `spec.realmMail` of its XTenant,
 which the operator states** (`tenantRealmMail`): host, port, sender, login,
@@ -381,7 +383,8 @@ exactly the tenants it states it for.
 
 - The cluster's mail mode decides which mail server: on a cluster with its own
   mail a realm sends as the login minted for it or not at all, and on a
-  cluster that relays every realm sends as the relay's login.
+  cluster that relays, or whose mail is on a server outside it, every realm
+  sends as the one login the cluster holds there.
 - A login is minted for a tenant registered in the cluster's own mail: mode
   `selfhosted`, or `transport-only` where people sign up to it. Any other
   tenant's realm on such a cluster has no mail server.
@@ -394,7 +397,7 @@ exactly the tenants it states it for.
 
 The operator builds the Job only when `keycloak-smtp-credentials` says
 `smtp_configure: true`, and registers the kernel realm's login with Dovecot
-from the same Secret. On a `system` cluster the Secret is step `D-03`'s, and
+from the same Secret. On an `internal` cluster the Secret is step `D-03`'s, and
 the step reports work to do while it is missing.
 
 `mail-submission-<tenant>` is written **before** the tenant's realm is
@@ -434,7 +437,8 @@ each followed by Keycloak sending.
 ## 6. Per-App Mail Wiring
 
 For each app in the tenant that declares `requires.services.mail.smtp` and/or
-`.imap` in its `ComponentProfile`, the operator materialises:
+`.imap` in its `ComponentProfile`, the operator materialises, on a cluster
+with its own mail:
 
 - **SMTP**: host (`mail.<kernelDomain>`; without a kernel domain, `postfix-<stage>.system-mail.svc.cluster.local`), port, user,
   password — copied from the tenant's own `smtp-credentials-<tenant>` Secret into
@@ -443,6 +447,14 @@ For each app in the tenant that declares `requires.services.mail.smtp` and/or
 - **IMAP**: host (`imap.<kernelDomain>`) and port only.
   No password travels this path — IMAP auth is per-*user*, per-client-app, and is
   issued separately; see §7.
+
+On a cluster without a mail stack the same two records are written, so that
+an app installs either way. The SMTP record holds the address and the one
+login of the relay or of the external mail server, once the `smtp-relay`
+credential is supplied, and is empty until then. The IMAP record holds the
+external mail server's address (`mail.imap`) on an `external` cluster and is
+empty on a `relay` one. Both follow the claim and the credential: a changed
+address or login reaches the records already written.
 
 The chart consumes these via standard `existingSecret` references —
 no app-specific mail logic in the platform.
@@ -526,35 +538,84 @@ Two different settings carry the word "external", on two different objects:
 
 | Setting | Scope | Decides |
 |---|---|---|
-| `mail.serviceMode` (`system` \| `external`) | The cluster, from its Claim | What the cluster **deploys** |
+| `mail.serviceMode` (`relay` \| `external` \| `internal`) | The cluster, from its Claim | What the cluster **deploys**, and where its mail is |
 | `Tenant.spec.mail.mode` (§2) | One tenant | Where that tenant's mail **goes** |
 
-**What the cluster setting changes.** With `mail.serviceMode: external`, Dovecot
-is not deployed — no ApplicationSet generates it, and the operator does not
-provision the per-realm Keycloak client, the domains ConfigMap or the LMTP
-registration that only a running Dovecot would use. **Postfix stays in both
-modes, deliberately.** It is the submission endpoint every app sends through, so
-keeping it in the path keeps the relay credential in exactly one place: apps get
-the same in-cluster SMTP host either way, and the credential for the upstream
-relay is configured once on Postfix rather than copied into every tenant.
+**What the cluster setting changes.** Only `mail.serviceMode: internal`
+deploys anything: the `gentian-mail` ApplicationSet, with Postfix, Dovecot and
+the mail edge, and the two namespaces they run in. With `relay` and with
+`external` neither namespace exists, and the operator provisions nothing a
+mail stack would use: no per-realm Keycloak client for Dovecot, no domain
+registration, no DKIM key and no mail DNS record. The realms and the apps
+that declare `mail.smtp` send straight to the address the claim names
+(`mail.host`), all with the one login of the `smtp-relay` credential (§5d,
+§6).
 
-What is lost with Dovecot is *storage*: nothing accepts LMTP, so there is no
-mailbox and no IMAP. Outbound and app notification mail still work.
+What differs between the two is *mailboxes*. A `relay` cluster has none that
+the platform knows of: outbound and notification mail work, and an app that
+declares `mail.imap` is handed an empty record. An `external` cluster has
+them on the mail server outside it (§8a).
 
 **What the tenant setting changes.** `Tenant.spec.mail.mode: external` does not
-deploy or skip anything. The tenant supplies its own SMTP credentials as a
-Secret in `system-mail`, named by `spec.mail.smtpCredentialsSecret`
-(required for this mode — the operator refuses the tenant with `MissingConfig`
-otherwise), and the operator copies it into the tenant namespace. Apps consume
-it through the same `existingSecret` reference they would use in `selfhosted`
-mode, so an app never knows whose SMTP server is on the other end. That is the
-point of the contract in §6: apps declare that they send mail, and nothing else.
+deploy or skip anything. On a cluster with its own mail, the tenant supplies
+its own SMTP credentials as a Secret in `system-mail`, named by
+`spec.mail.smtpCredentialsSecret` (required for this mode — the operator
+refuses the tenant with `MissingConfig` otherwise), and the operator copies it
+into the tenant namespace. Apps consume it through the same `existingSecret`
+reference they would use in `selfhosted` mode, so an app never knows whose
+SMTP server is on the other end. That is the point of the contract in §6: apps
+declare that they send mail, and nothing else.
 
-The two settings are independent. A `system` cluster can host an `external`
-tenant that relays through its own provider, and an `external` cluster still
-serves `selfhosted` tenants — they get operator-managed secrets and working
-submission, but no mailbox until the cluster switches to `system` and
-`./install.sh` is re-run, which converges (§2).
+A tenant's mode is read only on a cluster with its own mail. On a `relay` or
+an `external` cluster there is no mail function to register a tenant in, a
+tenant's `MailReady` is true with `NoMailFunction`, and every tenant's apps
+send through the cluster's one address and login whatever mode the tenant
+states.
+
+## 8a. Mail on a server outside the cluster
+
+`mail.serviceMode: external` is for a mail server that already runs elsewhere
+and holds the mailboxes: a hosted Stalwart, an Exchange, a provider's. The
+claim names two addresses and the cluster runs no mail stack:
+
+```yaml
+  mail:
+    serviceMode: external
+    host: smtp.example.net        # where mail is submitted; port 587, STARTTLS
+    imap:
+      host: imap.example.net      # where mail is read; port 993, TLS
+```
+
+`mail.port`, `mail.ssl` and `mail.starttls` say how submission is reached, as
+for a relay; `mail.imap.port` is 993 unless stated. A claim that says
+`external` and names no `mail.imap.host` is refused. It works behind a tunnel:
+both addresses are dialed from the cluster.
+
+**What the cluster does.**
+
+- The realms send invitations and password resets through `mail.host`, with
+  the login of the `smtp-relay` credential, supplied after the install.
+- Every app that declares `mail.smtp` is handed that address and login.
+- Every app that declares `mail.imap` is handed `mail.imap.host` and its
+  port, and no login.
+
+**What is done on the mail server, by its administrator.** The cluster holds
+one login there and no right to administer it.
+
+- Each mail domain, its DKIM key, and the MX, SPF, DKIM and DMARC records.
+  The operator publishes no mail DNS record in this mode.
+- Each person's mailbox, and the password or app password their mail program
+  and their apps open it with. The platform mints none, and a sign-in to the
+  realm opens no mailbox there (`mail.imap.tokenSignIn` grants nothing).
+- The login the cluster sends with, and the addresses it may send from:
+  `noreply@<kernelDomain>` for every realm, and whatever sender each app is
+  configured with. A server that holds a sender to the login's own address
+  refuses the rest.
+
+**What the platform does not do there.** Removing a person asks nothing about
+a mailbox and touches none (§5c applies to `internal` alone); a tenant's
+backup holds no mail; and one login sends for every tenant, so a tenant's
+sending cannot be revoked apart from the others'.
 
 ## 9. Operational View
 
@@ -629,7 +690,7 @@ operator emits an SPF record that matches:
 
 ```yaml
   mail:
-    serviceMode: system
+    serviceMode: internal
     egressHost: <egress-host>
 ```
 
@@ -793,8 +854,9 @@ without a header; the pods' listeners unchanged; both limits; and the load-balan
 
 ## 9c. Installing a cluster with its own mail: what is yours to do
 
-Skip this section if the cluster relays its mail (`mail.serviceMode: external`).
-It applies to `mail.serviceMode: system`, which needs `networkMode: static-ip`.
+Skip this section if the cluster relays its mail (`mail.serviceMode: relay`)
+or has it on a server outside it (`external`, §8a).
+It applies to `mail.serviceMode: internal`, which needs `networkMode: static-ip`.
 
 **What the install does without you.** It deploys Postfix, Dovecot and the mail
 edge; takes a second load-balancer address for inbound mail and keeps it across
@@ -950,8 +1012,8 @@ must be gray-clouded even though the rest of the zone is proxied.
 TXT records for SPF, DKIM and DMARC are unaffected by the proxy setting.
 
 If the cluster runs `networkMode: tunnel`, inbound mail is not possible at all —
-a Cloudflare tunnel carries HTTP only. That is why `MAIL_SERVICE_MODE=system` is
-rejected on tunnel clusters; use an external SMTP provider there.
+a Cloudflare tunnel carries HTTP only. That is why `mail.serviceMode: internal` is
+rejected on tunnel clusters; use `relay` or `external` there.
 
 ### Verifying
 

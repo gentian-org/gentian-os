@@ -167,9 +167,10 @@ usageStatistics:
 tenantDNS01ClusterIssuer: ""
 
 # Which mail stack this cluster runs, from the Cluster claim
-# (spec.mail.serviceMode). `system` deploys Postfix and Dovecot into the system
-# tier; `external` relays through a provider and deploys neither.
-mailServiceMode: external
+# (spec.mail.serviceMode). `internal` deploys Postfix and Dovecot into the
+# system tier; `relay` sends through a provider and `external` through a mail
+# server outside the cluster, and both deploy neither.
+mailServiceMode: relay
 # The name mail leaves from, when the cluster sends from an address it owns
 # (spec.mail.egressHost). Empty means the shared egress or a smarthost.
 mailEgressHost: ""

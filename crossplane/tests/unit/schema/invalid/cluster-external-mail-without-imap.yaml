@@ -1,0 +1,17 @@
+# Invalid Cluster claim — mail on a server outside the cluster, with nowhere
+# to read it.
+#
+# 'external' was the name of the mode that relays through a provider, which
+# is 'relay' now. A claim written under the old name says external and names
+# a relay and no IMAP host; accepted, it would silently mean something else.
+# Refused, it names the one line to change.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-external-mail-without-imap
+  namespace: default
+spec:
+  kernelDomain: example.org
+  mail:
+    serviceMode: external
+    host: smtp.example.net

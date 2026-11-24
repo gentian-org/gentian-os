@@ -815,7 +815,7 @@ denied:
 #
 # The kernel's own PostgreSQL (kernel-postgres, in kernel-data), the two mail
 # servers (Dovecot and Postfix, in system-mail when mail.serviceMode is
-# `system`) and the proxy in front of them (mail-edge, in system-mail-dmz).
+# `internal`) and the proxy in front of them (mail-edge, in system-mail-dmz).
 # Each carries a NetworkPolicy of its own chart, and these are their clients,
 # held the same two ways:
 #

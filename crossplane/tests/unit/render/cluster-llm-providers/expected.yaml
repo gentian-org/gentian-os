@@ -373,6 +373,8 @@ spec:
         llm.console.enabled: "false"
         llm.enabled: "true"
         mail.egressHost: ""
+        mail.imapHost: ""
+        mail.imapPort: ""
         mail.serviceMode: ""
         mail.smtpHost: ""
         mainAddress.mailTenant: ""
