@@ -145,7 +145,7 @@ func (g *GitOps) writePositionsLocked(ctx context.Context, tenant string, positi
 		if err != nil {
 			return Result{}, err
 		}
-		body = "# Managed by the director: this tenant's own positions, beside the three\n" +
+		body = "# Managed by the director: this tenant's own positions, beside the four\n" +
 			"# every tenant has. What a position is, is declared here; who holds it is\n" +
 			"# given in the Admin Console and lives in the rights store.\n" + string(raw)
 	}

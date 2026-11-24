@@ -335,7 +335,7 @@ var TenantOwned = []TenantRule{
 		Delete: "removed, after the keys of its apps", Destroyed: true,
 	},
 	{
-		What: "the entries in the rights store that follow from the tenant's entry in git: its attachment to the cluster, the groups that hold its roles, its apps and the groups entitled to them", MadeBy: "the operator's projection, from the Tenant",
+		What: "the entries in the rights store that follow from the tenant's entry in git: its attachment to the cluster, its positions, its apps and the roles on them", MadeBy: "the operator's projection, from the Tenant",
 		Export: "not carried: they are derived again from the tenant wherever it is",
 		Retain: "the apps' removed; the tenant's own kept",
 		Delete: "NOT removed: the apps' go, the entries on the tenant itself stay",

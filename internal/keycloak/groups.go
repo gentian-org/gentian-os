@@ -20,22 +20,13 @@ func tenantPrefix(tenant string) string {
 	return "gentian:tenant:" + tenant + ":"
 }
 
-// TenantMembersGroup is the name of the members' group a realm made before
-// no group carried a right; PlatformGroupPattern still finds such groups in
-// an old bundle, and the platform makes none.
-func TenantMembersGroup(tenant string) string {
-	return tenantPrefix(tenant) + "members"
-}
-
 // PartnerRolesClaim is the claim of the scope partner-<name> that names a
 // person's role on the tenant in a partner assertion, and nowhere else:
 // PartnerRoleTenantAdmin for an administrator of the tenant,
 // PartnerRoleClusterAdmin for an administrator of the cluster, as the
 // platform's mapper (gentian-partner-roles) asks the rights store; a person
-// who is neither has no claim. PartnerRoleAttribute names no attribute the
-// platform writes: no group or account carries the role.
+// who is neither has no claim.
 const (
-	PartnerRoleAttribute    = "gentianPartnerRole"
 	PartnerRolesClaim       = "gentian_roles"
 	PartnerRoleTenantAdmin  = "tenant-admin"
 	PartnerRoleClusterAdmin = "cluster-admin"

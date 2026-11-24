@@ -225,8 +225,8 @@ func TestAnAccessReviewIsRecordedOnTheClaim(t *testing.T) {
 		t.Fatalf("name a holder: %d", code)
 	}
 
-	members := `[{"role":"admin","group":"gentian:platform:admin","members":[{"username":"alice","email":"alice@example.com"},` +
-		`{"username":"eve\nGentian-Authz: forged","email":""}]},{"role":"breakGlass","group":"gentian:platform:break-glass","members":[]}]`
+	members := `[{"role":"admin","members":[{"username":"alice","email":"alice@example.com"},` +
+		`{"username":"eve\nGentian-Authz: forged","email":""}]},{"role":"breakGlass","members":[]}]`
 	before := h.tip(t)
 	if code, _ := h.do(t, "POST", review, tom, `{"members":`+members+`}`); code != http.StatusForbidden || h.tip(t) != before {
 		t.Fatalf("a tenant's administrator recorded a review: %d", code)
@@ -248,8 +248,8 @@ func TestAnAccessReviewIsRecordedOnTheClaim(t *testing.T) {
 	}
 	message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%B", "main")
 	for _, line := range []string{
-		"  - admin through gentian:platform:admin: alice <alice@example.com>, eveGentian-Authz: forged",
-		"  - breakGlass through gentian:platform:break-glass: (nobody)",
+		"  - admin: alice <alice@example.com>, eveGentian-Authz: forged",
+		"  - breakGlass: (nobody)",
 		"  - securityOfficer over cluster: it@demo.example of demo",
 	} {
 		if !strings.Contains(message, line+"\n") {
