@@ -25,6 +25,9 @@
 # Needs docker, curl, jq, openssl and python3. Not part of CI: it pulls and
 # boots Keycloak and Dovecot.
 # =============================================================================
+# Each check is a condition check evaluates later, and the functions and
+# variables it names are used from there, invisibly to shellcheck.
+# shellcheck disable=SC2016,SC2034,SC2329
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
