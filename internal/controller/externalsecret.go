@@ -23,11 +23,22 @@ import (
 )
 
 // ensureExternalSecret creates desired, or replaces the ExternalSecret there
-// when its spec or labels are not desired's or owned says its owners are not.
+// when its spec or labels do not hold what desired's say or owned says its
+// owners are not.
 //
 // Only on a real difference. An unconditional update rewrote the object on
 // every pass, and ESO writes it too: the two raced, the loser got a conflict,
 // and the conflict was reported as a failure.
+//
+// What the object holds is compared with covers, not for equality: the API
+// server fills in what desired leaves out (refreshInterval, deletionPolicy,
+// each remoteRef's strategies), so an object never equals what was written.
+// Compared for equality, every pass replaced it; the replacement dropped
+// ESO's finalizer, ESO put it back and read the store again, and that change
+// woke the caller's watch for the next pass -- a loop about once a second
+// that kept the operator at three cores (gentian-os#1344). For the same
+// reason a replacement keeps the finalizers and annotations the object has:
+// they are ESO's and the retry's, not the caller's.
 func ensureExternalSecret(ctx context.Context, c client.Client, desired *unstructured.Unstructured, owned func(existing *unstructured.Unstructured) bool) error {
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(secrets.ExternalSecretGVK)
@@ -41,11 +52,13 @@ func ensureExternalSecret(ctx context.Context, c client.Client, desired *unstruc
 	case err != nil:
 		return err
 	}
-	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) &&
+	if covers(existing.Object["spec"], desired.Object["spec"]) &&
 		equality.Semantic.DeepEqual(existing.GetLabels(), desired.GetLabels()) && owned(existing) {
 		return nil
 	}
 	desired.SetResourceVersion(existing.GetResourceVersion())
+	desired.SetFinalizers(existing.GetFinalizers())
+	desired.SetAnnotations(existing.GetAnnotations())
 	if err := c.Update(ctx, desired); err != nil {
 		return fmt.Errorf("update ExternalSecret %s/%s: %w", desired.GetNamespace(), desired.GetName(), err)
 	}

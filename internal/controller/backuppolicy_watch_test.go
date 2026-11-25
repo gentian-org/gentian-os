@@ -175,6 +175,72 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 	}
 }
 
+// The loop of gentian-os#1344: the API server fills in what the operator
+// leaves out of an ExternalSecret, so the stored object never equalled the
+// desired one and every pass replaced it. The replacement dropped ESO's
+// finalizer; ESO put it back, which woke the next pass, about once a second.
+// Here the stored object carries what the API server and ESO add, as on a
+// cluster: a pass with unchanged inputs must not write, and a real change
+// must keep ESO's finalizer and the retry's annotation.
+func TestServerDefaultsAndFinalizerWriteNothing(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	r := &BackupPolicyReconciler{Client: fake.NewClientBuilder().WithScheme(s).Build(), Scheme: s}
+	ctx := context.Background()
+	const name, vault = "bundle-source-corp-backups", "gentian-os/kernel/backup/sources/corp-backups"
+	labels := map[string]string{managedByLabel: managedByValue}
+	pass := func(path string) {
+		t.Helper()
+		if err := applyExternalSecret(ctx, r.Client, name, s3Namespace, path, "Owner", nil, labels); err != nil {
+			t.Fatalf("pass: %v", err)
+		}
+	}
+	pass(vault)
+
+	// What the API server and ESO add to the stored object.
+	es := &unstructured.Unstructured{}
+	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: s3Namespace}, es); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	_ = unstructured.SetNestedField(es.Object, "1h", "spec", "refreshInterval")
+	_ = unstructured.SetNestedField(es.Object, "Retain", "spec", "target", "deletionPolicy")
+	data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
+	for _, d := range data {
+		ref := d.(map[string]any)["remoteRef"].(map[string]any)
+		ref["conversionStrategy"], ref["decodingStrategy"], ref["metadataPolicy"] = "Default", "None", "None"
+	}
+	_ = unstructured.SetNestedSlice(es.Object, data, "spec", "data")
+	es.SetFinalizers([]string{"externalsecrets.external-secrets.io/externalsecret-cleanup"})
+	es.SetAnnotations(map[string]string{syncRetriedAnnotation: "1764000000"})
+	if err := r.Update(ctx, es); err != nil {
+		t.Fatalf("add defaults: %v", err)
+	}
+	stored := externalSecretVersion(t, r, name)
+
+	pass(vault)
+	if got := externalSecretVersion(t, r, name); got != stored {
+		t.Fatalf("an unchanged pass rewrote an ExternalSecret the API server had defaulted (%s -> %s)", stored, got)
+	}
+
+	pass("gentian-os/kernel/backup/sources/moved")
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: s3Namespace}, es); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if f := es.GetFinalizers(); len(f) != 1 {
+		t.Errorf("a real change dropped ESO's finalizer: %v", f)
+	}
+	if es.GetAnnotations()[syncRetriedAnnotation] == "" {
+		t.Errorf("a real change dropped the retry's annotation: %v", es.GetAnnotations())
+	}
+	data, _, _ = unstructured.NestedSlice(es.Object, "spec", "data")
+	if ref := data[0].(map[string]any)["remoteRef"].(map[string]any); ref["key"] != "gentian-os/kernel/backup/sources/moved" {
+		t.Errorf("the changed vault path was not written: %v", ref["key"])
+	}
+}
+
 func externalSecretVersion(t *testing.T, r *BackupPolicyReconciler, name string) string {
 	t.Helper()
 	es := &unstructured.Unstructured{}
