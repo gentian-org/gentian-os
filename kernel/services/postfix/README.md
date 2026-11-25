@@ -1,6 +1,6 @@
 # Kernel Postfix (SMTP relay)
 
-Outbound relay and inbound MTA for `MAIL_SERVICE_MODE=system`, built on a public
+Outbound relay and inbound MTA for `mail.serviceMode: internal`, built on a public
 Helm chart and image. Wired to the tenant mail reconciler: the operator maintains
 the virtual-domain and mailbox maps this deployment mounts, so tenant churn needs
 no restart.
@@ -16,7 +16,7 @@ Inbound delivery to tenant mailboxes goes on to Dovecot — see
 | Namespace | `system-mail` — where the operator addresses mail |
 | Release name | `postfix-<env>` (e.g. `postfix-dev`) |
 | Service DNS | `postfix-dev.system-mail.svc.cluster.local:587` |
-| Argo CD | ApplicationSet `gentian-mail`, composed only when the claim's `mail.serviceMode` is `system` |
+| Argo CD | ApplicationSet `gentian-mail`, composed only when the claim's `mail.serviceMode` is `internal` |
 
 The operator writes `postfix-kernel-virtual-mailbox-maps` into `system-mail`,
 and a Pod can only mount a ConfigMap from its own namespace — so Postfix runs

@@ -30,7 +30,7 @@ such a component generic hooks and no more:
 | Vouching | A token of a person who is away, for one app, from the tenant's realm, and only for a person who linked themselves to the component with their own token. In the platform tenant, also a cluster administrator's token for named routes of the director. | `requires.services.vouching`, [custom-catalogs.md](../guides/custom-catalogs.md) |
 | A token made out to one app | For a signed-in person, at the front door: the session's token exchanged for one whose audience is the app. | exposure `exchangeToken` |
 | Contracts between apps | A declared, grantable relation to another app of the tenant. | `provides`, `integrations`, `AppGrant` (§2) |
-| Adapters | A class of component that turns one app's abilities into tools, reached only by the tenant's components that vouch for people, and reaching only the app it adapts. | `classes: [adapter]`, `spec.adapter`, [custom-catalogs.md](../guides/custom-catalogs.md) |
+| Bridges from the agents | A bridge with a way from `agents` turns one app's abilities, or a service elsewhere, into tools, reached only by the tenant's components that vouch for people, and reaching only the app it connects. | `classes: [bridge]`, `spec.bridge.ways`, [bridges.md](bridges.md) §4.4 |
 
 A cluster with no such component installed runs no unattended agent, and
 loses nothing else described here.

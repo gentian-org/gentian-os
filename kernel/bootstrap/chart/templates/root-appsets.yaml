@@ -44,7 +44,7 @@ spec:
              off: a raw file is copied verbatim because it
              carries ApplicationSet templating Argo evaluates later, so a Helm
              conditional cannot live inside one. */}}
-        mailServiceMode: {{ .Values.mailServiceMode | default "external" | quote }}
+        mailServiceMode: {{ .Values.mailServiceMode | default "relay" | quote }}
         llmEnabled: {{ .Values.llmEnabled | default "false" | quote }}
         relayHost: {{ .Values.smtpHost | default "" | quote }}
         egressHost: {{ .Values.mailEgressHost | default "" | quote }}

@@ -1,0 +1,68 @@
+{{- /*
+  The porter (internal/porter, gentian-os#1200): the platform's file dialog.
+  An app's page asks it for a file; the person chooses in a window at the
+  porter's address, and the page is handed what they chose. Every tenant
+  gets one, as it gets a desktop.
+
+  It reaches the tenant's file home as the person at its address and as
+  nobody else: it signs nothing and nobody is linked to it. The edge hands it
+  the person's token made out to it (exchangeToken), and its client exchanges
+  that for one of the home. It keeps nothing, so it needs no database.
+*/ -}}
+{{- if .Values.porter.enabled }}
+{{- /*
+  The chart is published with the image the operator runs, so it follows
+  image.tag, which Image Updater moves on every build: <branch>-<sha> was
+  published as 0.1.0-<branch>.<sha>, a release X.Y.Z as 0.1.0-vX.Y.Z;
+  anything else follows the moving chart of develop. porter.chart.version,
+  when set, wins.
+*/ -}}
+{{- $poTag := .Values.image.tag | default "" }}
+{{- $poVersion := "0.1.0-develop" }}
+{{- if regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+$" $poTag }}
+{{- $poVersion = printf "0.1.0-v%s" $poTag }}
+{{- else if regexMatch "^[a-z0-9-]+-[0-9a-f]{7}$" $poTag }}
+{{- $poVersion = regexReplaceAll "^(.+)-([0-9a-f]{7})$" $poTag "0.1.0-${1}.${2}" }}
+{{- end }}
+{{- $poVersion = .Values.porter.chart.version | default $poVersion }}
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: porter
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    gentianos.io/profile-name: porter
+spec:
+  classes: [app]
+  launch: none
+  trustTier: platform
+  version: {{ $poVersion | quote }}
+  placement:
+    tenants: every
+  package:
+    chart:
+      repository: {{ .Values.porter.chart.repository | quote }}
+      name: {{ .Values.porter.chart.name | quote }}
+      version: {{ $poVersion | quote }}
+  # The tenant's file home, called as the person and only while they are at
+  # the porter's address.
+  integrations:
+    - contract: file-store
+      asPerson: true
+  requires:
+    services:
+      # No keys: the porter signs nothing. It exchanges the token of the
+      # person at its page for one of the tenant's file home.
+      vouching:
+        exchange: true
+  expose:
+    - name: web
+      surface: gateway
+      authMode: oidc
+      # files.<zone>: where the dialog's window opens.
+      subDomain: files
+      exchangeToken: true
+      backend:
+        service: porter
+        port: 8080
+{{- end }}

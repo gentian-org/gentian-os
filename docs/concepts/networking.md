@@ -7,8 +7,9 @@ type: concept
 
 How traffic is admitted inside the cluster: the network plugin, the
 NetworkPolicy tiers of a tenant namespace, the kernel's rules, egress, and the
-edge that real-time media takes. The edge itself -- Gateways, listeners,
-routes, certificates and DNS -- is [routing.md](routing.md); the controls each
+edge that real-time media takes. The map of every crossing of the
+cluster's boundary, in and out, is [edge.md](edge.md). The edge itself --
+Gateways, listeners, routes, certificates and DNS -- is [routing.md](routing.md); the controls each
 rule rests on, with their tests, are [security/design.md](../security/design.md); the mail
 edge is [mail.md](mail.md). The rules are AD-1, AD-6 and AD-9 in
 [decisions/index.md](../decisions/index.md).
@@ -23,7 +24,7 @@ passes them top to bottom; a lower layer never re-answers a higher one.
 | L0 | TLS, DNS, rate limit | is this traffic well-formed and within budget? | the Envoy listener; a local limit per client address on sign-in posts, to a realm's sign-in pages and to a sign-in sidecar's answer path, and on the requests to each route behind a session (`BackendTrafficPolicy`); the publishing proxy's own limits per client address on a published entry ([security/design.md §2.14](../security/design.md)) | none |
 | L1 | Edge session | who is this, in which realm? | Envoy `SecurityPolicy.oidc`: one confidential client per tenant zone in that tenant's realm, the kernel realm for the platform tenant's zone and the kernel UIs ([routing.md §4.1](routing.md)) | the realm's token: `sub`, realm |
 | L1′ | Perimeter | which paths, how much, and does a credential pass? | the publishing proxy in the tenant's DMZ, a named enforcement point: it forwards the declared paths and nothing else, holds a request to one reading of its path, a method, a size and a time, removes every identity header, `Cookie` and `Set-Cookie`, and removes `Authorization` unless the entry was approved as `authMode: app`, where the app alone checks it. It verifies no caller | none, or the credential the app issued |
-| L2 | Reachability | may this person reach this component at all? | the ext-auth bouncer, asking OpenFGA `can_use` on the app (or the relation the route names) over the stored membership projection (AD-12); cached per `(sub, sid, route)`, evicted on OpenFGA's change log | the same token |
+| L2 | Reachability | may this person reach this component at all? | the ext-auth bouncer, asking OpenFGA `can_use` on the app (or the relation the route names) over what the rights store holds (AD-12); cached per `(sub, sid, route)`, evicted on OpenFGA's change log | the same token |
 | L3 | App session and authorization | what may they do inside? | the app: the identity headers the bouncer sets, or its own silent single sign-on with its own client and audience and its own cookie. The profile's `sessionMaxAge` caps how long the realm renews that client's sign-in; it does not end the app's own cookie session. The edge token itself is forwarded only on a route that declares `forwardToken`; a route that declares `exchangeToken` is handed a token exchanged for that app alone (§1.1) | identity headers, or the app's own session |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy derived from `requires`, `integrations` and granted privileges (§2–§4); Kyverno for what a pod may be | ServiceAccount, namespace and pod labels |
 
@@ -65,12 +66,15 @@ writes one by hand.
 
 | Policy | Selects | Opens |
 | --- | --- | --- |
-| `tenant-isolation` (the baseline) | every pod of the namespace, an adapter's excepted | Ingress from the edge namespace -- its Envoy pods alone where the kernel's rules are on (§3) -- from the identity provider's namespace, which calls an app's back-channel logout address, and from the operator's namespace, which provisions into running apps. Egress to the cluster's DNS and to the API server. Nothing else in either direction |
+| `tenant-isolation` (the baseline) | every pod of the namespace, a bridge's from the agents excepted | Ingress from the edge namespace -- its Envoy pods alone where the kernel's rules are on (§3) -- from the identity provider's namespace, which calls an app's back-channel logout address, and from the operator's namespace, which provisions into running apps. Egress to the cluster's DNS and to the API server. Nothing else in either direction |
 | the export Job's policy | the tenant's backup and export Jobs | what a backup of the tenant's stores needs |
-| an adapter's policies | an adapter's pods, which the edge, the identity provider and the operator must not reach | a floor of the adapter's own |
+| `agent-bridge-*` | the pods of a bridge with a way from the agents, which the edge, the identity provider and the operator must not reach | a floor of the bridge's own, admitting the components that vouch for people, and its way to the app it connects ([bridges.md §4.4](bridges.md#44-ways-from-the-agents)) |
+| `homesync`, `homesync-target-*` | the tenant's home sync's pods, and the pods of the apps it keeps equal and of the homes' providers | the home sync's way to those apps, and their way in for it ([app-customization.md §2.3](../guides/app-customization.md)) |
+| `porter`, `porter-target-*` | the tenant's porter's pods, and the pods of the file homes | the file dialog's way to the tenant's file home, and the home's way in for it ([app-customization.md §2.3](../guides/app-customization.md)) |
 | `kernel-access-<app>` | the app's pods | Egress to each store the profile declares, on that store's port, and to the model gateway for `requires.services.llm` ([security/design.md §2.6](../security/design.md)) |
 | the app's in-app policy | the app's pods | the programs of one app reach each other |
-| `component-<app>` | the app's pods | the egress rules of `requires.privileges.egress` that were granted by name on the install. A declared privilege nobody granted opens nothing |
+| `component-<app>` | the app's pods | what `requires.privileges.egress` was granted by name on the install, or answered by a trusted domain or by the platform: for a request by host, the outgoing gateway's pods on the listener ports of its hosts, or, for a host the cluster serves itself, the edge's or the inside Gateway's pods on the port the host's port forwards to; for a rule, the rule. A declared privilege nobody granted opens nothing ([edge.md §3](edge.md)) |
+| `agent-bridge-callers-<caller>` | the pods of a component that speaks as a person, the caller of the tenant's agent bridges | Egress to the pods of the tenant's agent bridges, and the rules by address granted to an agent bridge that runs nothing in the tenant (packaged as `api`), whose way out is its callers' ([bridges.md §4.4](bridges.md#44-ways-from-the-agents)). The hosts granted to such a bridge are opened in `component-<caller>` |
 | a contract's policies | consumer and provider of an `IntegrationBinding` | the path between two apps that share a contract, as far as the `AppGrant` allows |
 | the cache policies | the apps that declare a Memcached cache | Egress to the tenant's Memcached instance on its port, and ingress at it. An app that declares the `redis` engine uses the shared cache (Valkey) through `kernel-access-<app>` instead |
 
@@ -86,8 +90,23 @@ A component that starts runs (`requires.services.runs`) has two more:
 `runs-<app>` admits that component's own runs, from the tenant's namespace
 for runs, on the port its callback Service sends to (§2.1).
 
+The cluster's DNS and the API server are named by address, not by range. The
+DNS is every Service in `kube-system` that serves port 53: its pods, by the
+Service's own selector, on the port it sends 53 to, and its cluster address on
+53. The API server is each address of the `kubernetes` EndpointSlice on its
+port, and the `kubernetes` Service's cluster address on its port. Both forms
+are there because a network plugin matches a policy either before the Service
+address is translated or after it (Calico). A change of those Services or of
+the EndpointSlice rewrites the policies that admit them
+(`internal/kernel/netpolicy/cluster.go`). Where nothing can be read, two
+fallbacks keep the tenants running, and the operator logs each: with no DNS
+Service found, port 53 is open to every address; with no address of the API
+server, `KUBE_APISERVER_CIDR` (default `10.0.0.0/8`) is admitted on 443. A
+run (§2.1), a publishing proxy and the model gateway's PostgreSQL ask the
+cluster's DNS by the same rule.
+
 Network rules only ever add: a pod the baseline selects cannot be closed again
-by another policy, which is why an adapter's pods are left out of the baseline
+by another policy, which is why a bridge's pods are left out of the baseline
 instead of being narrowed afterwards.
 
 What follows for an app that believes the identity headers: another app of the
@@ -106,10 +125,10 @@ a pod from any other account (`gentian-run-pods`).
 | Policy | Selects | Opens |
 | --- | --- | --- |
 | `runs-default-deny` | every pod of the namespace | Nothing in. Out, the cluster's DNS and nothing else |
-| `action-<name>` | the pods of runs of that installed action | the egress rules of the action's `requires.privileges.egress` that were granted on its install |
+| `action-<name>` | the pods of runs of that installed action | what the action's `requires.privileges.egress` was granted on its install: the outgoing gateway's pods on its hosts' listener ports, whose names the dispatcher writes into the run pod's host table, and its rules by address |
 | `caller-<app>` | the pods of runs that component started | the component's pods in `tenant-<t>`, on the port its callback Service sends to |
 
-No rule reaches an adapter, an engine, a store or the kernel: what a run needs
+No rule reaches a bridge, an engine, a store or the kernel: what a run needs
 of them it asks of the component that started it. A run of a component's own
 image is selected by no `action-<name>` policy and has no egress beyond its
 caller.
@@ -141,18 +160,26 @@ rule, which then admits the Envoy pods instead of the whole edge namespace,
 and the publishing proxy's ingress rule, which then admits the Envoy pods and
 nothing else.
 
-**Egress is open in the kernel and system namespaces.** Argo CD, Crossplane
-and its providers, cert-manager, external-dns, Keycloak, the Envoy proxies and
-the operator reach the internet and the API server in ways that differ per
-cluster. A pod there is stopped at another namespace's door by that
-namespace's rules and on the way out by nothing. The exceptions are the edges
-that face the internet: the mail proxy in `system-mail-dmz` and the TURN edge
-in `system-turn-dmz` (§7), whose egress is restricted to what they relay to.
+**The kernel namespaces that need no internet do not reach it.** The
+inventory says per namespace whether its pods need the internet (`egress`).
+The vault, its seal, the kernel's PostgreSQL and OpenFGA do not: their
+namespaces admit egress to every pod of the cluster, the private address
+ranges, DNS and the API server, and refuse the rest (`kernel-egress`). The
+API server's address differs per cluster and is often a public one, so the
+installer writes the endpoints of the Service `kubernetes` into that rule
+when it applies the file. Argo CD, Crossplane and its providers,
+cert-manager, external-dns, Keycloak, Kyverno, the Envoy proxies and the
+operator reach the internet in ways that differ per cluster, and their
+namespaces' egress is open, as the system namespaces' is. The exceptions
+there are the edges that face the internet: the mail proxy in
+`system-mail-dmz` and the TURN edge in `system-turn-dmz` (§7), whose egress
+is restricted to what they relay to.
 
-Plain `networking.k8s.io/v1` NetworkPolicy throughout, naming no address
-block, so the rules mean the same on every plugin that enforces them. What a
-NetworkPolicy cannot say -- the API server, the kubelet, the install host --
-and what stands in its place is in [security/design.md §2.13](../security/design.md).
+Plain `networking.k8s.io/v1` NetworkPolicy throughout, so the rules mean the
+same on every plugin that enforces them; the only address blocks are those of
+the egress rule. What a NetworkPolicy cannot say -- the API server's calls
+in, the kubelet, the install host -- and what stands in its place is in
+[security/design.md §2.13](../security/design.md).
 
 ## 4. The shared stores: one rule with two sides
 
@@ -196,7 +223,7 @@ Keeping the levels apart is what makes self-service and control compatible.
 
 | Level | Object | Declared by | How many | Lives |
 | --- | --- | --- | --- | --- |
-| The profile's entry | a `surface: perimeter` entry: name, host label, paths, deny paths, `authMode` | the app's author, in the catalog | a few per app | with the profile |
+| The profile's entry | a `surface: perimeter` or `surface: inside` entry: name, host label, paths, deny paths, `authMode` | the app's author, in the catalog | a few per app | with the profile |
 | The tenant's enablement | *this* entry of *this* install is published: owner, publish date, `reviewAt`, an optional `expiresAt` ([routing.md §7](routing.md)). The `authMode` is not restated: it is the entry's, and an approval cannot weaken it | the tenant's perimeter approver, `can_expose`, through the director | a handful per tenant | until withdrawn or expired; regular review is the control |
 | The app-level object | a share link, a guest meeting, a public form | any user of the app, inside the app | thousands | as the app's own policy says |
 

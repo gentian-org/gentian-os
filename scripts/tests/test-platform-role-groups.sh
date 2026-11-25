@@ -2,14 +2,12 @@
 # =============================================================================
 # scripts/tests/test-platform-role-groups.sh
 # =============================================================================
-# Two platform roles are held by a group of the kernel realm, admin and
-# breakGlass; every other is held by name on the Cluster claim
-# (spec.platformAccess.roleHolders). What the install writes and makes is
-# held still here:
+# Every cluster role is held by name on the Cluster claim
+# (spec.platformAccess.roleHolders); none is held by a group of the kernel
+# realm. What the install writes and makes is held still here:
 #
-#   - a new Cluster claim names gentian:platform:admin for admin, and no group
-#     for any other role;
-#   - the kernel realm's bootstrap Job makes no security officers' group.
+#   - a new Cluster claim names no group for any role;
+#   - the kernel realm's bootstrap Job makes no group and puts nobody in one.
 #
 # Runs the library's own functions under set -u, with kubectl replaced by a
 # stand-in. No cluster.
@@ -46,12 +44,43 @@ env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" KERNEL_DOMAIN=
     bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; scaffold_cluster_deployment' \
     >"${SANDBOX}/scaffold.log" 2>&1
 CLAIM="${CO}/clusters/c1/kernel/claims/cluster.yaml"
-roles() { /usr/bin/python3 -c 'import sys, yaml; r = yaml.safe_load(open(sys.argv[1]))["spec"]["platformRoles"]; print(sorted(r))' "${CLAIM}" 2>/dev/null; }
+roles() { /usr/bin/python3 -c 'import sys, yaml; print(sorted(yaml.safe_load(open(sys.argv[1]))["spec"].get("platformRoles") or []))' "${CLAIM}" 2>/dev/null; }
 if [[ -f "${CLAIM}" ]]; then
-    is "a new claim names the administrators' group and no other" "$(roles)" "['admin']"
+    is "a new claim names no group for a role" "$(roles)" "[]"
 else
     bad "step 0 wrote no Cluster claim" "$(tail -n 20 "${SANDBOX}/scaffold.log")"
 fi
+
+# --- a claim written before ---------------------------------------------------
+# A claim that names a group for a role loses the section and its comment, and
+# keeps everything around it; a second pass changes nothing.
+OLD="${SANDBOX}/old-claim.yaml"
+cat > "${OLD}" <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+spec:
+  # The cluster's own id.
+  clusterUID: abc
+  # Who administers this cluster, by the Keycloak group they are in.
+  platformRoles:
+    admin: gentian:platform:admin
+    breakGlass: gentian:platform:break-glass
+
+  # Where this cluster runs.
+  platform: self-hosted
+EOF
+# shellcheck disable=SC2016 # $1 is the inner shell's, given after the script.
+env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" KERNEL_DOMAIN=k.example \
+    bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e
+        ensure_claim_names_no_role_group "$1"; ensure_claim_names_no_role_group "$1"' _ "${OLD}" >"${SANDBOX}/old.log" 2>&1
+is "an earlier claim loses the role groups and nothing else" "$(cat "${OLD}")" "apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+spec:
+  # The cluster's own id.
+  clusterUID: abc
+
+  # Where this cluster runs.
+  platform: self-hosted"
 
 # --- the bootstrap Job --------------------------------------------------------
 # kubectl keeps what is applied from stdin, and answers yes to everything else.
@@ -72,10 +101,10 @@ env -i HOME="${SANDBOX}/home" PATH="${SANDBOX}/bin:${PATH}" SCRIPT_DIR="${REPO}"
         run_keycloak_portal_bootstrap_job' >"${SANDBOX}/job.log" 2>&1
 if ! grep -q 'kind: Job' "${KUBECTL_APPLIED}"; then
     bad "the bootstrap Job was not applied" "$(tail -n 20 "${SANDBOX}/job.log")"
-elif grep -q 'platform:security\|SECURITY_GROUP' "${KUBECTL_APPLIED}"; then
-    bad "the bootstrap Job still makes a security officers' group"
+elif grep -q 'gentian:platform:\|SECURITY_GROUP\|ADMIN_GROUP\|/groups' "${KUBECTL_APPLIED}"; then
+    bad "the bootstrap Job still makes or fills a group"
 else
-    ok "the bootstrap Job makes no security officers' group"
+    ok "the bootstrap Job makes no group"
 fi
 
 finish

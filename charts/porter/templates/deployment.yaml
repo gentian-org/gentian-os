@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: porter
+  labels:
+    app.kubernetes.io/name: porter
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: porter
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: porter
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: porter
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/porter"]
+          env:
+            - name: PLAN_FILE
+              value: /etc/porter/plan.json
+            - name: LISTEN
+              value: ":{{ .Values.port }}"
+            # The porter's client in the tenant's realm and the scope of the
+            # tenant's file home, as files it reads when it asks for a
+            # token: the platform keeps the Secret current, and a mounted
+            # Secret follows it in place (no subPath).
+            - name: VOUCHING_DIR
+              value: /etc/vouching
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          volumeMounts:
+            - name: plan
+              mountPath: /etc/porter
+              readOnly: true
+            - name: vouching
+              mountPath: /etc/vouching
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: vouching
+          secret:
+            secretName: {{ .Values.vouchingSecret }}
+            # Absent until the tenant's realm holds the porter's client: the
+            # pod starts, and nobody is served a file until it does.
+            optional: true
+        # Absent until the platform writes it: nobody may ask.
+        - name: plan
+          configMap:
+            name: {{ .Values.planConfigMap }}
+            optional: true

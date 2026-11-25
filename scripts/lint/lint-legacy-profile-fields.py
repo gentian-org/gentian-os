@@ -73,8 +73,8 @@ REMOVED = {
     ("spec", "requires", "services", "database", "databasePerTenant"): "nothing: every tenant's app has a database of its own",
     ("spec", "requires", "services", "storage", "s3", "bucketPerTenant"): "nothing: every tenant's app has a bucket of its own",
     ("spec", "launchFrom"): "nothing: launch from is the whole statement",
-    ("spec", "adapter", "speaksAs"): "nothing: the field was never read",
-    ("spec", "adapter", "tools"): "nothing: the field was never read",
+    ("spec", "adapter"): "classes: [bridge] with spec.bridge: app (was adapts), a way from agents with its endpoint, addonsValuesPath",
+    ("spec", "action", "adapters"): "spec.action.agentBridges",
 }
 
 

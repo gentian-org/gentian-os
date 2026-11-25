@@ -94,6 +94,20 @@ spec:
                   the operator controls — worth stating, because bundles the platform
                   cannot reach are bundles it cannot help restore.
                 type: boolean
+              beforeMove:
+                description: |-
+                  BeforeMove is what is exported before an installed app moves to
+                  another build (docs/concepts/versioning.md §5): tenant, the app and the
+                  tenant's own -- its realm, its desktop's database, its mailboxes; app,
+                  the app alone; none, nothing, so that the last backup is what there is
+                  to go back to. An app that holds no data -- no database, no bucket, no
+                  volume -- is never exported, whatever this says. Unset inherits, and
+                  unset all the way up is app.
+                enum:
+                - tenant
+                - app
+                - none
+                type: string
               destination:
                 description: |-
                   Destination is where bundles are written. Unset inherits: the cluster
@@ -258,6 +272,15 @@ spec:
                 type: string
               credentialSatisfied:
                 type: boolean
+              effectiveBeforeMove:
+                description: |-
+                  EffectiveBeforeMove is what is exported before an app moves, after
+                  inheritance.
+                enum:
+                - tenant
+                - app
+                - none
+                type: string
               effectiveBucket:
                 type: string
               effectiveEndpoint:

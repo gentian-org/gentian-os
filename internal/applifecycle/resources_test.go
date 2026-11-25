@@ -112,3 +112,35 @@ func TestEveryTenantIsInTheClustersReport(t *testing.T) {
 		t.Fatalf("reports = %v, unavailable = %v (%v)", reports, unavailable, err)
 	}
 }
+
+// A tenant administrator's pending request reaches the Resources screens
+// with the tenant's state; without one, nothing is said.
+func TestAPendingPlanRequestComesWithTheTenantsResources(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	asked := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme", Annotations: map[string]string{
+		gentianov1alpha1.PlanRequestAnnotation:       "nodes-2",
+		gentianov1alpha1.PlanRequestByAnnotation:     "tom@acme.example",
+		gentianov1alpha1.PlanRequestAtAnnotation:     "2026-11-16T14:00:00Z",
+		gentianov1alpha1.PlanRequestReasonAnnotation: "Odoo needs room",
+	}}}
+	quiet := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "quiet"}}
+	s := &Service{client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(asked, quiet).Build()}
+
+	state, err := s.ResourceState(context.Background(), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := PlanRequest{Plan: "nodes-2", By: "tom@acme.example", At: "2026-11-16T14:00:00Z", Reason: "Odoo needs room"}
+	if state.Request == nil || *state.Request != want {
+		t.Fatalf("request = %+v", state.Request)
+	}
+	if state, err = s.ResourceState(context.Background(), "quiet"); err != nil || state.Request != nil {
+		t.Fatalf("no request: %+v (%v)", state, err)
+	}
+}

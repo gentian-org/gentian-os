@@ -21,6 +21,7 @@ import (
 	"golang.org/x/time/rate"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -171,11 +172,10 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
 //
-// EndpointSlices back loadKubeAPIEndpointSlice (tenant_network_policy.go): the
-// baseline tenant NetworkPolicy allows egress to KUBE_APISERVER_CIDR and then
-// adds a /32 per real kube-apiserver endpoint. When the apiserver sits OUTSIDE
-// that CIDR — any cluster reached through a public IP — those /32 rules are the
-// only thing letting tenant workloads reach the API at all.
+// EndpointSlices back loadClusterServices (tenant_network_policy.go): the
+// baseline tenant NetworkPolicy admits a /32 per real kube-apiserver
+// endpoint, which on a cluster reached through a public IP is the only thing
+// letting tenant workloads reach the API at all.
 // +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
 //
 // cert-manager Certificates for tenant edge TLS (tenant_edge_tls.go).
@@ -228,6 +228,10 @@ type TenantReconciler struct {
 	// repository, which a bundle records as the cluster it was taken on.
 	Rights    RightsStore
 	ClusterID string
+	// FirstAdministratorID answers the id of a realm's account by its
+	// username, for giving a tenant's first administrator the position
+	// (first_administrator.go). Nil asks the identity provider.
+	FirstAdministratorID accountID
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
 	Exec AppExecer
@@ -237,10 +241,6 @@ type TenantReconciler struct {
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
 	APIReader client.Reader
-	// DefaultGrant gives every member of a tenant access to one of its apps,
-	// for an app entry declaring defaultGrant. Nil when the operator runs
-	// without its app-lifecycle service, which is what holds the means.
-	DefaultGrant AppDefaultGranter
 	// PlanEventStore opens a tenant's usage store for the plan event a landed
 	// plan change is recorded as. Nil opens the tenant's own database.
 	PlanEventStore planEventStoreFor
@@ -303,7 +303,7 @@ type TenantReconciler struct {
 	// unset or misspelled value keeps today's behavior rather than rejecting
 	// mail on the strength of a typo.
 	MailRecipientPolicy string
-	// MailServiceMode is the CLUSTER's mail stack — kernel or external — from
+	// MailServiceMode is where the CLUSTER's mail is — relay, external or internal — from
 	// the Cluster claim's mail.serviceMode. Sourced from MAIL_SERVICE_MODE.
 	//
 	// Distinct from Tenant.spec.mail.mode, which says what one tenant wants;
@@ -578,6 +578,14 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		handler.EnqueueRequestsFromMapFunc(mapAllTenants),
 		builder.WithPredicates(envoyKernelServicePredicate),
 	)
+	// The cluster's DNS and the API server, which every tenant's baseline
+	// admits (loadClusterServices): a change of either reaches every
+	// tenant's policies when it happens.
+	ctrlBuilder = ctrlBuilder.
+		Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(clusterServiceChanged())).
+		Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(mapAllTenants),
+			builder.WithPredicates(clusterServiceChanged()))
 
 	// Entering a tenant (kernel_enter.go): a tenant that opens itself to the
 	// platform's administrators, changes realm, or goes, is the kernel
@@ -1146,9 +1154,6 @@ func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
 	if q.RequestsMemory != nil {
 		quotas["requestsMemory"] = q.RequestsMemory.String()
 	}
-	if q.MaxApps > 0 {
-		quotas["maxApps"] = int64(q.MaxApps)
-	}
 	if q.MaxPods > 0 {
 		quotas["maxPods"] = int64(q.MaxPods)
 	}
@@ -1249,13 +1254,6 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	}
 	if kernelBroker {
 		spec["kernelBroker"] = true
-	}
-	if len(tenant.Spec.Groups) > 0 {
-		groups := make([]interface{}, 0, len(tenant.Spec.Groups))
-		for _, g := range tenant.Spec.Groups {
-			groups = append(groups, g.Name)
-		}
-		spec["groups"] = groups
 	}
 	// The tenant's partners (partners.go), within what the claim allows.
 	claimPartners, err := readClusterPartners(ctx, r.Client)

@@ -453,6 +453,7 @@ func TestEveryReconcilerThatWritesIsBehindTheCheck(t *testing.T) {
 		"tile_projection_reconciler.go":    "writes a ConfigMap",
 		"keycloak_platform_reconciler.go":  "writes Keycloak's own resources",
 		"gateway_platform_reconciler.go":   "writes Gateway API resources",
+		"outgoing_gateway_reconciler.go":   "writes Gateway API resources, Services and network policies in the edge namespace",
 		"concierge_lookup.go":              "writes a ConfigMap",
 		"tenant_apps_helm.go":              "writes a RoleBinding",
 		"bundlefetch_controller.go":        "deletes a fetch's NetworkPolicy",

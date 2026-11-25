@@ -71,6 +71,15 @@ import (
 // still cleared, and only the declared paths are forwarded. Because a
 // guessed password now lands on the app's own sign-in, such an entry is held
 // to a rate of its own, lower than every other entry's.
+//
+// And one exception to the second, on such an entry only. An app that signs
+// a person in with a redirect to the identity provider and back keeps the
+// state of that redirect in a cookie of its own. Where the entry names those
+// cookies and the paths of that sign-in, and was approved with them, the
+// proxy on those paths alone rebuilds the Cookie header from the named
+// cookies -- never the header as it came, so the zone's session and every
+// other cookie of the domain still stay out -- and lets the app's Set-Cookie
+// back to the browser. Everywhere else on the entry nothing changes.
 
 // perimeterProxyPort is what the proxy listens on inside its pod.
 const perimeterProxyPort = 8080
@@ -300,7 +309,7 @@ func perimeterPublishedPattern(prefix string) string {
 //   - its caller's address is within its rate and its concurrent requests
 //     (429);
 //   - its headers and body are within the sizes below (400, 413, 431).
-func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string, upstreamPort int32, website, passCredential bool, limits perimeterLimits) string {
+func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string, upstreamPort int32, website, passCredential bool, signIn *gentianov1alpha1.SignInCookies, limits perimeterLimits) string {
 	limits = limits.bounded()
 	rate, burst, concurrent := limits.RatePerSecond, limits.Burst, limits.Concurrent
 	if passCredential {
@@ -392,6 +401,25 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 		fmt.Fprintf(&b, "    \"~*^%s\" 1;\n", regexp.QuoteMeta(deny))
 	}
 	b.WriteString("  }\n")
+	signInNames := signInNamesOf(signIn)
+	signInPaths, _ := perimeterSafePaths(signInPathsOf(signIn))
+	if !passCredential || len(signInPaths) == 0 || len(signInNames) == 0 {
+		signInPaths = nil
+	}
+	signInCookie := ""
+	if len(signInPaths) > 0 {
+		b.WriteString("  # The cookies of the app's own sign-in, each only when the browser\n")
+		b.WriteString("  # sent it, and nothing else the browser holds for the domain.\n")
+		var joined strings.Builder
+		for i, name := range signInNames {
+			fmt.Fprintf(&b, "  map $cookie_%s $perimeter_signin_%d {\n", name, i)
+			b.WriteString("    default \"\";\n")
+			fmt.Fprintf(&b, "    \"~.\" \"%s=$cookie_%s; \";\n", name, name)
+			b.WriteString("  }\n")
+			fmt.Fprintf(&joined, "$perimeter_signin_%d", i)
+		}
+		signInCookie = joined.String()
+	}
 	b.WriteString("  # Whose request this is. The Gateway appends the address its\n")
 	b.WriteString("  # connection came from to X-Forwarded-For, so the last one is the\n")
 	b.WriteString("  # Gateway's word and the ones before it are the caller's.\n")
@@ -430,55 +458,75 @@ func perimeterProxyConfig(e *gentianov1alpha1.ExposureSpec, upstreamHost string,
 		b.WriteString("}\n")
 		return b.String()
 	}
-	b.WriteString("    location / {\n")
-	b.WriteString("      if ($request_method ~ \"^(TRACE|TRACK|CONNECT)$\") { return 405; }\n")
-	b.WriteString("      if ($perimeter_ambiguous) { return 400; }\n")
-	b.WriteString("      # Anything not declared never reaches the tenant.\n")
-	b.WriteString("      if ($perimeter_published = 0) { return 404; }\n")
-	b.WriteString("      if ($perimeter_denied) { return 404; }\n")
-	fmt.Fprintf(&b, "      limit_req zone=perimeter_rate burst=%d nodelay;\n", burst)
-	fmt.Fprintf(&b, "      limit_conn perimeter_concurrent %d;\n", concurrent)
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "      proxy_pass http://%s:%d;\n", upstreamHost, upstreamPort)
-	b.WriteString("      proxy_set_header Host $host;\n")
-	b.WriteString("      # What the application is told of the connection is this proxy's\n")
-	b.WriteString("      # word, not the caller's: one address, the scheme and the host.\n")
-	b.WriteString("      proxy_set_header X-Forwarded-Proto https;\n")
-	fmt.Fprintf(&b, "      proxy_set_header X-Forwarded-For %s;\n", client)
-	fmt.Fprintf(&b, "      proxy_set_header X-Real-IP %s;\n", client)
-	b.WriteString("      proxy_set_header X-Forwarded-Host $host;\n")
-	for _, h := range perimeterStrippedForwardingHeaders {
-		fmt.Fprintf(&b, "      proxy_set_header %s \"\";\n", h)
+	location := func(match string, signIn bool) {
+		fmt.Fprintf(&b, "    location %s {\n", match)
+		b.WriteString("      if ($request_method ~ \"^(TRACE|TRACK|CONNECT)$\") { return 405; }\n")
+		b.WriteString("      if ($perimeter_ambiguous) { return 400; }\n")
+		b.WriteString("      # Anything not declared never reaches the tenant.\n")
+		b.WriteString("      if ($perimeter_published = 0) { return 404; }\n")
+		b.WriteString("      if ($perimeter_denied) { return 404; }\n")
+		fmt.Fprintf(&b, "      limit_req zone=perimeter_rate burst=%d nodelay;\n", burst)
+		fmt.Fprintf(&b, "      limit_conn perimeter_concurrent %d;\n", concurrent)
+		b.WriteString("\n")
+		fmt.Fprintf(&b, "      proxy_pass http://%s:%d;\n", upstreamHost, upstreamPort)
+		b.WriteString("      proxy_set_header Host $host;\n")
+		b.WriteString("      # What the application is told of the connection is this proxy's\n")
+		b.WriteString("      # word, not the caller's: one address, the scheme and the host.\n")
+		b.WriteString("      proxy_set_header X-Forwarded-Proto https;\n")
+		fmt.Fprintf(&b, "      proxy_set_header X-Forwarded-For %s;\n", client)
+		fmt.Fprintf(&b, "      proxy_set_header X-Real-IP %s;\n", client)
+		b.WriteString("      proxy_set_header X-Forwarded-Host $host;\n")
+		for _, h := range perimeterStrippedForwardingHeaders {
+			fmt.Fprintf(&b, "      proxy_set_header %s \"\";\n", h)
+		}
+		b.WriteString("\n")
+		if signIn {
+			b.WriteString("      # The app's own sign-in: its named cookies, rebuilt one by one,\n")
+			b.WriteString("      # and nothing else of what the browser holds for the domain.\n")
+			fmt.Fprintf(&b, "      proxy_set_header Cookie \"%s\";\n", signInCookie)
+		} else {
+			b.WriteString("      # Property 2, 3 and 4: nothing of the session model goes in.\n")
+			b.WriteString("      # An empty value is what nginx takes for \"do not send this\".\n")
+			b.WriteString("      proxy_set_header Cookie \"\";\n")
+		}
+		if passCredential {
+			b.WriteString("      # The one header that goes in as it came: this entry was declared\n")
+			b.WriteString("      # and approved as one whose callers present a credential the\n")
+			b.WriteString("      # application issued. The application checks it; this proxy does\n")
+			b.WriteString("      # not, and does not know who is calling.\n")
+			b.WriteString("      proxy_set_header Authorization $http_authorization;\n")
+		} else {
+			b.WriteString("      proxy_set_header Authorization \"\";\n")
+		}
+		b.WriteString("      proxy_set_header X-Forwarded-Access-Token \"\";\n")
+		for _, h := range perimeterStrippedIdentityHeaders() {
+			fmt.Fprintf(&b, "      proxy_set_header %s \"\";\n", h)
+		}
+		b.WriteString("\n")
+		if signIn {
+			b.WriteString("      # The app's sign-in sets its own cookies here, approved for it.\n")
+			b.WriteString("      # Nor what the application runs on: the answer names the proxy.\n")
+		} else {
+			b.WriteString("      # And nothing of the application's session comes back out:\n")
+			b.WriteString("      # a Set-Cookie here would plant a cookie on the public host\n")
+			b.WriteString("      # that the browser then carries to every other link on it.\n")
+			b.WriteString("      # Nor what the application runs on: the answer names the proxy.\n")
+			b.WriteString("      proxy_hide_header Set-Cookie;\n")
+		}
+		b.WriteString("      proxy_hide_header X-Powered-By;\n")
+		if website {
+			b.WriteString("      proxy_hide_header X-Content-Type-Options;\n")
+			b.WriteString("      add_header X-Content-Type-Options nosniff always;\n")
+		}
+		b.WriteString("    }\n")
 	}
-	b.WriteString("\n")
-	b.WriteString("      # Property 2, 3 and 4: nothing of the session model goes in.\n")
-	b.WriteString("      # An empty value is what nginx takes for \"do not send this\".\n")
-	b.WriteString("      proxy_set_header Cookie \"\";\n")
-	if passCredential {
-		b.WriteString("      # The one header that goes in as it came: this entry was declared\n")
-		b.WriteString("      # and approved as one whose callers present a credential the\n")
-		b.WriteString("      # application issued. The application checks it; this proxy does\n")
-		b.WriteString("      # not, and does not know who is calling.\n")
-		b.WriteString("      proxy_set_header Authorization $http_authorization;\n")
-	} else {
-		b.WriteString("      proxy_set_header Authorization \"\";\n")
+	location("/", false)
+	for _, path := range signInPaths {
+		// A regular expression, so the path is matched by whole segments
+		// and wins over "/"; the checks above still apply inside it.
+		fmt.Fprintf(&b, "    # The app's own sign-in, under %s.\n", path)
+		location(fmt.Sprintf("~ \"%s\"", perimeterPublishedPattern(path)), true)
 	}
-	b.WriteString("      proxy_set_header X-Forwarded-Access-Token \"\";\n")
-	for _, h := range perimeterStrippedIdentityHeaders() {
-		fmt.Fprintf(&b, "      proxy_set_header %s \"\";\n", h)
-	}
-	b.WriteString("\n")
-	b.WriteString("      # And nothing of the application's session comes back out:\n")
-	b.WriteString("      # a Set-Cookie here would plant a cookie on the public host\n")
-	b.WriteString("      # that the browser then carries to every other link on it.\n")
-	b.WriteString("      # Nor what the application runs on: the answer names the proxy.\n")
-	b.WriteString("      proxy_hide_header Set-Cookie;\n")
-	b.WriteString("      proxy_hide_header X-Powered-By;\n")
-	if website {
-		b.WriteString("      proxy_hide_header X-Content-Type-Options;\n")
-		b.WriteString("      add_header X-Content-Type-Options nosniff always;\n")
-	}
-	b.WriteString("    }\n")
 	b.WriteString("  }\n")
 	b.WriteString("}\n")
 	return b.String()
@@ -525,6 +573,42 @@ func perimeterStrippedIdentityHeaders() []string {
 // entry that declares none (addresses.Prefixes).
 func perimeterPrefixes(e *gentianov1alpha1.ExposureSpec) []string {
 	return addresses.Prefixes(e)
+}
+
+// perimeterCookieName is a cookie name the proxy can name in its
+// configuration: nginx reads $cookie_<name> for exactly these characters.
+var perimeterCookieName = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+
+// signInNamesOf are the cookie names of an app's own sign-in the proxy
+// passes: those it can write down, and no other.
+func signInNamesOf(c *gentianov1alpha1.SignInCookies) []string {
+	if c == nil {
+		return nil
+	}
+	var out []string
+	for _, n := range c.Names {
+		if perimeterCookieName.MatchString(n) {
+			out = append(out, n)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// signInPathsOf are the paths of an app's own sign-in the proxy passes its
+// cookies on: none without an approved set.
+func signInPathsOf(c *gentianov1alpha1.SignInCookies) []string {
+	if c == nil || len(c.Names) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(c.Paths))
+	for _, p := range c.Paths {
+		if p = strings.TrimSpace(p); p != "" && strings.HasPrefix(p, "/") {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // perimeterDenied are the paths refused even where a prefix admits them.

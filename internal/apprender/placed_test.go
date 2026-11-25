@@ -69,16 +69,16 @@ func TestAPlacedChartKeepsItsOwnValues(t *testing.T) {
 // and its alias is made, not merely observed: nobody else makes it.
 func TestAnAppNamedPastItsOverrideGetsItsAPIAlias(t *testing.T) {
 	in := &Input{
-		App: "fellwort-ee", Namespace: "tenant-acme", TenantName: "acme", Domain: "acme.example",
-		ReleaseObject: "tenant-acme-fellwort-ee", HelmRelease: "tenant-acme-fellwort-ee",
-		KeepVolumes: "fellwort-ee-keep-volumes", Composite: "tenant-acme-fellwort-ee", ProfileName: "fellwort-ee",
+		App: "voles-ee", Namespace: "tenant-acme", TenantName: "acme", Domain: "acme.example",
+		ReleaseObject: "tenant-acme-voles-ee", HelmRelease: "tenant-acme-voles-ee",
+		KeepVolumes: "voles-ee-keep-volumes", Composite: "tenant-acme-voles-ee", ProfileName: "voles-ee",
 		Profile: &gentianov1alpha1.ComponentProfileSpec{
 			Package: gentianov1alpha1.PackageSpec{
-				Chart:       &gentianov1alpha1.ChartRef{Repository: "oci://example.invalid/charts", Name: "fellwort", Version: "1.0.0"},
-				ExtraValues: &runtime.RawExtension{Raw: []byte(`{"fullnameOverride":"fellwort"}`)},
+				Chart:       &gentianov1alpha1.ChartRef{Repository: "oci://example.invalid/charts", Name: "voles", Version: "1.0.0"},
+				ExtraValues: &runtime.RawExtension{Raw: []byte(`{"fullnameOverride":"voles"}`)},
 			},
 			Expose: []gentianov1alpha1.ExposureSpec{{Name: "web", Surface: "gateway",
-				Backend: gentianov1alpha1.BackendRef{Service: "fellwort-web", Port: 80}}},
+				Backend: gentianov1alpha1.BackendRef{Service: "voles-web", Port: 80}}},
 		},
 	}
 	out, err := Render(in)
@@ -86,16 +86,16 @@ func TestAnAppNamedPastItsOverrideGetsItsAPIAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, obj := range out.ObserveOnly {
-		if obj.GetName() == "fellwort-ee-api" {
-			t.Fatal("fellwort-ee-api is only observed, and nothing makes it")
+		if obj.GetName() == "voles-ee-api" {
+			t.Fatal("voles-ee-api is only observed, and nothing makes it")
 		}
 	}
 	found := false
 	for _, obj := range out.Objects {
-		found = found || (obj.GetKind() == "Service" && obj.GetName() == "fellwort-ee-api")
+		found = found || (obj.GetKind() == "Service" && obj.GetName() == "voles-ee-api")
 	}
 	if !found {
-		t.Fatal("fellwort-ee-api is not made")
+		t.Fatal("voles-ee-api is not made")
 	}
 }
 

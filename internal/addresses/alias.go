@@ -25,8 +25,9 @@ import (
 // Not honoured: on a single-tenancy cluster, where a tenant's addresses are
 // at that level already; a name the platform keeps; a name a tenant is
 // called, since <name>.<cluster> is that tenant's own address; and, where
-// two surfaces carry one alias, every one but the first that was given it.
-// Whether the surface itself is published is not asked here.
+// two surfaces carry one alias, every one but the first that was given it;
+// and on an inside entry, which has no name outside the cluster to add one
+// to. Whether the surface itself is published is not asked here.
 func AliasHost(in Inputs, tenant, install, exposure string) string {
 	label, setAt := "", ""
 	for i := range in.Tenants {
@@ -34,7 +35,7 @@ func AliasHost(in Inputs, tenant, install, exposure string) string {
 			continue
 		}
 		for _, e := range in.Tenants[i].Spec.Exposures {
-			if e.Install == install && e.ExposureName == exposure {
+			if e.Install == install && e.ExposureName == exposure && e.Kind != gentianov1alpha1.ExposureKindInsideAppCredential {
 				label, setAt = e.Alias, aliasSetAt(e)
 			}
 		}
@@ -55,7 +56,7 @@ func AliasHost(in Inputs, tenant, install, exposure string) string {
 			return ""
 		}
 		for _, e := range other.Spec.Exposures {
-			if e.Alias != label {
+			if e.Alias != label || e.Kind == gentianov1alpha1.ExposureKindInsideAppCredential {
 				continue
 			}
 			if (aliasOrder{aliasSetAt(e), other.Name, e.Install, e.ExposureName}).before(mine) {

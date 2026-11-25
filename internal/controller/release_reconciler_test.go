@@ -96,6 +96,7 @@ func releaseFixtures(release map[string]any) []client.Object {
 					"desktop":      map[string]any{"enabled": true, "chart": map[string]any{"version": "0.1.0-develop.0123456"}},
 					"adminConsole": map[string]any{"enabled": true, "chart": map[string]any{"version": "0.1.1-develop.0123456"}},
 					"concierge":    map[string]any{"enabled": true, "chart": map[string]any{"version": "0.1.0-develop.0123456"}},
+					"homesync":     map[string]any{"enabled": true, "chart": map[string]any{"version": "0.1.0-develop.0123456"}},
 				}},
 			},
 			map[string]any{"repoURL": "https://github.com/example/deployments", "targetRevision": "main", "ref": "deploy"},
@@ -183,6 +184,13 @@ func TestAVersionMovesEveryInstallerApplicationToTheRelease(t *testing.T) {
 	}
 	if enabled, _, _ := unstructured.NestedBool(src[0], "helm", "valuesObject", "desktop", "enabled"); !enabled {
 		t.Fatal("the rest of the values must stay")
+	}
+	// The home sync chart follows image.tag; an earlier install's pin goes.
+	if _, found, _ := unstructured.NestedFieldNoCopy(src[0], "helm", "valuesObject", "homesync", "chart"); found {
+		t.Fatal("the home sync chart pin must be taken out")
+	}
+	if enabled, _, _ := unstructured.NestedBool(src[0], "helm", "valuesObject", "homesync", "enabled"); !enabled {
+		t.Fatal("homesync.enabled must stay")
 	}
 	// The deployments source of the same Application is not the platform's.
 	if rev, _, _ := unstructured.NestedString(src[1], "targetRevision"); rev != "main" {

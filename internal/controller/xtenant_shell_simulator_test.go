@@ -51,23 +51,23 @@ func startXTenantShellSimulator(ctx context.Context, c client.Client) {
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
 		cfg := netpolicy.DefaultConfig()
-		var kubeAPIEndpts *discoveryv1.EndpointSlice
+		var cluster netpolicy.ClusterServices
 		endpts := &discoveryv1.EndpointSlice{}
 		if err := c.Get(ctx, types.NamespacedName{Name: "kubernetes", Namespace: "default"}, endpts); err == nil {
-			kubeAPIEndpts = endpts
+			cluster.APIEndpoints = []discoveryv1.EndpointSlice{*endpts}
 		}
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				simulateXTenantShellOnce(ctx, c, cfg, kubeAPIEndpts)
+				simulateXTenantShellOnce(ctx, c, cfg, cluster)
 			}
 		}
 	}()
 }
 
-func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg netpolicy.Config, kubeAPIEndpts *discoveryv1.EndpointSlice) {
+func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg netpolicy.Config, cluster netpolicy.ClusterServices) {
 	list := &unstructured.UnstructuredList{}
 	list.SetGroupVersionKind(xTenantListGVK)
 	if err := c.List(ctx, list); err != nil {
@@ -96,7 +96,7 @@ func simulateXTenantShellOnce(ctx context.Context, c client.Client, cfg netpolic
 		if rq := shellResourceQuota(tenantName, nsName, tenant.Spec.Quotas); rq != nil {
 			createIfMissing(ctx, c, rq)
 		}
-		createIfMissing(ctx, c, netpolicy.BaselineNetworkPolicy(tenantName, nsName, cfg, kubeAPIEndpts))
+		createIfMissing(ctx, c, netpolicy.BaselineNetworkPolicy(tenantName, nsName, cfg, cluster))
 		patchXTenantReady(ctx, c, xr)
 	}
 	simulateXTenantDeletionCascade(ctx, c, list.Items)
@@ -236,9 +236,6 @@ func tenantSpecFromXR(spec map[string]interface{}) gentianov1alpha1.TenantSpec {
 				parsed := resource.MustParse(v)
 				*target = &parsed
 			}
-		}
-		if v, ok := raw["maxApps"].(int64); ok {
-			q.MaxApps = int32(v)
 		}
 		if v, ok := raw["maxPods"].(int64); ok {
 			q.MaxPods = int32(v)

@@ -61,12 +61,11 @@ realm):
   the sector identifier `<P issuer>` and a salt the operator derives once per
   tenant and partner; and a roles mapper putting the person's role on the
   tenant in the access token as the multi-valued claim `gentian_roles`:
-  `tenant-admin` for a member of `gentian:tenant:<t>:admins`, `cluster-admin`
-  for a member of `gentian:tenant:<t>:platform-admins`, both for a person in
-  both, and no claim for anybody else. It is Keycloak's user attribute mapper
-  aggregating the group attribute `gentianPartnerRole` over the person's
-  groups, which only those two groups carry, so the claim follows from group
-  membership and from nothing else ([iam.md §1.2](iam.md)); in the access
+  `tenant-admin` for a person who administers the tenant, `cluster-admin`
+  for a cluster administrator -- an account of the kernel realm, or one
+  that entered the tenant from it -- both for a person who is both, and an
+  empty claim for anybody else. The platform's mapper asks the rights store
+  for every token ([iam.md §1.8](iam.md)); in the access
   token only, never in an ID token or at userinfo, and on this scope only, so
   no other client of the realm sees it. The same scope is the partner
   client's default and an optional scope of every app client allowed to call
@@ -105,10 +104,10 @@ realm):
   confidential, JWT Authorization Grant on for every accepted partner's
   provider, authenticated by the app's Kubernetes service account token.
 
-The person's group memberships never cross, and of their roles only the one
-claim `gentian_roles` carries: whether they administer the tenant, or the
-cluster. What a linked person may do at Y is Y's own groups, as for any
-account of Y; what Y makes of the role is Y's.
+The person's positions never cross, and of their roles only the one claim
+`gentian_roles` carries, answered from the rights store: whether they
+administer the tenant, or the cluster. What a linked person may do at Y is
+what Y gives them, as for any account of Y; what Y makes of the role is Y's.
 
 **Service account trust.** Each realm with a partner app holds the identity
 provider `kubernetes` (Keycloak's Kubernetes provider) for the cluster's
@@ -173,7 +172,7 @@ spec:
   which the usage statistics report tells a store; two administrators
   exchange another one with the issuer.
 - **Same cluster.** Two tenants of one cluster use `signInTo`/`signInFrom`,
-  which give groups ([identity-brokering.md](../guides/identity-brokering.md)); a
+  which give positions ([identity-brokering.md](../guides/identity-brokering.md)); a
   partner gives none.
 
 ## 4. Linking once
@@ -289,7 +288,7 @@ works is the assertion's lifetime plus Y's token's.
   their records by it; and, in an assertion, the person's role on the tenant
   (`gentian_roles`, §2): that they administer the tenant, or the cluster, and
   nothing when they do neither. Y never sees X's user id, name, e-mail
-  address or groups, not at linking, not in an assertion. There is no switch
+  address or positions, not at linking, not in an assertion. There is no switch
   to share more.
 - **A partner that needs a contact** (billing) asks the person for it in its
   own pages, under its own privacy notice.

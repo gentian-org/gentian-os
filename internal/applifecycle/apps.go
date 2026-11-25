@@ -103,6 +103,13 @@ type AppState struct {
 	// for its profile, and its privileges are asked, approved and declined
 	// under that name, not the app's.
 	Addons []AddonState `json:"addons,omitempty"`
+	// TrustTier is the profile's trust tier, and Holds what the profile has
+	// the component hold on people's behalf (holds.go): what an
+	// administrator is shown when asking what an app may do for the
+	// tenant's people. Both absent for a component whose profile the
+	// cluster no longer has.
+	TrustTier string `json:"trustTier,omitempty"`
+	Holds     []Hold `json:"holds,omitempty"`
 }
 
 // AddonState is one add-on of an app, as its own Component has it.
@@ -114,6 +121,9 @@ type AddonState struct {
 	Message                   string             `json:"message,omitempty"`
 	PendingPrivileges         []string           `json:"pendingPrivileges,omitempty"`
 	PendingPrivilegeApprovals []PendingPrivilege `json:"pendingPrivilegeApprovals,omitempty"`
+	// TrustTier and Holds are the add-on's own, as on AppState.
+	TrustTier string `json:"trustTier,omitempty"`
+	Holds     []Hold `json:"holds,omitempty"`
 }
 
 // PendingPrivilege is one request nobody has granted yet, and who may.
@@ -142,6 +152,11 @@ type PendingPrivilege struct {
 	// Digest is, for an API extension, what an approval names: the digest of
 	// the request as the profile has it now (security.APIExtensionDigest).
 	Digest string `json:"digest,omitempty"`
+	// Hosts are, for an egress request by host, the hosts it names.
+	Hosts []string `json:"hosts,omitempty"`
+	// HostsAtApproval says an approval of this egress request names the
+	// hosts it opens: the profile names none, its installation chooses them.
+	HostsAtApproval bool `json:"hostsAtApproval,omitempty"`
 	// DeclinedBy, DeclinedAt and DeclineReason are an approver's no
 	// (privilege_requests.go): who, when and why. The privilege is still
 	// pending -- a decline installs nothing and the app keeps waiting -- but
@@ -188,6 +203,9 @@ func pendingApprovals(comp *gentianov1alpha1.Component, profile *gentianov1alpha
 			Digest:     apiExtensionDigest(profile, ref),
 			Waiver:     pendingWaiver(profile, ref, allowed),
 		}
+		if e := egressRequest(profile, ref); e != nil {
+			p.Hosts, p.HostsAtApproval = e.Hosts, e.HostsAtApproval
+		}
 		if req, ok := requests[ref]; ok {
 			if p.ApprovedBy != security.PrivilegeApproverPerimeter {
 				p.RequestedBy, p.RequestedAt, p.Note = req.RequestedBy, req.RequestedAt, req.Note
@@ -216,6 +234,22 @@ func pendingWaiver(profile *gentianov1alpha1.ComponentProfile, ref string, allow
 		return &PendingWaiver{
 			Profile: profile.Name, Policy: w.Policy, Scope: w.Scope,
 			Allowlisted: len(security.ApprovedMacWaivers(profile.Name, ask, allowed)) > 0,
+		}
+	}
+	return nil
+}
+
+// egressRequest is the profile's egress request ref names, or nil for
+// anything else.
+func egressRequest(profile *gentianov1alpha1.ComponentProfile, ref string) *gentianov1alpha1.EgressRequest {
+	kind, name := security.SplitPrivilegeRef(ref)
+	p := profile.Privileges()
+	if kind != security.PrivilegeEgress || p == nil {
+		return nil
+	}
+	for i := range p.Egress {
+		if p.Egress[i].Name == name {
+			return &p.Egress[i]
 		}
 	}
 	return nil
@@ -308,7 +342,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, cp); err == nil {
 			found = true
 			if cp.Annotations[deploymentRoleAnnotation] == deploymentRoleAddon {
-				addons[comp.Name] = addonState(comp, cp, allowed)
+				addons[comp.Name] = addonState(tenantName, comp, cp, allowed)
 				continue
 			}
 		} else if !apierrors.IsNotFound(err) {
@@ -321,6 +355,7 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 		}
 		if found {
 			state.PendingPrivilegeApprovals = pendingApprovals(comp, cp, allowed, time.Now())
+			state.TrustTier, state.Holds = string(cp.Spec.TrustTier), holdsOf(cp)
 		}
 		pods, err := s.componentPods(ctx, comp)
 		if err != nil {
@@ -355,12 +390,14 @@ func (s *Service) AppStates(ctx context.Context, tenantName string) ([]AppState,
 
 // addonState is an add-on Component's account of itself, with its pending
 // privileges and who answers each.
-func addonState(comp *gentianov1alpha1.Component, cp *gentianov1alpha1.ComponentProfile, allowed []gentianov1alpha1.AllowedMacWaiver) AddonState {
+func addonState(tenant string, comp *gentianov1alpha1.Component, cp *gentianov1alpha1.ComponentProfile, allowed []gentianov1alpha1.AllowedMacWaiver) AddonState {
 	state := componentState(comp)
 	return AddonState{
 		Profile: state.Profile, Name: state.Name, Ready: state.Ready, Phase: state.Phase, Message: state.Message,
 		PendingPrivileges:         state.PendingPrivileges,
 		PendingPrivilegeApprovals: pendingApprovals(comp, cp, allowed, time.Now()),
+		TrustTier:                 string(cp.Spec.TrustTier),
+		Holds:                     holdsOf(cp),
 	}
 }
 
@@ -773,48 +810,6 @@ func (s *Service) finishUninstall(ctx context.Context, tenant *gentianov1alpha1.
 	return nil
 }
 
-// ProvisionApp grants an installed app to everybody who is already a member
-// of the tenant, and marks it as granted by default to whoever joins later.
-//
-// Installing makes an app exist; who may use it is decided separately. This
-// is the shortcut for the common answer, "everyone".
-func (s *Service) ProvisionApp(ctx context.Context, tenantName, profile string) (*Result, error) {
-	defer s.lockApp(tenantName, profile)()
-
-	tenant, err := s.getTenant(ctx, tenantName)
-	if err != nil {
-		return nil, err
-	}
-	// An app of the tenant's, or an add-on switched on inside one: an add-on
-	// has a group of its own, and who may use it is decided separately from
-	// who may use its base. A component the platform places has no group to
-	// grant, and is not one.
-	apps, err := placement.Installed(ctx, s.client, tenant.Spec.Apps)
-	if err != nil {
-		return nil, err
-	}
-	installed := false
-	for _, a := range apps {
-		if a.Profile == profile {
-			installed = true
-			break
-		}
-		for _, addon := range a.Addons {
-			if addon == profile {
-				installed = true
-				break
-			}
-		}
-	}
-	if !installed {
-		return nil, fmt.Errorf("%s is not installed in %s", profile, tenantName)
-	}
-	if err := s.provisionAppGroupUsers(ctx, tenant, profile); err != nil {
-		return nil, err
-	}
-	return &Result{Status: "provisioned", Tenant: tenantName, Profile: profile}, nil
-}
-
 func (h *HTTPServer) registerAppRoutes(mux router) {
 	mux.Read("GET /v1/tenants/{tenant}/apps/status", h.handleAppStates)
 	// What uninstalled apps still hold. A read: it destroys nothing and runs
@@ -823,7 +818,6 @@ func (h *HTTPServer) registerAppRoutes(mux router) {
 	// Actions, not writes. Desired state is the director's, in git; these are
 	// things done once.
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/purge-app", h.handlePurgeApp)
-	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/provision-app", h.handleProvisionApp)
 }
 
 func (h *HTTPServer) handleAppStates(w http.ResponseWriter, r *http.Request) {
@@ -882,19 +876,6 @@ func (h *HTTPServer) handlePurgeApp(w http.ResponseWriter, r *http.Request) {
 
 func (h *HTTPServer) handleRetainedApps(w http.ResponseWriter, r *http.Request) {
 	res, err := h.Service.RetainedApps(r.Context(), r.PathValue("tenant"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, res)
-}
-
-func (h *HTTPServer) handleProvisionApp(w http.ResponseWriter, r *http.Request) {
-	profile, ok := profileOf(w, r)
-	if !ok {
-		return
-	}
-	res, err := h.Service.ProvisionApp(r.Context(), r.PathValue("tenant"), profile)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return

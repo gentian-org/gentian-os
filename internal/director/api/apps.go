@@ -82,11 +82,6 @@ func (s *Server) purgeApp(w http.ResponseWriter, r *http.Request, c call) {
 	s.appAction(w, r.WithContext(ctx), c, "purge-app")
 }
 
-// provisionApp grants an installed app to everybody who is a member now.
-func (s *Server) provisionApp(w http.ResponseWriter, r *http.Request, c call) {
-	s.appAction(w, r, c, "provision-app")
-}
-
 // requestPrivilege asks the security officer for a privilege the app waits
 // for and the tenant cannot approve itself: a pod-security waiver or a
 // cluster role. The request is recorded by the operator on the Component

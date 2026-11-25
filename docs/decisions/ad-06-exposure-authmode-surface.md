@@ -5,7 +5,7 @@ type: decision
 
 # AD-6 Exposure carries a mandatory `authMode` and a `surface`
 
-`authMode` has no default; `surface` is `gateway` or `perimeter`. A perimeter
+`authMode` has no default; `surface` is `gateway`, `perimeter` or `inside`. A perimeter
 surface is a capability the profile declares; a proxy exists in
 `tenant-<t>-dmz` only for an entry a perimeter approver published, under
 `can_expose`, never `admin`, so publishing is always its own audit line. The
@@ -20,3 +20,7 @@ and the operator acts on it only while the entry still declares that kind.
 because nothing could enforce them ([routing.md §7](../concepts/routing.md)).
 On a gateway entry `bearer` is a token entry, approved under the same
 relation as a kind of its own ([routing.md §4.1](../concepts/routing.md)).
+An `inside` entry is a perimeter entry the internet cannot reach: `authMode:
+app` only, through the same proxy, from a Gateway whose address is inside the
+cluster, approved under the same relation as `insideAppCredential`
+([routing.md §7](../concepts/routing.md)).

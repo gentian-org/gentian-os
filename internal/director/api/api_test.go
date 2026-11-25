@@ -637,7 +637,7 @@ var facts = dt.Table{
 	"user:tenant-demo/tom can_approve_privilege tenant:demo": true,
 	// 7d0f3c2e is an administrator of demo, as the store holds its admins
 	// group's members: whom the cluster's administrator may name from demo.
-	"user:7d0f3c2e member group:gentian/tenant/demo/admins": true,
+	"user:7d0f3c2e admin tenant:demo": true,
 	// petra of the kernel realm is the cluster's perimeter approver, which
 	// reaches every tenant: she approves and sees, and administers nothing.
 	"user:gentian/petra can_expose tenant:demo":            true,
@@ -715,7 +715,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 
 	// A change lands as a commit against the claim.
 	code, body = h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
-		`{"settings":{"mail.serviceMode":"external"}}`)
+		`{"settings":{"mail.serviceMode":"relay"}}`)
 	if code != http.StatusAccepted {
 		t.Fatalf("write: %d %v", code, body)
 	}
@@ -729,7 +729,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 			found, _ = m["value"].(string)
 		}
 	}
-	if found != "external" {
+	if found != "relay" {
 		t.Fatalf("the setting did not land: %q", found)
 	}
 
@@ -774,7 +774,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 		t.Fatalf("a tenant admin read the cluster's settings: %d", code)
 	}
 	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", tina,
-		`{"settings":{"mail.serviceMode":"system"}}`); code != http.StatusForbidden {
+		`{"settings":{"mail.serviceMode":"internal"}}`); code != http.StatusForbidden {
 		t.Fatalf("a tenant admin changed the cluster's settings: %d", code)
 	}
 }

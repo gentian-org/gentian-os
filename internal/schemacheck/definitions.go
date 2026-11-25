@@ -113,6 +113,8 @@ type Set struct {
 	Digest string
 
 	byKind map[string]int
+	// admit holds what Refused compiled, by kind and version.
+	admit *admitters
 }
 
 // Kind returns the definition of a kind.
@@ -165,7 +167,7 @@ func Embedded() *Set {
 // Load reads a set from a file system laid out as the embedded one is:
 // definitions/crds holding CRDs, definitions/xrds holding XRDs.
 func Load(fsys fs.FS) (*Set, error) {
-	set := &Set{byKind: map[string]int{}}
+	set := &Set{byKind: map[string]int{}, admit: &admitters{}}
 	sum := sha256.New()
 	for _, dir := range []string{"definitions/crds", "definitions/xrds"} {
 		entries, err := fs.ReadDir(fsys, dir)

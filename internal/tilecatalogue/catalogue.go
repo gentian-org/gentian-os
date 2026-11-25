@@ -101,6 +101,32 @@ type Catalogue struct {
 	// something the operator knows about the cluster and the usher hands on.
 	// Absent means the operator said nothing, which is read as not offered.
 	AppStore *AppStore `json:"appStore,omitempty"`
+	// Doors are the tenants' doors and the ways each serves, as the routes
+	// at them serve them: the ways approved and not held back. A person's
+	// own settings offer them when a device password is made.
+	Doors []Door `json:"doors,omitempty"`
+}
+
+// Door is one tenant's door (docs/concepts/bridges.md).
+type Door struct {
+	Tenant string `json:"tenant"`
+	// Host is the door's host name: sync.<the tenant's domain>.
+	Host string    `json:"host"`
+	Ways []DoorWay `json:"ways"`
+}
+
+// DoorWay is one way served at a door.
+type DoorWay struct {
+	// Bridge is the component that serves it, and Name the way's name in
+	// that bridge's profile: what a device password names.
+	Bridge string `json:"bridge"`
+	Name   string `json:"name"`
+	// Protocol is what a program speaks on it: webdav, caldav, carddav.
+	Protocol string `json:"protocol"`
+	// App is the profile of the app it reaches, and Object what a caller's
+	// right to use that app is asked on.
+	App    string `json:"app"`
+	Object string `json:"object"`
 }
 
 // AppStore is the operator's verdict on whether the cluster offers an App
@@ -174,7 +200,7 @@ func Parse(data []byte) (Catalogue, error) {
 		}
 		kept = append(kept, t)
 	}
-	return Catalogue{Tiles: kept, AppStore: c.AppStore}, nil
+	return Catalogue{Tiles: kept, AppStore: c.AppStore, Doors: c.Doors}, nil
 }
 
 // URL is <scheme>://<host><path>, with the front page when no path is given.

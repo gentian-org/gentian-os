@@ -11,11 +11,8 @@ SPDX-License-Identifier: MPL-2.0
 package netpolicy
 
 import (
-	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
@@ -26,12 +23,12 @@ const baselinePolicyName = "tenant-isolation"
 // BaselineNetworkPolicy is the default-deny MAC floor for a tenant namespace.
 // Kernel and cross-app access are granted by separate operator-managed policies.
 //
-// excluded leaves pods out of it: an adapter's, which the edge, the identity
-// provider and the operator must not reach either, and which have a floor of
-// their own instead (AdapterNetworkPolicies). Network rules only ever add, so
+// excluded leaves pods out of it: an agent bridge's, which the edge, the
+// identity provider and the operator must not reach either, and which have a
+// floor of their own instead (AgentBridgeNetworkPolicies). Network rules only ever add, so
 // a pod this policy selects could not be closed again by another.
-func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice, excluded ...metav1.LabelSelectorRequirement) *networkingv1.NetworkPolicy {
-	egress := BaselineEgress(cfg, kubeAPIEndpts)
+func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, cluster ClusterServices, excluded ...metav1.LabelSelectorRequirement) *networkingv1.NetworkPolicy {
+	egress := BaselineEgress(cfg, cluster)
 
 	// The edge: the Gateways' data plane runs in the edge function's
 	// namespace, and it is what reaches a tenant's routed pods.
@@ -76,58 +73,50 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 }
 
 // BaselineEgress is what every pod of a tenant may reach without anybody
-// having asked: the cluster's DNS and the API server. An adapter's pods are
-// given the same, by their own policy, and so are the instances of the model
-// gateway's PostgreSQL (internal/controller/model_gateway_database_egress.go).
-func BaselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []networkingv1.NetworkPolicyEgressRule {
-	protocolTCP := corev1.ProtocolTCP
-	protocolUDP := corev1.ProtocolUDP
-	dnsPort := intstr.FromInt32(53)
-	apiServerPort := intstr.FromInt32(443)
-
-	egress := []networkingv1.NetworkPolicyEgressRule{
-		{
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protocolUDP, Port: &dnsPort},
-				{Protocol: &protocolTCP, Port: &dnsPort},
-			},
-		},
-	}
-	if cfg.KubeAPIServerCIDR != "" {
-		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-			To: []networkingv1.NetworkPolicyPeer{
-				{IPBlock: &networkingv1.IPBlock{CIDR: cfg.KubeAPIServerCIDR}},
-			},
-			Ports: []networkingv1.NetworkPolicyPort{
-				{Protocol: &protocolTCP, Port: &apiServerPort},
-			},
-		})
-	}
-	if kubeAPIEndpts != nil {
-		for _, ep := range kubeAPIEndpts.Endpoints {
-			for _, addr := range ep.Addresses {
-				for _, port := range kubeAPIEndpts.Ports {
-					if port.Protocol == nil || *port.Protocol != corev1.ProtocolTCP || port.Port == nil {
-						continue
-					}
-					endpointPort := intstr.FromInt32(*port.Port)
-					egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-						To: []networkingv1.NetworkPolicyPeer{
-							{IPBlock: &networkingv1.IPBlock{CIDR: addr + "/32"}},
-						},
-						Ports: []networkingv1.NetworkPolicyPort{
-							{Protocol: &protocolTCP, Port: &endpointPort},
-						},
-					})
-				}
-			}
-		}
-	}
-	return egress
+// having asked: the cluster's DNS (DNSEgress) and the API server
+// (APIServerEgress). An agent bridge's pods are given the same, by their own
+// policy, and so are the instances of the model gateway's PostgreSQL
+// (internal/controller/model_gateway_database_egress.go).
+func BaselineEgress(cfg Config, cluster ClusterServices) []networkingv1.NetworkPolicyEgressRule {
+	return append(DNSEgress(cluster.DNS), APIServerEgress(cfg.KubeAPIServerCIDR, cluster)...)
 }
 
-// EdgeProxyPodLabels select the Gateway's Envoy proxy pods in the edge
-// namespace.
+// EdgeGatewayClassName is the GatewayClass of the inbound Gateways.
+const EdgeGatewayClassName = "gentian-envoy"
+
+// OutgoingGatewayClassName is the GatewayClass of the Gateways for outgoing
+// connections, served by a fleet of their own in the edge namespace.
+const OutgoingGatewayClassName = "gentian-envoy-out"
+
+// InsideGatewayClassName is the GatewayClass of the Gateway only the
+// cluster's own pods reach: the inside entries' fleet, in the edge namespace,
+// whose Service has no address outside the cluster.
+const InsideGatewayClassName = "gentian-envoy-inside"
+
+// InsideProxyPodLabels select the Envoy proxy pods of the fleet for inside
+// entries in the edge namespace, and of no other fleet.
+func InsideProxyPodLabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":                    "envoy",
+		"gateway.envoyproxy.io/owning-gatewayclass": InsideGatewayClassName,
+	}
+}
+
+// OutgoingProxyPodLabels select the Envoy proxy pods of the fleet for
+// outgoing connections in the edge namespace.
+func OutgoingProxyPodLabels() map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":                    "envoy",
+		"gateway.envoyproxy.io/owning-gatewayclass": OutgoingGatewayClassName,
+	}
+}
+
+// EdgeProxyPodLabels select the Envoy proxy pods of the inbound Gateways in
+// the edge namespace, and of no other fleet Envoy Gateway runs there.
+//
+// The second label names the fleet: Envoy Gateway puts the first on every
+// proxy pod of every class, so by the first alone a fleet for another
+// direction would be admitted wherever the edge is.
 //
 // The label is Envoy Gateway's own, on every proxy pod it creates
 // (EnvoyAppLabel in its internal/infrastructure/kubernetes/proxy), and the
@@ -136,7 +125,10 @@ func BaselineEgress(cfg Config, kubeAPIEndpts *discoveryv1.EndpointSlice) []netw
 // (internal/kernel/kernelnet, peer envoy) and a test there holds the two
 // equal.
 func EdgeProxyPodLabels() map[string]string {
-	return map[string]string{"app.kubernetes.io/name": "envoy"}
+	return map[string]string{
+		"app.kubernetes.io/name":                    "envoy",
+		"gateway.envoyproxy.io/owning-gatewayclass": EdgeGatewayClassName,
+	}
 }
 
 // namespacePeer selects a namespace by its immutable metadata.name label.

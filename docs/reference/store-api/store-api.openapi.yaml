@@ -3094,8 +3094,11 @@ components:
            credential is handed over once and not kept by the app.
         2. Install at the director
            (`POST /v1/tenants/{t}/apps/{app}` with
-           `{"coordinate", "digest", "defaultGrant"}`), `coordinate` and
-           `digest` being exactly the ones here.
+           `{"coordinate", "digest", "positions"}`), `coordinate` and
+           `digest` being exactly the ones here and `positions` the
+           positions of the tenant the person gives the app to. Then set
+           its add-ons (`PUT /v1/tenants/{t}/apps/{app}/addons`), each
+           entry `{"coordinate", "digest"}` of an item of `addons`.
         3. When `metering` is present -- an app priced by use -- set it as
            the app's supplied credential `metering` at the custodian
            (`PUT /v1/credentials/app-<tenant>-<app>-metering` with the

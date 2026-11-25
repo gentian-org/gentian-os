@@ -34,11 +34,44 @@ import org.junit.jupiter.api.io.TempDir;
 class WireFormatTest {
 
     @Test
-    void aGroupNameCannotBreakOutOfItsString() {
-        String json = Payload.userMemberships("demo", "u-1", List.of("a\"],\"realm\":\"kernel", "b\\", "c\nd"));
-        assertTrue(json.contains("\"groups\":[\"a\\\"],\\\"realm\\\":\\\"kernel\",\"b\\\\\",\"c\\nd\"]"), json);
+    void aProviderNameCannotBreakOutOfItsString() {
+        String json = Payload.userEntered("demo", "u-1", "a\"},\"realm\":\"kernel", null);
+        assertTrue(json.contains("\"provider\":\"a\\\"},\\\"realm\\\":\\\"kernel\"}"), json);
         assertTrue(json.startsWith("{\"id\":\""), json);
-        assertTrue(json.contains("\"realm\":\"demo\",\"type\":\"user.memberships\",\"user\":\"u-1\""), json);
+        assertTrue(json.contains("\"realm\":\"demo\",\"type\":\"user.entered\",\"user\":\"u-1\""), json);
+    }
+
+    @Test
+    void anEntrySaysWhoThePersonIsAtTheProviderWhenTheRealmKnows() {
+        String json = Payload.userEntered("shop", "u-1", "tenant-team", "t-1");
+        assertTrue(json.endsWith(",\"realm\":\"shop\",\"type\":\"user.entered\",\"user\":\"u-1\""
+            + ",\"provider\":\"tenant-team\",\"providerUser\":\"t-1\"}"), json);
+        String without = Payload.userEntered("shop", "u-1", "tenant-team", null);
+        assertTrue(!without.contains("providerUser"), without);
+        String hostile = Payload.userEntered("shop", "u-1", "tenant-team", "x\",\"user\":\"admin");
+        assertTrue(hostile.endsWith(",\"providerUser\":\"x\\\",\\\"user\\\":\\\"admin\"}"), hostile);
+    }
+
+    @Test
+    void anAccountAPersonMadeIsARegistration() {
+        String json = Payload.userRegistered("shop", "u-1");
+        assertTrue(json.startsWith("{\"id\":\""), json);
+        assertTrue(json.endsWith(",\"realm\":\"shop\",\"type\":\"user.registered\",\"user\":\"u-1\"}"), json);
+    }
+
+    @Test
+    void onlyAnAccountThePersonMadeIsARegistration() {
+        assertTrue(DirectorEventListenerProvider.madeThemself(java.util.Map.of("register_method", "form")));
+        assertTrue(DirectorEventListenerProvider.madeThemself(null));
+        assertTrue(!DirectorEventListenerProvider.madeThemself(java.util.Map.of("register_method", "broker")));
+        assertTrue(!DirectorEventListenerProvider.madeThemself(java.util.Map.of("identity_provider", "tenant-team")));
+    }
+
+    @Test
+    void onlyASignInThroughAProviderIsAnEntry() {
+        assertEquals("kernel", DirectorEventListenerProvider.providerOf(java.util.Map.of("identity_provider", "kernel")));
+        assertEquals(null, DirectorEventListenerProvider.providerOf(java.util.Map.of("username", "anna")));
+        assertEquals(null, DirectorEventListenerProvider.providerOf(null));
     }
 
     @Test

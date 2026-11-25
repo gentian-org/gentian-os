@@ -23,6 +23,12 @@ whether a missing DNS-01 issuer is an error or the expected shape.
       {{- fail (printf "dnsProvider %q requires dnsParams.%s (see kernel/platforms.yaml)" $name $p) -}}
     {{- end -}}
   {{- end -}}
+  {{- range $p, $re := (index $profile "paramPatterns" | default dict) -}}
+    {{- $v := index ($.Values.dnsParams | default dict) $p | default "" -}}
+    {{- if and $v (not (regexMatch $re (toString $v))) -}}
+      {{- fail (printf "dnsProvider %q: dnsParams.%s is %q, which does not match %s (see kernel/platforms.yaml)" $name $p (toString $v) $re) -}}
+    {{- end -}}
+  {{- end -}}
 {{- end -}}
 {{- end -}}
 

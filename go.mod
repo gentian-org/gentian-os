@@ -4,6 +4,8 @@ go 1.27.0
 
 require (
 	filippo.io/age v1.3.2
+	github.com/emersion/go-ical v0.0.0-20261112170022-46c5b53a1723
+	github.com/emersion/go-vcard v0.1.0
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	github.com/gentian-org/gentian-os/api v0.0.0
 	github.com/go-jose/go-jose/v4 v4.1.8
@@ -89,6 +91,7 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
+	github.com/teambition/rrule-go v1.8.2 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect

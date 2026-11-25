@@ -50,11 +50,13 @@ for k, v in {'virtual_mailbox_domains': doms + removed, 'sender_access': doms,
 d = out/'dovecot'; (d/'gentian').mkdir(parents=True, exist_ok=True)
 for k, v in cm(dv, 'dovecot-dev-config').items(): (d/'gentian'/k).write_text(v)
 (d/'apppw').mkdir(exist_ok=True); (d/'realms').mkdir(exist_ok=True); (d/'mail').mkdir(exist_ok=True)
+dovecot_image = next(x for x in dv if x['kind']=='Deployment')['spec']['template']['spec']['containers'][0]['image']
 def passwd(app, tenant, user, pw):
-    h = subprocess.check_output(['docker','run','--rm','--entrypoint','doveadm','dovecot/dovecot:2.3.21','pw','-s','ARGON2ID','-p',pw]).decode().strip()
+    h = subprocess.check_output(['docker','run','--rm','--entrypoint','doveadm',dovecot_image,'pw','-s','ARGON2ID','-p',pw]).decode().strip()
     f = f'{app}-{tenant}'
     (d/'apppw'/f'{f}.users').write_text(f'{user}:{h}\n')
-    (d/'apppw'/f'{f}.conf').write_text("passdb {\n  driver = passwd-file\n  args = /etc/dovecot/apppw/%s.users\n  result_failure = continue\n  result_internalfail = continue\n}\n" % f)
+    # As passdbInclude (mail_apppassword.go) writes it.
+    (d/'apppw'/f'{f}.inc').write_text("passdb %(f)s {\n  driver = passwd-file\n  passwd_file_path = /etc/dovecot/apppw/%(f)s.users\n  result_failure = continue\n  result_internalfail = continue\n}\n" % {'f': f})
 passwd('nextcloud-mail', 'tenant', 'ada@tenant.lab.test', 'imap-secret')
 passwd('tenant-apps', 'tenant', 'smtp-tenant', 'smtp-secret')
 passwd('keycloak-smtp', 'tenant', 'noreply@tenant.lab.test', 'realm-secret')

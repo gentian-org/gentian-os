@@ -349,3 +349,194 @@ func TestATokenEntryIsListedAndApprovedAsItsOwnKind(t *testing.T) {
 		t.Errorf("the registry lacks the token entry:\n%s", file)
 	}
 }
+
+// A bridge declares no exposure and is still an approver's to decide: it is
+// listed as the one entry it is served as at the tenant's door, in the words
+// of a token entry, with the app it connects and the paths it serves, and its
+// approval is recorded as a token entry's.
+func TestEachWayOfABridgeIsListedAndApprovedOnItsOwn(t *testing.T) {
+	bridge := "apiVersion: gentianos.io/v1alpha1\nkind: ComponentProfile\nmetadata:\n  name: notes\n" +
+		"  labels:\n    gentianos.io/profile-name: notes\nspec:\n  classes: [bridge]\n  launch: none\n" +
+		"  trustTier: certified\n  version: \"1.0.0\"\n" +
+		"  bridge:\n    app: {profile: nextcloud}\n    ways:\n" +
+		"    - {name: files, caller: device, callee: app, protocol: webdav, speaksAs: person, paths: [/remote.php/dav/files/]}\n" +
+		"    - {name: calendars, caller: device, callee: app, protocol: caldav, speaksAs: person, paths: [/remote.php/dav/calendars/]}\n" +
+		"  package:\n    api:\n      backend: {service: nextcloud, port: 8080}\n"
+	tenant := dt.TenantYAML("demo") + "  - profile: notes\n"
+	h := startSeeded(t, nil, func(remote string) {
+		dt.Commit(t, remote, map[string]string{dt.CataloguePath("notes.yaml"): bridge, dt.TenantPath("demo"): tenant})
+	})
+	tom := h.token(t, "tenant-demo", "tom")
+	code, body := h.do(t, "GET", exposuresPath("demo"), tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d %v", code, body)
+	}
+	// Each way is its own entry, with its own paths.
+	entry := entryOf(t, body, "notes", "files")
+	if entry["kind"] != "tokenEntry" || entry["publicAddress"] != false || entry["passesCredential"] != true ||
+		entry["anyoneWithoutSignIn"] == true || entry["state"] != "requested" {
+		t.Fatalf("files = %v", entry)
+	}
+	if host, _ := entry["host"].(string); !strings.HasPrefix(host, "sync.") {
+		t.Fatalf("the way answers on %q, not at the tenant's door", host)
+	}
+	if paths, _ := entry["paths"].([]any); len(paths) != 1 || paths[0] != "/remote.php/dav/files" {
+		t.Fatalf("the approver is shown the paths %v", entry["paths"])
+	}
+	if paths, _ := entryOf(t, body, "notes", "calendars")["paths"].([]any); len(paths) != 1 || paths[0] != "/remote.php/dav/calendars" {
+		t.Fatalf("calendars shows the paths %v", paths)
+	}
+	if back, _ := entry["clientRedirectURIs"].([]any); len(back) != 2 {
+		t.Fatalf("the approver is not shown where a program returns to: %v", entry["clientRedirectURIs"])
+	}
+	note, _ := entry["note"].(string)
+	for _, says := range []string{"A way of a bridge to nextcloud, in webdav", "as that person", "the right to use nextcloud", "approved on its own"} {
+		if !strings.Contains(note, says) {
+			t.Errorf("the approver is not told %q: %v", says, note)
+		}
+	}
+	// What the approval allows is the bridge's: the app gets an exchanged
+	// token, and the caller is a program on the person's device.
+	access, _ := entry["access"].(string)
+	for _, says := range []string{"file sync, calendar or address book program", "the person may use nextcloud", "nextcloud never receives the token the program presented", "made out to nextcloud alone"} {
+		if !strings.Contains(access, says) {
+			t.Errorf("the approver is not told %q: %v", says, access)
+		}
+	}
+	for _, wrong := range []string{"AI assistant", "receives the person's token"} {
+		if strings.Contains(access, wrong) {
+			t.Errorf("the approver is told %q: %v", wrong, access)
+		}
+	}
+
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/files", tom, `{"reason":"sync","kind":"public"}`); code == http.StatusAccepted {
+		t.Fatalf("approved as a public address: %v", body)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/files", tom, `{"reason":"sync","kind":"tokenEntry"}`); code != http.StatusAccepted {
+		t.Fatalf("approve = %d %v", code, body)
+	}
+	if file := registryOf(t, h, "demo"); !strings.Contains(file, "exposureName: files\n      kind: tokenEntry\n      owner: tom") {
+		t.Errorf("the registry lacks the way:\n%s", file)
+	}
+	_, body = h.do(t, "GET", exposuresPath("demo"), tom, "")
+	if got := entryOf(t, body, "notes", "files"); got["state"] != "approved" {
+		t.Fatalf("after the approval = %v", got)
+	}
+	if got := entryOf(t, body, "notes", "calendars"); got["state"] != "requested" {
+		t.Fatalf("another way was approved with it: %v", got)
+	}
+	// The route's own name is no way to approve.
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/exposures/notes/bridge", tom, `{"reason":"sync","kind":"tokenEntry"}`); code == http.StatusAccepted {
+		t.Fatal("the whole bridge was approved under the name of its route")
+	}
+	// An app that is no bridge has no such entry.
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/bridge", tom, `{"reason":"sync","kind":"tokenEntry"}`); code == http.StatusAccepted {
+		t.Fatal("a bridge entry approved for an app that is none")
+	}
+}
+
+// An inside entry is approved by the same approver through the same request,
+// and is no public address: the read says it answers inside the cluster
+// only, the approval records its kind, and it takes no bare name.
+func TestAnInsideEntryIsApprovedAndIsNoPublicAddress(t *testing.T) {
+	inside := kindsProfile("nextcloud", "app", "") +
+		"    - name: api\n      surface: inside\n      authMode: app\n      subDomain: nextcloud-api\n      paths: [\"/api/\"]\n" +
+		"      backend:\n        service: nextcloud\n        port: 8080\n"
+	h := startKinds(t, "app", "", map[string]string{dt.CataloguePath("nextcloud.yaml"): inside})
+	tom := h.token(t, "tenant-demo", "tom")
+	code, body := h.do(t, "GET", exposuresPath("demo"), tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("GET = %d %v", code, body)
+	}
+	e := entryOf(t, body, "nextcloud", "api")
+	if e["kind"] != "insideAppCredential" || e["publicAddress"] != false || e["insideOnly"] != true ||
+		e["passesCredential"] != true || e["anyoneWithoutSignIn"] != false || e["mainAddress"] != false {
+		t.Fatalf("an inside entry = %v", e)
+	}
+	if e["host"] != "nextcloud-api.demo."+dt.KernelDomain {
+		t.Fatalf("host = %v", e["host"])
+	}
+	if paths, _ := e["paths"].([]any); len(paths) != 1 || paths[0] != "/api/" {
+		t.Fatalf("paths = %v, want what the entry declares and nothing else", e["paths"])
+	}
+	for _, says := range []string{"This is not a public address", "Only programs running in this cluster", "the app alone checks it"} {
+		if !strings.Contains(e["access"].(string), says) {
+			t.Errorf("the approver is not told %q: %v", says, e["access"])
+		}
+	}
+	if pass := entryOf(t, body, "nextcloud", "dav"); pass["insideOnly"] != false {
+		t.Fatalf("a public entry reads as inside: %v", pass)
+	}
+
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/api", tom, `{"apex":true,"acknowledgeMainAddressRule":true}`); code == http.StatusAccepted {
+		t.Fatalf("an inside entry was approved for a bare name: %v", body)
+	}
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/api", tom, `{"kind":"insideAppCredential"}`); code != http.StatusAccepted {
+		t.Fatalf("approve = %d %v", code, body)
+	}
+	if !strings.Contains(registryOf(t, h, "demo"), "exposureName: api\n      kind: insideAppCredential\n") {
+		t.Fatalf("the registry lacks the kind:\n%s", registryOf(t, h, "demo"))
+	}
+	message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%s", "main")
+	if !strings.HasPrefix(message, "Approve ") || !strings.Contains(message, "not a public address") {
+		t.Errorf("the commit reads as a publication: %q", message)
+	}
+}
+
+// signInMode is an entry of authMode app that names the cookies of the app's
+// own sign-in, as kindsProfile writes the entry's mode.
+func signInMode(names string) string {
+	return "app\n      signInCookies:\n        names: [" + names + "]\n        paths: [/remote.php/dav/oidc]"
+}
+
+// An entry that names the cookies of the app's own sign-in asks to be
+// approved with them: the approver is told which cookies pass and where, the
+// approval records them, and a catalog entry that later names more is a
+// request again, with only what was approved passing meanwhile.
+func TestAnApprovalOfSignInCookiesRecordsThem(t *testing.T) {
+	h := startKinds(t, signInMode("oidc_session"), "", nil)
+	tom := h.token(t, "tenant-demo", "tom")
+	_, body := h.do(t, "GET", exposuresPath("demo"), tom, "")
+	got := entryOf(t, body, "nextcloud", "dav")
+	if got["kind"] != "publicAppSignIn" || got["publicAddress"] != true || got["passesCredential"] != true || got["signInCookies"] == nil {
+		t.Fatalf("an entry with its sign-in cookies = %v", got)
+	}
+	access, _ := got["access"].(string)
+	for _, says := range []string{
+		"On /remote.php/dav/oidc alone", "the cookies oidc_session are passed to the app",
+		"No other cookie the browser holds is passed, the tenant's own sign-in session among them.",
+		"The platform does not know or check who calls.",
+	} {
+		if !strings.Contains(access, says) {
+			t.Errorf("the approver is not told %q: %v", says, access)
+		}
+	}
+	if limit, _ := got["rateLimit"].(string); !strings.Contains(limit, "5 requests a second") {
+		t.Errorf("the limit = %v", got["rateLimit"])
+	}
+
+	if code, body := h.do(t, "PUT", "/v1/tenants/demo/exposures/nextcloud/dav", tom, `{"kind":"publicAppSignIn"}`); code != http.StatusAccepted {
+		t.Fatalf("approve = %d %v", code, body)
+	}
+	if message := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%s", "main"); !strings.Contains(message, "the cookies oidc_session on /remote.php/dav/oidc") {
+		t.Errorf("the commit does not say which cookies pass: %q", message)
+	}
+	if file := registryOf(t, h, "demo"); !strings.Contains(file,
+		"kind: publicAppSignIn\n      # The cookies of the app's own sign-in, and the paths they pass on.\n      signInCookies:\n        names: [oidc_session]\n        paths: [/remote.php/dav/oidc]\n") {
+		t.Fatalf("the registry does not record the cookies:\n%s", file)
+	}
+	_, body = h.do(t, "GET", exposuresPath("demo"), tom, "")
+	if got := entryOf(t, body, "nextcloud", "dav"); got["state"] != "approved" || got["note"] != nil {
+		t.Fatalf("after the approval = %v", got)
+	}
+
+	// The catalog entry comes to name another cookie.
+	dt.Commit(t, h.remote, map[string]string{dt.CataloguePath("nextcloud.yaml"): kindsProfile("nextcloud", signInMode("oidc_session, other"), "")})
+	_, body = h.do(t, "GET", exposuresPath("demo"), tom, "")
+	got = entryOf(t, body, "nextcloud", "dav")
+	note, _ := got["note"].(string)
+	if got["state"] != "requested" || got["approval"] == nil || !strings.Contains(note, "with the sign-in cookies oidc_session on /remote.php/dav/oidc") ||
+		!strings.Contains(note, "Only what was approved passes") {
+		t.Fatalf("an entry that names more than was approved = %v", got)
+	}
+}

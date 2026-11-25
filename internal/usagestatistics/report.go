@@ -174,9 +174,9 @@ type Addon struct {
 type Counter interface {
 	// TenantUsers is the number of accounts in the tenant's realm.
 	TenantUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant) (int, error)
-	// AppUsers is the number of people entitled to one of the tenant's apps,
-	// or to an addon of one: an addon is a profile too, and has a group of
-	// its own under the same name an app's has.
+	// AppUsers is the number of people holding a role on one of the tenant's
+	// apps, or on an addon of one: an addon is a profile too, and people hold
+	// roles on it as on an app.
 	AppUsers(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile string) (int, error)
 }
 

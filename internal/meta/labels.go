@@ -36,9 +36,16 @@ const (
 	// bundle from a source outside the cluster to that source, the object
 	// store and DNS. The fetch's, owned by its Job and removed when it ends.
 	NetPolicyBundleFetch = "bundle-fetch"
-	// NetPolicyAdapter marks the policies that close an adapter to everything
-	// but the component that speaks as a person, and open its way to its app.
-	NetPolicyAdapter = "adapter"
+	// NetPolicyAgentBridge marks the policies that close an agent bridge to
+	// everything but the component that speaks as a person, and open its way
+	// to its app.
+	NetPolicyAgentBridge = "agent-bridge"
+	// NetPolicyHomeSync marks the policies that open the tenant's home sync's
+	// way to the apps it keeps equal and to the homes, and theirs for it.
+	NetPolicyHomeSync = "homesync"
+	// NetPolicyPorter marks the policies that open the tenant's porter's way
+	// to the tenant's file home, and the home's for it.
+	NetPolicyPorter = "porter"
 
 	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
 	ComponentLabel = "gentianos.io/component"

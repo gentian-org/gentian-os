@@ -105,7 +105,7 @@ def application_set(name, *extra):
     return found[0] if len(found) == 1 else None
 
 
-def deployed(*extra, mail="system"):
+def deployed(*extra, mail="internal"):
     """What Argo CD deploys for each server: the chart's path, the namespace
     and the Helm parameters. Mail is rendered in the one mode that runs it."""
     out = {}
@@ -794,9 +794,13 @@ def check_modes():
 
 def modes_mail(apps):
     # A cluster that relays its mail runs no mail server, and so no policy.
-    for mode in ("external", "none"):
+    for mode in ("relay", "external", "none"):
         if mail_applications(mode):
             raise Failure(f"mail.serviceMode={mode}: the mail ApplicationSet is still rendered")
+    # A cluster installed when the mode was called "system" still says so in
+    # its values until its next install run, and keeps its mail servers.
+    if not mail_applications("system"):
+        raise Failure("mail.serviceMode=system, the former name of internal: the mail ApplicationSet is taken away")
     # Dovecot without a certificate serves no IMAPS, on either port, and the
     # policy lists neither.
     check_shape("dovecot", apps, "--set", "tls.secretName=")

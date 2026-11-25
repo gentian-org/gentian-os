@@ -23,8 +23,17 @@
 # from the pod's node, and NetworkPolicy has no portable word for it: every
 # port the API server calls (admission and conversion webhooks) is `open`.
 #
-# Egress from the kernel namespaces is not restricted by these rules. Each
-# namespace says why under egress.
+# Where a kernel namespace's pods may connect to is one word per namespace,
+# egress, and egressWhy says why:
+#
+#   open:    not restricted; the namespace's pods reach the internet
+#   cluster: the pods reach every pod of the cluster, the private address
+#            ranges, DNS and the API server, and nothing outside. The policy
+#            kernel-egress says so; the installer fills in the API server's
+#            address, which differs per cluster and may be a public one.
+#
+# A namespace one of whose workloads needs the internet stays open, and a
+# namespace nobody is sure of stays open, so that nothing breaks.
 
 # Namespaces these rules do not cover, and who covers them.
 excluded:
@@ -48,24 +57,40 @@ unmanaged:
 
 peers:
   envoy:
-    what: the Gateway's Envoy proxy pods
+    what: the Envoy proxy pods of the inbound Gateways, and of no other fleet Envoy Gateway runs
     namespace: kernel-edge
-    podLabels: {app.kubernetes.io/name: envoy}
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
     evidence:
       - "Envoy Gateway v1.9.3 internal/infrastructure/kubernetes/proxy/resource.go EnvoyAppLabel: app.kubernetes.io/name=envoy on every proxy pod"
+      - "Envoy Gateway v1.9.3 internal/gatewayapi/helpers.go OwningGatewayClassLabel: the class, on the proxy pods of merged Gateways"
       - kernel/manifests/gateway/chart/templates/envoyproxy.yaml:86
       - kernel/services/llm/manifests/templates/networkpolicy.yaml:106
-  edge:
-    what: every pod of the edge namespace (the Envoy proxies and the bouncer)
+  envoy-outgoing:
+    what: the Envoy proxy pods of the fleet for outgoing connections
     namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out}
+    evidence:
+      - kernel/manifests/gateway/chart/templates/outgoing.yaml:25
+  envoy-inside:
+    what: the Envoy proxy pods of the fleet for inside entries, which only the cluster's pods reach
+    namespace: kernel-edge
+    podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-inside}
+    evidence:
+      - kernel/manifests/gateway/chart/templates/inside.yaml:25
   bouncer:
     what: the bouncer, the Gateway's external authorization service
     namespace: kernel-edge
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: bouncer}
     evidence:
       - charts/gentian-os/templates/bouncer.yaml:12
+  keycloak:
+    what: Keycloak
+    namespace: kernel-authentication
+    podLabels: {app.kubernetes.io/name: keycloakx}
+    evidence:
+      - kernel/services/keycloak-idp/manifests/values.yaml:1
   control-programs:
-    what: the programs of the operator's chart in the control namespace (operator, director, usher, custodian, registrar)
+    what: the programs of the operator's chart in the control namespace (operator, director, usher, custodian, confidant, registrar)
     namespace: kernel-control
     podLabels: {app.kubernetes.io/name: gentian-os}
     evidence:
@@ -82,6 +107,12 @@ peers:
     podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: custodian}
     evidence:
       - charts/gentian-os/templates/custodian.yaml:1
+  confidant:
+    what: the confidant
+    namespace: kernel-control
+    podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: confidant}
+    evidence:
+      - charts/gentian-os/templates/confidant.yaml:1
   vault-migrator:
     what: the Job that makes the vault what a release needs
     namespace: kernel-control
@@ -269,11 +300,15 @@ namespaces:
   - name: kernel-secrets
     sameNamespace: true
     sameNamespaceWhy: External Secrets reads the vault; a pod of this namespace can mount the vault's own Secrets anyway.
-    egress: open
+    egress: cluster
     egressWhy: >-
       The vault calls its seal, the API server (token review) and the identity
-      provider's public address; External Secrets and Reloader call the API
-      server.
+      provider at its public name, which the cluster's DNS answers with the
+      edge's ClusterIP (internal/controller/coredns_hairpin.go); External
+      Secrets reads the vault alone (every secret store the platform writes is
+      a vault one) and calls the API server, as Reloader does; the daily
+      snapshot job reads the vault and writes to the platform's own object
+      store (kernel/services/infra-seaweedfs).
     workloads:
       - name: openbao
         installedBy: bootstrap-application:openbao
@@ -292,6 +327,9 @@ namespaces:
               - peer: custodian
                 why: relays a person's credential writes (BAO_ADDR)
                 evidence: [charts/gentian-os/templates/custodian.yaml:244, internal/custodian/openbao.go:166]
+              - peer: confidant
+                why: keeps and reads the secrets components hold for people (BAO_ADDR)
+                evidence: [charts/gentian-os/templates/confidant.yaml:105, internal/kernel/secrets/openbao.go:36]
               - peer: director
                 why: reads the credential of a repository a catalogue artifact is pulled with (DIRECTOR_BAO_ADDR)
                 evidence: [charts/gentian-os/templates/director.yaml:286, internal/kernel/secrets/openbao.go:246]
@@ -360,11 +398,11 @@ namespaces:
       The seal and its daily snapshot job, which reads the seal's API
       (charts/gentian-os/templates/openbao-snapshots.yaml); a pod of this
       namespace can mount the seal's own Secrets anyway.
-    egress: open
+    egress: cluster
     egressWhy: >-
-      Not restricted in this pass. The seal calls the API server (token review,
-      for its snapshot job's login); the snapshot job writes to the object
-      store's S3 port, which admits it by its label.
+      The seal calls the API server (token review, for its snapshot job's
+      login); the snapshot job reads the seal and writes to the platform's own
+      object store's S3 port, which admits it by its label.
     workloads:
       - name: openbao-transit
         installedBy: bootstrap-application:openbao-transit
@@ -392,8 +430,12 @@ namespaces:
     sameNamespaceWhy: >-
       CloudNativePG's operator and the cluster's replicas and join Jobs run beside the instances; the
       instance's own policy already admits this namespace.
-    egress: open
-    egressWhy: CloudNativePG's operator and every instance call the API server; the operator calls instances in the system namespaces.
+    egress: cluster
+    egressWhy: >-
+      CloudNativePG's operator and every instance call the API server; the
+      operator calls instances in the system namespaces. The kernel's
+      PostgreSQL keeps no backup outside the cluster
+      (kernel/data/kernel-postgres).
     workloads:
       - name: cloudnative-pg
         installedBy: bootstrap-application:cnpg
@@ -455,9 +497,12 @@ namespaces:
           - port: 8080
             what: every realm's endpoints and the administration API
             from:
-              - peer: edge
-                why: the Gateway routes id.<kernel> to it, and the bouncer reads the realms' keys
-                evidence: [internal/controller/kernel_gateway_routes.go:335, charts/gentian-os/templates/bouncer.yaml:118]
+              - peer: envoy
+                why: the Gateway routes id.<kernel> to it
+                evidence: [internal/controller/kernel_gateway_routes.go:335]
+              - peer: bouncer
+                why: the bouncer reads the realms' keys
+                evidence: [charts/gentian-os/templates/bouncer.yaml:118]
               - peer: control-programs
                 why: director, usher, custodian and registrar read the realms' keys; the operator and the registrar call the administration API
                 evidence:
@@ -494,8 +539,12 @@ namespaces:
   - name: kernel-authorization
     sameNamespace: true
     sameNamespaceWhy: one workload; a pod of this namespace can mount OpenFGA's own Secrets anyway.
-    egress: open
-    egressWhy: not restricted in this pass; OpenFGA calls its database, whose address its values name, and DNS.
+    egress: cluster
+    egressWhy: >-
+      OpenFGA calls its database, the kernel's PostgreSQL
+      (kernel/services/openfga/manifests/values.yaml), and DNS; its tracing
+      and metrics exporters are off and its callers authenticate with a
+      preshared key, so it fetches no signing keys.
     workloads:
       - name: openfga
         installedBy: application:openfga
@@ -619,6 +668,13 @@ namespaces:
                 evidence:
                   - internal/controller/component_reconciler.go:1537
                   - charts/gentian-os/templates/componentprofile-desktop.yaml:47
+          - port: 8083
+            what: answers which roles a person holds on the app they sign in to
+            from:
+              - peer: keycloak
+                why: the token hook asks when it issues an app's token
+                evidence:
+                  - kernel/appsets/raw/09-identity.yaml:86
       - name: custodian
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os
@@ -636,6 +692,19 @@ namespaces:
               - >-
                 the installer asks its /healthz through the API server's proxy and, where that is refused, by
                 port-forward (scripts/steps/E-03-revoke-bootstrap-token.sh:211)
+      - name: confidant
+        installedBy: bootstrap-application:gentian-os
+        readAt: charts/gentian-os
+        podLabels: {app.kubernetes.io/name: gentian-os, app.kubernetes.io/component: confidant}
+        ports:
+          - port: 9446
+            what: keeps secrets of a person for a component that presents its key
+            from:
+              - peer: tenants
+                why: a component that keeps secrets of people (requires.services.personSecrets)
+                evidence:
+                  - internal/controller/person_secrets.go:67
+                  - internal/kernel/netpolicy/kernel.go:206
       - name: registrar
         installedBy: bootstrap-application:gentian-os
         readAt: charts/gentian-os
@@ -667,7 +736,7 @@ namespaces:
       - name: envoy
         installedBy: step:A-05-envoy-gateway
         readAt: envoy-gateway chart v1.9.3
-        podLabels: {app.kubernetes.io/name: envoy}
+        podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy}
         allIngress: >-
           The cluster's public listeners. A connection arrives from the
           internet through a load balancer or the tunnel, and from every pod
@@ -694,6 +763,46 @@ namespaces:
           - port: 19002
             what: shutdown manager
             open: see allIngress; the kubelet only
+      - name: envoy-outgoing
+        installedBy: step:A-05-envoy-gateway
+        readAt: envoy-gateway chart v1.9.3
+        podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-out}
+        ports:
+          - port: 19001
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 19003
+            what: readiness
+            closed: the kubelet's probes only
+          - port: 19002
+            what: shutdown manager
+            closed: the kubelet only
+      - name: envoy-inside
+        installedBy: step:A-05-envoy-gateway
+        readAt: envoy-gateway chart v1.9.3
+        podLabels: {app.kubernetes.io/name: envoy, gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy-inside}
+        ports:
+          - port: 10443
+            what: the https listener of every inside entry
+            from:
+              - peer: tenants
+                why: >-
+                  a component calls an inside entry's host, which the cluster's
+                  DNS answers with this fleet's Service. The caller is held by
+                  its own namespace's egress rules, which open these pods only
+                  for a host its component was granted
+                evidence:
+                  - internal/controller/own_served_hosts.go:117
+                  - internal/controller/coredns_hairpin.go:72
+          - port: 19001
+            what: metrics
+            closed: nothing the platform runs scrapes it
+          - port: 19003
+            what: readiness
+            closed: the kubelet's probes only
+          - port: 19002
+            what: shutdown manager
+            closed: the kubelet only
       - name: envoy-gateway
         installedBy: step:A-05-envoy-gateway
         readAt: envoy-gateway chart v1.9.3
@@ -705,6 +814,12 @@ namespaces:
               - peer: envoy
                 why: every proxy pod fetches its configuration here
                 evidence: [scripts/steps/A-05-envoy-gateway.sh:52]
+              - peer: envoy-outgoing
+                why: the proxies of the outgoing fleet fetch theirs here too
+                evidence: [kernel/manifests/gateway/chart/templates/outgoing.yaml:25]
+              - peer: envoy-inside
+                why: the proxies of the fleet for inside entries fetch theirs here too
+                evidence: [kernel/manifests/gateway/chart/templates/inside.yaml:25]
           - port: 18001
             what: configuration for a rate limit service
             closed: no rate limit service is installed

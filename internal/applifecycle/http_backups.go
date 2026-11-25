@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package applifecycle
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,21 +170,26 @@ func (h *HTTPServer) handleNotifications(w http.ResponseWriter, r *http.Request)
 
 func (h *HTTPServer) handlePublishNotification(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Title     string                `json:"title"`
-		Body      string                `json:"body"`
-		Severity  string                `json:"severity"`
-		Audience  *NotificationAudience `json:"audience"`
-		LinkURL   string                `json:"linkUrl"`
-		LinkLabel string                `json:"linkLabel"`
-		ExpiresAt int64                 `json:"expiresAt"`
+		Title     string          `json:"title"`
+		Body      string          `json:"body"`
+		Severity  string          `json:"severity"`
+		Audience  json.RawMessage `json:"audience"`
+		LinkURL   string          `json:"linkUrl"`
+		LinkLabel string          `json:"linkLabel"`
+		ExpiresAt int64           `json:"expiresAt"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
+	audience, err := decodeAudience(body.Audience)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
 	notice, err := h.Service.PublishNotification(r.Context(), PublishNotificationRequest{
 		Tenant: r.PathValue("tenant"), Actor: actorOf(r),
-		Title: body.Title, Body: body.Body, Severity: body.Severity, Audience: body.Audience,
+		Title: body.Title, Body: body.Body, Severity: body.Severity, Audience: audience,
 		LinkURL: body.LinkURL, LinkLabel: body.LinkLabel, ExpiresAt: body.ExpiresAt,
 	})
 	if err != nil {
@@ -191,6 +197,22 @@ func (h *HTTPServer) handlePublishNotification(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusAccepted, notice)
+}
+
+// decodeAudience reads a notice's audience strictly. A field it does not
+// know is refused rather than dropped: an audience that named groups, read
+// leniently, would reach every person of the tenant.
+func decodeAudience(raw json.RawMessage) (*NotificationAudience, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var a NotificationAudience
+	if err := dec.Decode(&a); err != nil {
+		return nil, fmt.Errorf("invalid audience: %w; a notice reaches people by positions", err)
+	}
+	return &a, nil
 }
 
 // notificationStatus distinguishes the one failure a caller can act on: the

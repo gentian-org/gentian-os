@@ -64,6 +64,9 @@ type Request struct {
 	// page the person opened. They decide only how a refusal is answered.
 	Method    string
 	FetchMode string
+	// Source is the address the request came from, as the Gateway saw it.
+	// It only counts failed device passwords.
+	Source string
 }
 
 // Decision is the bouncer's answer.
@@ -88,6 +91,10 @@ type Decision struct {
 	// Challenge is the WWW-Authenticate header of a 401 on a route that
 	// takes a token: what a program needs to find where to get one.
 	Challenge string
+	// PasswordChallenge is a second WWW-Authenticate header, on a 401 at a
+	// door whose realm takes device passwords: what has a calendar or
+	// contact program ask for a username and a password.
+	PasswordChallenge string
 	// SetCookies go out with a redirect as Set-Cookie headers: the edge's
 	// cookies of an ended session, cleared, and RestartCookie.
 	SetCookies []string
@@ -100,6 +107,10 @@ type Decision struct {
 	restart bool
 	// client is the client a token on a bearer route was issued to.
 	client string
+	// cause is why the session was not accepted, as a word (authn.Refusal),
+	// and late how long ago its token expired, when that is the cause.
+	cause string
+	late  time.Duration
 }
 
 type identity struct {
@@ -115,6 +126,7 @@ type Decider struct {
 	now    func() time.Time
 
 	exchange *exchangeCache
+	devices  *devices
 
 	mu    sync.RWMutex
 	table *Table
@@ -134,6 +146,9 @@ type Options struct {
 	// Without it such a route is refused: there is nothing to hand its
 	// backend in place of the session's token.
 	Exchanger Exchanger
+	// Devices checks a device password presented at a door. Without it a
+	// door takes tokens only.
+	Devices DeviceRealm
 }
 
 // New returns a Decider.
@@ -150,6 +165,7 @@ func New(o Options) *Decider {
 	return &Decider{
 		verify: o.Verifier, store: o.Store, cache: newCache(o.CacheTTL, o.Now), log: o.Logger, now: o.Now, table: o.Table,
 		exchange: newExchangeCache(o.Exchanger, o.Now),
+		devices:  newDevices(o.Devices, o.Now),
 	}
 }
 
@@ -257,6 +273,14 @@ func (d *Decider) record(ctx context.Context, req Request, dec Decision) {
 	if dec.client != "" {
 		detail["client"] = dec.client
 	}
+	// Why a session was not accepted: the cause and not the verifier's text,
+	// which can quote the token.
+	if dec.cause != "" {
+		detail["cause"] = dec.cause
+	}
+	if dec.late > 0 {
+		detail["expired_by_ms"] = dec.late.Milliseconds()
+	}
 	audit.Write(ctx, d.log, audit.Record{
 		Source: "bouncer", Kind: audit.KindDecision, RequestID: req.ID,
 		Subject: dec.subject, Object: dec.object, Action: dec.relation, Outcome: outcome,
@@ -301,6 +325,61 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 	if route.Denies(req.Path) {
 		return about(route, "", deny(http.StatusForbidden, "path is not published on "+req.Host))
 	}
+	// A door serves the paths of its apps and nothing else, and which app a
+	// request is for is settled before anybody is asked who is calling: from
+	// here on the route is that app's.
+	if len(route.Paths) > 0 {
+		sub := route.forPath(req.Path)
+		if sub == nil {
+			return about(route, "", deny(http.StatusNotFound, "path is not served on "+req.Host))
+		}
+		route = sub
+		// A discovery address sends a calendar or contact program to where
+		// the app answers, and is answered before anybody is asked who is
+		// calling: it names a path and grants nothing.
+		if route.redirect != "" {
+			return about(route, "", Decision{Status: http.StatusMovedPermanently, Redirect: route.redirect, Reason: "discovery"})
+		}
+		dec := d.atDoor(ctx, route, req)
+		if dec.Status == http.StatusUnauthorized && d.devices != nil && d.devices.realm.Offers(route.Realm) {
+			dec.PasswordChallenge = `Basic realm="` + route.Host + `", charset="UTF-8"`
+		}
+		return dec
+	}
+	return d.withSession(ctx, route, req)
+}
+
+// atDoor decides a request for one app of a door. A device password is
+// turned into the person's token first, and the request is then decided as
+// one that presented that token, provided the password covers a way that
+// serves the path.
+func (d *Decider) atDoor(ctx context.Context, route *Route, req Request) Decision {
+	user, password, basic := basicAuth(req.Authorization)
+	if !basic || d.devices == nil {
+		return d.withSession(ctx, route, req)
+	}
+	if !d.devices.realm.Offers(route.Realm) {
+		return about(route, "", challenge(route, req, deny(http.StatusUnauthorized, "device passwords are not taken here")))
+	}
+	t, err := d.devices.token(ctx, route.Realm, user, password, req.Source)
+	switch {
+	case errors.Is(err, errDeviceLimited):
+		return about(route, "", deny(http.StatusTooManyRequests, err.Error()))
+	case errors.Is(err, ErrDeviceRefused):
+		return about(route, "", challenge(route, req, deny(http.StatusUnauthorized, err.Error())))
+	case err != nil:
+		d.log.WarnContext(ctx, "device password grant failed; failing closed", "host", req.Host, "realm", route.Realm, "error", err.Error())
+		return about(route, "", deny(http.StatusServiceUnavailable, "the realm could not check the device password"))
+	}
+	if !covers(t.Ways, route.ways) {
+		return about(route, "", deny(http.StatusForbidden, "the device password does not cover a way that serves "+pathOnly(req.Path)))
+	}
+	req.Authorization = "Bearer " + t.Token
+	return d.withSession(ctx, route, req)
+}
+
+// withSession decides a request on the token its route calls for.
+func (d *Decider) withSession(ctx context.Context, route *Route, req Request) Decision {
 	id, err := d.session(ctx, route, req)
 	if err != nil {
 		// On an oidc route this is not "no session yet". The OAuth2 filter
@@ -312,16 +391,30 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 		// ended, whose refresh the realm refuses, reaches this service with
 		// the filter's cookies and no token. A page the person opens is
 		// then signed in again rather than refused (restartSignIn).
-		if dec, ok := restartSignIn(route, req, err.Error()); ok {
+		cause, late := causeOf(err)
+		// Keycloak not answering for its keys says nothing about the
+		// session: the token may well be good. Unavailable, then, which a
+		// page and a program retry, and not a 401, which ends a session in
+		// most apps and would here restart the sign-in.
+		if cause == authn.CauseKeysUnavailable {
+			dec := deny(http.StatusServiceUnavailable, "the realm's signing keys could not be fetched")
+			dec.cause = cause
 			return about(route, "", dec)
 		}
-		return about(route, "", challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, err.Error()))))
+		dec, ok := restartSignIn(route, req, err.Error())
+		if !ok {
+			dec = challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, err.Error())))
+		}
+		dec.cause, dec.late = cause, late
+		return about(route, "", dec)
 	}
 	if id.SessionID == "" {
-		if dec, ok := restartSignIn(route, req, "token names no session"); ok {
-			return about(route, id.Subject, dec)
+		dec, ok := restartSignIn(route, req, "token names no session")
+		if !ok {
+			dec = challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, "token names no session")))
 		}
-		return about(route, id.Subject, challenge(route, req, browserRefusal(route, deny(http.StatusUnauthorized, "token names no session"))))
+		dec.cause = causeNoSession
+		return about(route, id.Subject, dec)
 	}
 	if route.AuthMode == AuthModeBearer {
 		dec := d.decideFor(ctx, route, req, id)
@@ -334,7 +427,9 @@ func (d *Decider) decide(ctx context.Context, req Request) Decision {
 // decideFor asks the route's question for a verified caller.
 func (d *Decider) decideFor(ctx context.Context, route *Route, req Request, id *authn.Identity) Decision {
 	who := identity{subject: id.Subject, realm: id.Realm, session: id.SessionID, email: id.Email, name: id.Name}
-	if cached, ok := d.cache.get(id.Subject, id.SessionID, route.Host); ok {
+	// One answer per question: behind a door a host has one per app.
+	asked := route.Host + "\x00" + route.Relation + "\x00" + route.Object
+	if cached, ok := d.cache.get(id.Subject, id.SessionID, asked); ok {
 		dec := about(route, id.Subject, d.finish(ctx, route, req, cached))
 		dec.cached = true
 		return dec
@@ -366,7 +461,7 @@ func (d *Decider) decideFor(ctx context.Context, route *Route, req Request, id *
 		}
 		return about(route, id.Subject, browserRefusal(route, deny(http.StatusForbidden, reason)))
 	}
-	d.cache.put(id.Subject, id.SessionID, route.Host, who)
+	d.cache.put(id.Subject, id.SessionID, asked, who)
 	return about(route, id.Subject, d.finish(ctx, route, req, who))
 }
 
@@ -386,6 +481,12 @@ func about(route *Route, subject string, dec Decision) Decision {
 func (d *Decider) finish(ctx context.Context, route *Route, req Request, who identity) Decision {
 	dec := allow(route, req, who)
 	if route.ExchangeScope == "" {
+		// The token a caller presents at a door is the door's. An app
+		// behind it that asked for no token of its own is told who is
+		// asking in the identity headers, as behind a session.
+		if route.behindDoor {
+			dec.RemoveHeaders = append(dec.RemoveHeaders, "authorization")
+		}
 		return dec
 	}
 	token, err := d.exchange.token(ctx, who, bearer(req.Authorization), route.ExchangeScope)
@@ -446,10 +547,10 @@ func isIdentityHeader(name string) bool {
 func (d *Decider) session(ctx context.Context, route *Route, req Request) (*authn.Identity, error) {
 	if route.AuthMode == AuthModeOIDC && (route.KeepClientToken || route.IDTokenSession) {
 		if route.IDTokenAudience == "" {
-			return nil, errors.New("route names no client to hold its session against")
+			return nil, &authn.Refusal{Cause: causeRoute, Err: errors.New("route names no client to hold its session against")}
 		}
 		if req.IDToken == "" {
-			return nil, errors.New("no session token")
+			return nil, &authn.Refusal{Cause: authn.CauseNoToken, Err: errors.New("no session token")}
 		}
 		id, err := d.verify.VerifyIDToken(ctx, req.IDToken, route.IDTokenAudience)
 		if err != nil {
@@ -459,20 +560,20 @@ func (d *Decider) session(ctx context.Context, route *Route, req Request) (*auth
 	}
 	raw := bearer(req.Authorization)
 	if raw == "" {
-		return nil, errors.New("no token")
+		return nil, &authn.Refusal{Cause: authn.CauseNoToken, Err: errors.New("no token")}
 	}
 	if route.AuthMode == AuthModeBearer {
 		// A token made out to this entry, by the tenant's own realm. The
 		// table refuses a bearer route that names neither, and so does this.
 		if route.Audience == "" || route.Realm == "" {
-			return nil, errors.New("route names nothing to hold a token against")
+			return nil, &authn.Refusal{Cause: causeRoute, Err: errors.New("route names nothing to hold a token against")}
 		}
 		id, err := d.verify.VerifyFor(ctx, raw, route.Audience)
 		if err != nil {
 			return nil, fmt.Errorf("token refused: %w", err)
 		}
 		if id.Realm != route.Realm {
-			return nil, errors.New("token refused: issued by another realm")
+			return nil, &authn.Refusal{Cause: authn.CauseIssuer, Err: errors.New("token refused: issued by another realm")}
 		}
 		return id, nil
 	}
@@ -483,10 +584,39 @@ func (d *Decider) session(ctx context.Context, route *Route, req Request) (*auth
 	return id, nil
 }
 
+// The causes a session is not accepted for that are this service's own; the
+// rest are the verifier's (authn.Cause*).
+const (
+	// causeNoSession is a verified token that names no session.
+	causeNoSession = "no-session"
+	// causeRoute is a route the table describes too little of to judge.
+	causeRoute = "route"
+)
+
+// causeOf is the cause of a session that was not accepted, and how long ago
+// its token expired when that is the cause. An error that carries none is
+// "other": every refusal of a session has a cause in the log.
+func causeOf(err error) (string, time.Duration) {
+	var refusal *authn.Refusal
+	if errors.As(err, &refusal) {
+		return refusal.Cause, refusal.Late
+	}
+	return "other", 0
+}
+
+// EntryScope is the scope a program asks for when it signs a person in to
+// reach a token entry: the challenge names it, and so does the entry's
+// metadata. A program told no scope may ask the realm for every scope it has,
+// and the realm refuses that for the entry's client. The token names the
+// entry as its audience already, and what the person may do is asked per
+// call, so nothing more is needed.
+const EntryScope = "openid"
+
 // challenge puts on a 401 of a route that takes a token what RFC 6750 and
-// RFC 9728 have a program expect: that a bearer token is called for, where
-// the entry's metadata is, and, when a token was presented, that it was not
-// accepted. Why it was not is in the log and never in the answer.
+// RFC 9728 have a program expect: that a bearer token is called for, the
+// scope to ask for, where the entry's metadata is, and, when a token was
+// presented, that it was not accepted. Why it was not is in the log and never
+// in the answer.
 func challenge(route *Route, req Request, dec Decision) Decision {
 	if route == nil || route.AuthMode != AuthModeBearer || dec.Status != http.StatusUnauthorized {
 		return dec
@@ -496,7 +626,7 @@ func challenge(route *Route, req Request, dec Decision) Decision {
 		parts = append(parts, `error="invalid_token"`)
 	}
 	if route.ResourceMetadata != "" {
-		parts = append(parts, `resource_metadata="`+route.ResourceMetadata+`"`)
+		parts = append(parts, `scope="`+EntryScope+`"`, `resource_metadata="`+route.ResourceMetadata+`"`)
 	}
 	dec.Challenge = strings.TrimSpace("Bearer " + strings.Join(parts, ", "))
 	return dec

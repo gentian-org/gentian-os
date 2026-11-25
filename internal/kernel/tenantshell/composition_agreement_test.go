@@ -40,7 +40,7 @@ func TestResourceListMirrorsTheComposition(t *testing.T) {
 
 	// The same quantities the render fixture feeds the Composition. Values do
 	// not matter here — the keys are what drifted.
-	q := &gentianov1alpha1.TenantQuotas{MaxApps: 10, MaxPods: 100}
+	q := &gentianov1alpha1.TenantQuotas{MaxPods: 100}
 	for target, value := range map[**resource.Quantity]string{
 		&q.Storage:        "50Gi",
 		&q.CPU:            "8",
@@ -70,14 +70,6 @@ func TestResourceListMirrorsTheComposition(t *testing.T) {
 				"such key; the cluster obeys the Composition, so this quota does not "+
 				"exist outside Go", key)
 		}
-	}
-
-	// maxApps is the one field of TenantQuotas that is deliberately not a quota
-	// key: it is the Tenant webhook's policy limit on how many apps may be
-	// installed, not a quantity any ResourceQuota can hold.
-	if _, ok := mirrored["maxApps"]; ok {
-		t.Error("ResourceListFromQuotas emits maxApps; it is a webhook policy " +
-			"limit, and ResourceQuota has no such resource")
 	}
 }
 

@@ -364,6 +364,60 @@ func TestACallersRunsAreItsOwn(t *testing.T) {
 	}
 }
 
+// The list of what a caller may run carries an installed action's schemas as
+// the table holds them, and none where the action states none or the run is
+// the caller's own.
+func TestTheActionListCarriesAnActionsSchemas(t *testing.T) {
+	const inputs = `{"type":"object","required":["text"],"properties":{"text":{"type":"string"}}}`
+	const outputs = `{"type":"object","properties":{"sent":{"type":"boolean"}}}`
+	table := twoTenants()
+	table.Tenants[0].Actions[0].Schemas = table.Hold([]byte(inputs), []byte(outputs))
+	table.Tenants[0].Actions = append(table.Tenants[0].Actions, step("plain"))
+	// The same schemas of a second action take no second entry.
+	if again := table.Hold([]byte(inputs), []byte(outputs)); again != table.Tenants[0].Actions[0].Schemas || len(table.Schemas) != 1 {
+		t.Fatalf("held twice: %q, %d entries", again, len(table.Schemas))
+	}
+	table.Callers[0].Own[0].Schemas = table.Tenants[0].Actions[0].Schemas
+	document, err := table.Document()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseTable([]byte(document))
+	if err != nil {
+		t.Fatalf("a table with schemas is refused: %v", err)
+	}
+	srv := NewServer(&cluster{pods: map[string]*corev1.Pod{}}, program, slog.New(slog.NewJSONHandler(io.Discard, nil)))
+	srv.SetTable(parsed)
+	h := &harness{t: t, server: httptest.NewServer(srv.Handler())}
+	defer h.server.Close()
+
+	status, body := h.call(flowKey, http.MethodGet, "/v1/actions", "")
+	if status != http.StatusOK {
+		t.Fatalf("actions = %d %s", status, body)
+	}
+	var listed struct {
+		Actions []map[string]json.RawMessage `json:"actions"`
+	}
+	if err := json.Unmarshal([]byte(body), &listed); err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]map[string]json.RawMessage{}
+	for _, action := range listed.Actions {
+		byName[string(action["name"])] = action
+	}
+	if ocr := byName[`"ocr"`]; string(ocr["inputs"]) != inputs || string(ocr["outputs"]) != outputs {
+		t.Fatalf("ocr = %s", body)
+	}
+	for _, name := range []string{`"plain"`, `"runner"`} {
+		entry, listed := byName[name]
+		_, hasInputs := entry["inputs"]
+		_, hasOutputs := entry["outputs"]
+		if !listed || hasInputs || hasOutputs {
+			t.Errorf("%s = %s", name, body)
+		}
+	}
+}
+
 // Before a table is read, and for a tenant the table does not name, nothing
 // is started.
 func TestWithoutATableEveryKeyIsRefused(t *testing.T) {

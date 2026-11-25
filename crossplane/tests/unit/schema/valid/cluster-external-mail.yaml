@@ -1,0 +1,19 @@
+# A cluster whose mail is on a mail server outside it.
+#
+# The server holds the mailboxes: the claim names where mail is submitted
+# (mail.host) and where it is read (mail.imap.host), and the cluster runs no
+# mail stack. Behind a tunnel too, which carries none of it: both addresses
+# are dialed from the cluster, not to it.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-external-mail
+  namespace: default
+spec:
+  kernelDomain: example.org
+  networkMode: tunnel
+  mail:
+    serviceMode: external
+    host: smtp.example.net
+    imap:
+      host: imap.example.net

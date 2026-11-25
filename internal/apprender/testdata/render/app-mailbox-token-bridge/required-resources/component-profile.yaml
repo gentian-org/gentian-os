@@ -1,0 +1,43 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - bridge
+  launch: none
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  # An agent bridge that opens a person's mailbox: its client only exchanges
+  # the token the chaperone hands it for one that opens the mailbox.
+  bridge:
+    ways:
+      - name: tools
+        caller: agents
+        callee: agents
+        protocol: mcp
+        speaksAs: person
+        endpoint:
+          service: demo-app
+          port: 8765
+          path: /mcp
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: demo-app
+          name: Demo App
+          accessType: CONFIDENTIAL
+      mail:
+        imap:
+          tokenSignIn: true

@@ -21,11 +21,12 @@ kernelDomain: ""
 # Plumbed as TENANCY_MODE; the Cluster claim's spec.tenancyMode wins once it is published.
 tenancyMode: multi
 
-# mailServiceMode is the cluster's mail stack — kernel or external — from the
-# Cluster claim. external means Dovecot is not deployed, so the operator does
-# not provision it: no per-realm Keycloak client, no XOAUTH2 realm auth, no
-# domain registration. Plumbed as MAIL_SERVICE_MODE.
-mailServiceMode: external
+# mailServiceMode is where the cluster's mail is — relay, external or
+# internal — from the Cluster claim. Anything but internal means Dovecot is
+# not deployed, so the operator does not provision it: no per-realm Keycloak
+# client, no XOAUTH2 realm auth, no domain registration. Plumbed as
+# MAIL_SERVICE_MODE.
+mailServiceMode: relay
 
 # handover controls the gate that keeps a cluster's recovery cheap until its
 # administrator has been seen to write a credential through the login path.
@@ -240,6 +241,12 @@ director:
   # openbao.address; empty there, it reads no credential.
   vaultRole: gentian-os-director
   vaultAudience: vault://gentian-os-director
+  # How often the mover looks for newer builds, and how long a fetched
+  # catalog index is reused, as Go durations ("30s"). Empty is five minutes
+  # each. A development cluster that follows a develop channel shortens both,
+  # so that a published build arrives within a minute.
+  updaterEvery: ""
+  catalogueCache: ""
 
   committer:
     name: gentian-director
@@ -256,9 +263,9 @@ director:
     limits:
       memory: 256Mi
 
-# The registrar: what keeps the list of people -- invites them, puts them in
-# groups, removes them -- at Keycloak, for the person the authorization store
-# allows. A Deployment of its own with a ServiceAccount of its own, which may
+# The registrar: what keeps the list of people -- invites them, removes them
+# -- at Keycloak, and asks the operator to give and take their positions and
+# roles, for the person the authorization store allows. A Deployment of its own with a ServiceAccount of its own, which may
 # read the tenants and the Cluster claim and nothing else in the cluster. It
 # holds the per-realm Keycloak credential the operator hands it
 # (Secret gentian-registrar-realms), and the director holds none.
@@ -269,6 +276,18 @@ director:
 #
 # Off by default, like the director whose people routes it serves; the v5
 # bootstrap turns both on.
+# The confidant: keeps secrets that belong to one person each, for the
+# components whose profile declares requires.services.personSecrets
+# (templates/confidant.yaml). On by default: it holds nothing and serves
+# nobody until such a component is installed.
+confidant:
+  enabled: true
+  port: 9446
+  replicas: 1
+  # The vault role it logs in as (cluster-default, gentian-os-confidant).
+  vaultRole: gentian-os-confidant
+  resources: {}
+
 registrar:
   enabled: false
   port: 9445
@@ -277,6 +296,9 @@ registrar:
   # templates an invitation may apply live there. Empty derives it from the
   # desktop component's Service in the tenant's namespace.
   desktopAPI: ""
+  # Where the operator's listener answers, which gives and takes what a
+  # person holds in a tenant. Empty is the listener of this release.
+  appLifecycleURL: ""
   # Where the registrar records WHO WAS ALLOWED to ask for a change to a person
   # (S7A.17). Keycloak's own admin event says what changed; it sees only the
   # registrar's service account, so it cannot say who asked or what permitted
@@ -335,6 +357,40 @@ adminConsole:
     version: "0.1.1-main"
   # Values the profile carries as its own, merged over what it sets already.
   extraValues: {}
+
+# The home sync: keeps the calendars and contacts the tenant's apps keep of
+# their own equal to the tenant's home, in every tenant. Off by default; the
+# v5 bootstrap turns it on. Its chart is this repository's, published per
+# branch and per commit with the image it runs, and the installer pins the
+# commit's.
+homesync:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: homesync
+    # Empty: the chart published with image.tag (componentprofile-homesync.yaml).
+    version: ""
+
+# The porter: the platform's file dialog, one per tenant (internal/porter).
+# Published and pinned as the home sync is.
+porter:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: porter
+    # Empty: the chart published with image.tag (componentprofile-porter.yaml).
+    version: ""
+
+# The liaison: a person's sign-ins at services outside the cluster
+# (internal/liaison). Shipped and placed nowhere: a tenant has one while an
+# app it installed comes with it. Published and pinned as the home sync is.
+liaison:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: liaison
+    # Empty: the chart published with image.tag (componentprofile-liaison.yaml).
+    version: ""
 
 # The concierge: the page on the cluster's bare domain, a component of the
 # platform tenant published from its DMZ. Off by default; the v5 bootstrap
@@ -395,6 +451,11 @@ usher:
   # Where the operator's listener answers, for the usher's reads of live
   # state. Empty is the listener of this release.
   appLifecycleURL: ""
+  # The port the sign-in question is answered on: which roles a person holds
+  # on an app, asked by the identity provider when it issues the app's
+  # token and signed with its listener key (membershipListener.keysSecretRef).
+  # Not served while no key is listed.
+  signInRolesPort: 8083
   resources:
     requests:
       cpu: 20m
@@ -817,18 +878,17 @@ usage:
           memory: 512Gi
           storage: 800Gi
 
-# Who is in which group, as Keycloak states it.
+# What only a realm sees happen to a person, as Keycloak states it.
 #
-# A listener inside Keycloak posts a user's complete group set, signed, every
-# time it changes, and the operator projects that into the authorization graph
-# beside the structure it already projects. This used to be the director's
-# endpoint, which is why the director's OpenFGA token had to be able to write;
-# it is here so that token can be read-only.
+# A listener inside Keycloak posts, signed, a person arriving from another
+# realm, registering, or removed. The operator gives an arrival what the
+# tenant declares for it (spec.signInFrom, spec.signUp) and takes what a
+# removed person held. Who holds what is the rights store's, written by the
+# operator; no event carries a right.
 #
 # Off until keysSecretRef names something. A cluster with no key accepts no
-# membership, so every permission that follows from a group is refused to
-# everyone -- which the operator says at start rather than leaving to be
-# discovered as a login that grants nothing.
+# event, so nobody who arrives or registers is given anything and nothing of
+# a removed person is taken -- which the operator says at start.
 membershipListener:
   port: 8090
   platformRealm: kernel
@@ -897,7 +957,7 @@ grafana:
 # the operator POSTs a signed JSON body to `url`. The body holds the cluster's
 # id and address, each tenant's address and number of accounts, and each app
 # installed through the App Store with its digest and the number of people
-# entitled to it -- no names, addresses of people, user ids or group names.
+# holding a role on it -- no names, addresses of people, user ids or group names.
 # Nothing in the cluster is blocked by the answer, and the last report is
 # kept, exactly as sent, in the ConfigMap `gentian-usage-statistics` beside the
 # operator.

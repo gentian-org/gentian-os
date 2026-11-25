@@ -34,6 +34,5 @@ spec:
     cpu: "16"
     memory: 32Gi
     storage: 50Gi
-    maxApps: 20
   compositeDeletePolicy: Background
   resourceRefs: []

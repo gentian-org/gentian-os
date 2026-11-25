@@ -130,8 +130,8 @@ func loadOpenFGA(t testing.TB, base string) (storeID, modelID string) {
 	}
 	tuples := fixture.Tuples
 	// The fixture's cluster is cluster:main; these tests serve Cluster.
-	// Bind the administrators' group to it so cluster verbs can be checked.
-	tuples = append(tuples, map[string]any{"user": "group:gentian/platform/admin#member", "relation": "admin", "object": "cluster:" + Cluster})
+	// Its administrator is the fixture's, so cluster verbs can be checked.
+	tuples = append(tuples, map[string]any{"user": "user:alice", "relation": "admin", "object": "cluster:" + Cluster})
 	// The role holders the claim names, as the accounts of the realms these
 	// tests issue tokens for -- the fixture's own name realms kernel and
 	// demo: the platform tenant's people of realm gentian, on this cluster
@@ -150,10 +150,15 @@ func loadOpenFGA(t testing.TB, base string) (storeID, modelID string) {
 	}
 	// An administrator of demo by subject, whom the cluster's administrator
 	// may name from demo.
-	tuples = append(tuples, map[string]any{"user": "user:7d0f3c2e", "relation": "member", "object": "group:gentian/tenant/demo/admins"})
-	post("/stores/"+store.ID+"/write", map[string]any{
-		"authorization_model_id": written.ID,
-		"writes":                 map[string]any{"tuple_keys": tuples},
-	}, nil)
+	tuples = append(tuples, map[string]any{"user": "user:7d0f3c2e", "relation": "holder", "object": "position:demo/tenant-administrator"})
+	// OpenFGA takes at most 100 writes per request.
+	for len(tuples) > 0 {
+		n := min(len(tuples), 100)
+		post("/stores/"+store.ID+"/write", map[string]any{
+			"authorization_model_id": written.ID,
+			"writes":                 map[string]any{"tuple_keys": tuples[:n]},
+		}, nil)
+		tuples = tuples[n:]
+	}
 	return store.ID, written.ID
 }

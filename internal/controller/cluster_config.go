@@ -47,8 +47,13 @@ const (
 	clusterConfigTenancyKey            = "tenancyMode"
 	clusterConfigMailModeKey           = "mail.serviceMode"
 	clusterConfigMailEgressKey         = "mail.egressHost"
-	clusterConfigSecretModeKey         = "secretMode"
-	clusterConfigMainAddressKey        = "mainAddress.tenant"
+	// Where mail is read on a cluster whose mail is on a server outside it
+	// (spec.mail.imap, mail.serviceMode external). No environment fallback:
+	// a cluster that names none hands its apps none.
+	clusterConfigMailIMAPHostKey = "mail.imapHost"
+	clusterConfigMailIMAPPortKey = "mail.imapPort"
+	clusterConfigSecretModeKey   = "secretMode"
+	clusterConfigMainAddressKey  = "mainAddress.tenant"
 	// The tenant whose people also have the cluster's domain as their mail
 	// domain (spec.mainAddress.mailTenant); read on every sync of the mail
 	// maps, not at start.
@@ -120,22 +125,56 @@ func ClusterMainAddressTenant(ctx context.Context, c client.Reader) string {
 	return clusterConfigValueOr(ctx, c, clusterConfigMainAddressKey, "")
 }
 
-// clusterMailServiceMode reports this cluster's mail stack — kernel or external.
+// The three values of the Cluster claim's mail.serviceMode.
+const (
+	// mailServiceModeRelay sends through an upstream provider. No mail
+	// stack on the cluster and no mailboxes anywhere the cluster knows of.
+	mailServiceModeRelay = "relay"
+	// mailServiceModeExternal is a mail server outside the cluster that
+	// holds the mailboxes: the cluster sends through it and hands apps its
+	// IMAP address, and runs no mail stack.
+	mailServiceModeExternal = "external"
+	// mailServiceModeInternal is the cluster running its own mail stack,
+	// Postfix and Dovecot in system-mail and system-mail-dmz.
+	mailServiceModeInternal = "internal"
+)
+
+// clusterMailServiceMode reports this cluster's mail: relay, external or
+// internal.
 //
 // From the claim via gentian-cluster-config, with MAIL_SERVICE_MODE as the
-// fallback described above. The two disagreed for as long as they were separate:
-// the claim said kernel while the operator, reading only its Helm value, said
-// external and skipped Dovecot provisioning entirely.
-// mailServiceModeSystem is the cluster running its own mail stack.
+// fallback described above. The two disagreed for as long as they were
+// separate: the claim said the cluster ran its own mail while the operator,
+// reading only its Helm value, said it relayed and skipped Dovecot
+// provisioning entirely.
 //
-// It was spelled "kernel", and that was wrong under the layout: Postfix and
-// Dovecot live in system-mail and system-mail-dmz, tier system, and no kernel
-// namespace is involved. The tier vocabulary already has the word, so this is
-// the one that needs no second one.
-const mailServiceModeSystem = "system"
-
+// "system", the name internal had, is read as internal: a claim stored under
+// it is moved to internal together with the install run that brings this
+// operator, and until then the cluster's config still says system (#1338).
 func clusterMailServiceMode(ctx context.Context, c client.Reader, fallback string) string {
-	return clusterConfigValueOr(ctx, c, clusterConfigMailModeKey, fallback)
+	return canonicalMailServiceMode(clusterConfigValueOr(ctx, c, clusterConfigMailModeKey, fallback))
+}
+
+// canonicalMailServiceMode is a mail mode by its present name.
+func canonicalMailServiceMode(mode string) string {
+	if mode == "system" {
+		return mailServiceModeInternal
+	}
+	return mode
+}
+
+// clusterExternalIMAP is where mail is read on a cluster whose mail is on a
+// server outside it: the claim's mail.imap, and only while mail.serviceMode
+// is external. Empty host: the cluster has no such server, or cannot say yet.
+func clusterExternalIMAP(ctx context.Context, c client.Reader) (host, port string) {
+	if clusterMailServiceMode(ctx, c, "") != mailServiceModeExternal {
+		return "", ""
+	}
+	host = clusterConfigValueOr(ctx, c, clusterConfigMailIMAPHostKey, "")
+	if host == "" {
+		return "", ""
+	}
+	return host, clusterConfigValueOr(ctx, c, clusterConfigMailIMAPPortKey, "993")
 }
 
 // clusterLLMEnabled reports whether this cluster serves LLM.

@@ -15,14 +15,14 @@ import (
 	"testing"
 )
 
-// Purging and provisioning are actions: nothing is committed, the person is
+// Purging is an action: nothing is committed, the person is
 // named on the request, and the profile is all that travels.
-func TestPurgingAndProvisioningAreActionsByANamedPerson(t *testing.T) {
+func TestPurgingIsAnActionByANamedPerson(t *testing.T) {
 	h, op := startWithOperator(t)
 	tom := h.token(t, "tenant-demo", "tom")
 	before := h.tip(t)
 
-	for _, action := range []string{"purge-app", "provision-app"} {
+	for _, action := range []string{"purge-app"} {
 		// A body that says more than which profile is refused outright: the
 		// tenant is the path's to name, and nothing else is the caller's.
 		if code, _ := h.do(t, "POST", "/v1/tenants/demo/actions/"+action, tom,
@@ -45,12 +45,12 @@ func TestPurgingAndProvisioningAreActionsByANamedPerson(t *testing.T) {
 	}
 }
 
-func TestOnlyWhoMayInstallPurgesAndOnlyWhoMayGrantProvisions(t *testing.T) {
+func TestOnlyWhoMayInstallPurges(t *testing.T) {
 	h, op := startWithOperator(t)
 
 	mia := h.token(t, "tenant-demo", "mia")   // a member
 	tina := h.token(t, "tenant-solo", "tina") // administers another tenant
-	for _, action := range []string{"purge-app", "provision-app"} {
+	for _, action := range []string{"purge-app"} {
 		for who, token := range map[string]string{"a member": mia, "a stranger": tina} {
 			if code, _ := h.do(t, "POST", "/v1/tenants/demo/actions/"+action, token, `{"profile":"xwiki-ce"}`); code != http.StatusForbidden {
 				t.Fatalf("%s ran %s: %d", who, action, code)

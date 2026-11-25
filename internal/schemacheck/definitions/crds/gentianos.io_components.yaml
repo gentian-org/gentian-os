@@ -137,8 +137,8 @@ spec:
                 - service
                 - app
                 - shared-app
-                - adapter
                 - action
+                - bridge
                 type: string
               config:
                 description: |-
@@ -251,6 +251,8 @@ spec:
                       enum:
                       - public
                       - publicAppCredential
+                      - publicAppSignIn
+                      - insideAppCredential
                       - signInAppAuthorization
                       - tokenEntry
                       type: string
@@ -269,6 +271,40 @@ spec:
                         down.
                       format: date-time
                       type: string
+                    signInCookies:
+                      description: |-
+                        SignInCookies are the cookies and paths of the app's own sign-in that
+                        were approved with the entry, copied from the Tenant's entry.
+                      properties:
+                        names:
+                          description: |-
+                            Names are the cookies passed to the app, by exact name. Every other
+                            cookie the browser holds for the domain is removed, the session of
+                            the tenant's own sign-in among them.
+                          items:
+                            pattern: ^[A-Za-z0-9_]{1,64}$
+                            type: string
+                          maxItems: 4
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        paths:
+                          description: |-
+                            Paths are the path prefixes, by whole segments, where the cookies
+                            pass: the app's sign-in and its return from the identity provider.
+                            A path outside the entry's own paths publishes nothing.
+                          items:
+                            maxLength: 512
+                            pattern: ^/[A-Za-z0-9._~/-]*$
+                            type: string
+                          maxItems: 8
+                          minItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                      required:
+                      - names
+                      - paths
+                      type: object
                   required:
                   - exposureName
                   - owner
@@ -324,10 +360,12 @@ spec:
                       type: string
                     digest:
                       description: |-
-                        Digest pins an apiExtensions grant to the definitions it approved:
-                        sha256 of the request as the approver read it
-                        (security.APIExtensionDigest). A request whose definitions changed is
-                        not answered by it, and the install waits for a new approval.
+                        Digest pins a grant to what it approved: for apiExtensions, sha256 of
+                        the request as the approver read it (security.APIExtensionDigest); for
+                        an egress request by address, sha256 of its rule
+                        (security.EgressRuleDigest). A request whose definitions or rule
+                        changed is not answered by it, and the install waits for a new
+                        approval.
                       pattern: ^sha256:[0-9a-f]{64}$
                       type: string
                     expiresAt:
@@ -336,6 +374,21 @@ spec:
                         reviews.
                       format: date-time
                       type: string
+                    hosts:
+                      description: |-
+                        Hosts are the hosts an egress grant answered, each one name, lower
+                        case, with a port where it is not 443: for a request by host, its
+                        hosts as the approver read them; for a request whose hosts are named
+                        at approval (hostsAtApproval), the hosts the approver named. The grant
+                        opens those the request still names; a host the request adds waits
+                        for a new approval.
+                      items:
+                        maxLength: 259
+                        pattern: ^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$
+                        type: string
+                      maxItems: 64
+                      type: array
+                      x-kubernetes-list-type: set
                     privilege:
                       description: |-
                         Privilege names one entry of the profile's request, as <kind>/<name>,
@@ -344,15 +397,14 @@ spec:
                       pattern: ^(podSecurity|egress|clusterRoles|apiExtensions)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     reason:
-                      description: Reason in the approver's words, not the profile's.
+                      description: Reason is a comment the approver may leave, in
+                        their own words.
                       maxLength: 2000
-                      minLength: 10
                       type: string
                   required:
                   - approvedAt
                   - approver
                   - privilege
-                  - reason
                   type: object
                   x-kubernetes-validations:
                   - message: 'approver and approvedAt are immutable: a new approval
@@ -467,6 +519,18 @@ spec:
                 - dedicated
                 - shared
                 type: string
+              outgoingHosts:
+                description: |-
+                  OutgoingHosts are the hosts outside the cluster this component was
+                  granted, each a name with its port where it is not 443. The gateway
+                  for outgoing connections carries them: a listener for each, which this
+                  component's pods and no others reach.
+                items:
+                  maxLength: 259
+                  type: string
+                maxItems: 64
+                type: array
+                x-kubernetes-list-type: set
               pendingPrivileges:
                 description: |-
                   PendingPrivileges are requests of the profile that nobody has granted

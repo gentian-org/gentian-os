@@ -44,7 +44,18 @@ func notifyFixtures(configured bool) []client.Object {
 	claim := &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "gentianos.io/v1alpha1", "kind": "Cluster",
 		"metadata": map[string]any{"name": "cluster", "namespace": layout.Namespace(layout.Provisioning)},
-		"spec":     map[string]any{"kernelDomain": "example.org", "platformRoles": map[string]any{"admin": "gentian:platform:admin"}},
+		"spec": map[string]any{"kernelDomain": "example.org", "platformAccess": map[string]any{"roleHolders": []any{
+			map[string]any{"role": "admin", "tenant": "platform", "subject": "u-ops", "username": "administrator"},
+			map[string]any{"role": "admin", "tenant": "platform", "subject": "u-alice", "username": "alice@example.org"},
+			map[string]any{"role": "admin", "tenant": "platform", "subject": "u-gone", "username": "gone@example.org"},
+			map[string]any{"role": "admin", "tenant": "platform", "subject": "u-nomail", "username": "nomail"},
+			map[string]any{"role": "admin", "tenant": "platform", "subject": "u-ops2", "username": "ops@example.org"},
+			// Not administrators of the cluster: another role, another
+			// tenant's person, an entry that has run out.
+			map[string]any{"role": "auditor", "tenant": "platform", "subject": "u-auditor", "username": "auditor@example.org"},
+			map[string]any{"role": "admin", "tenant": "acme", "subject": "u-acme", "username": "boss@acme.example"},
+			map[string]any{"role": "admin", "tenant": "platform", "subject": "u-past", "username": "past@example.org", "expiresAt": "2020-01-01T00:00:00Z"},
+		}}},
 	}}
 	data := map[string][]byte{
 		"smtp_host": []byte("mail.example.org"), "smtp_user": []byte("gentian-system@example.org"), "smtp_password": []byte("pw"),
@@ -66,21 +77,24 @@ func TestTheAdministratorsAreMailedThroughThePlatformsSettings(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(notifyFixtures(true)...).Build()
 	var sent []mailer.Message
 	var usedSettings mailer.Settings
-	var askedRealm, askedGroup string
+	var askedRealm string
 	s := &Service{client: c, fetchReleaseIndex: testReleaseIndex,
 		sendMail: func(_ context.Context, st mailer.Settings, m mailer.Message) error {
 			usedSettings = st
 			sent = append(sent, m)
 			return nil
 		},
-		listGroupMembers: func(_ context.Context, realm, group string) ([]authz.KeycloakUser, error) {
-			askedRealm, askedGroup = realm, group
+		listRealmUsers: func(_ context.Context, realm string) ([]authz.KeycloakUser, error) {
+			askedRealm = realm
 			return []authz.KeycloakUser{
-				{Username: "administrator", Email: "Ops@Example.org", Enabled: true},
-				{Username: "alice@example.org", Enabled: true},
-				{Username: "gone@example.org", Enabled: false},
-				{Username: "nomail", Enabled: true},
-				{Username: "ops@example.org", Enabled: true},
+				{ID: "u-ops", Username: "administrator", Email: "Ops@Example.org", Enabled: true},
+				{ID: "u-alice", Username: "alice@example.org", Enabled: true},
+				{ID: "u-gone", Username: "gone@example.org", Enabled: false},
+				{ID: "u-nomail", Username: "nomail", Enabled: true},
+				{ID: "u-ops2", Username: "ops@example.org", Enabled: true},
+				{ID: "u-auditor", Username: "auditor@example.org", Enabled: true},
+				{ID: "u-past", Username: "past@example.org", Enabled: true},
+				{ID: "u-stranger", Username: "stranger@example.org", Enabled: true},
 			}, nil
 		},
 	}
@@ -96,8 +110,8 @@ func TestTheAdministratorsAreMailedThroughThePlatformsSettings(t *testing.T) {
 	if strings.Join(res.Recipients, ",") != "alice@example.org,ops@example.org" {
 		t.Fatalf("recipients = %v", res.Recipients)
 	}
-	if askedRealm != "kernel" || askedGroup != "gentian:platform:admin" {
-		t.Fatalf("asked %s/%s", askedRealm, askedGroup)
+	if askedRealm != "kernel" {
+		t.Fatalf("asked realm %s", askedRealm)
 	}
 	if len(sent) != 1 || sent[0].Subject != "Gentian OS v0.6.0 waits for cluster example.org" ||
 		!strings.Contains(sent[0].Text, "runs v0.5.1") || !strings.Contains(sent[0].Text, "release set v0.6.0\n") ||
@@ -125,8 +139,8 @@ func TestWithoutMailOrAddressesTheActionSaysSo(t *testing.T) {
 	c = fake.NewClientBuilder().WithScheme(scheme).WithObjects(notifyFixtures(true)...).Build()
 	s = &Service{client: c, fetchReleaseIndex: testReleaseIndex,
 		sendMail: func(context.Context, mailer.Settings, mailer.Message) error { return errors.New("must not send") },
-		listGroupMembers: func(context.Context, string, string) ([]authz.KeycloakUser, error) {
-			return []authz.KeycloakUser{{Username: "nomail", Enabled: true}}, nil
+		listRealmUsers: func(context.Context, string) ([]authz.KeycloakUser, error) {
+			return []authz.KeycloakUser{{ID: "u-nomail", Username: "nomail", Enabled: true}}, nil
 		},
 	}
 	h = &HTTPServer{Service: s}
@@ -158,8 +172,8 @@ func TestAMailIsWrittenFromTheOperatorsOwnValues(t *testing.T) {
 			sent = append(sent, m)
 			return nil
 		},
-		listGroupMembers: func(context.Context, string, string) ([]authz.KeycloakUser, error) {
-			return []authz.KeycloakUser{{Username: "ops@example.org", Enabled: true}}, nil
+		listRealmUsers: func(context.Context, string) ([]authz.KeycloakUser, error) {
+			return []authz.KeycloakUser{{ID: "u-ops2", Username: "ops@example.org", Enabled: true}}, nil
 		},
 	}
 	h := &HTTPServer{Service: s}

@@ -636,12 +636,22 @@ func (s *Seeder) SyncSMTP(ctx context.Context, tenant, app string, base SMTPCred
 		"user":     base.User,
 		"password": base.Password,
 	}
+	if err := s.syncMailRecord(ctx, path, want); err != nil {
+		return fmt.Errorf("sync smtp(%s/%s): %w", tenant, app, err)
+	}
+	return nil
+}
+
+// syncMailRecord keeps the record at path equal to want: written when it is
+// absent or differs, left alone when it already holds want. An empty want is
+// never written, so a record with values is not emptied.
+func (s *Seeder) syncMailRecord(ctx context.Context, path string, want map[string]string) error {
 	if emptyRecord(want) {
 		return nil
 	}
 	have, err := s.w.Get(ctx, path)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return fmt.Errorf("sync smtp(%s/%s): read: %w", tenant, app, err)
+		return fmt.Errorf("read: %w", err)
 	}
 	if have != nil && len(have) == len(want) {
 		same := true
@@ -655,10 +665,7 @@ func (s *Seeder) SyncSMTP(ctx context.Context, tenant, app string, base SMTPCred
 			return nil
 		}
 	}
-	if err := s.w.Put(ctx, path, want); err != nil {
-		return fmt.Errorf("sync smtp(%s/%s): %w", tenant, app, err)
-	}
-	return nil
+	return s.w.Put(ctx, path, want)
 }
 
 // --- IMAP --------------------------------------------------------------------
@@ -681,6 +688,17 @@ func (s *Seeder) SeedIMAP(ctx context.Context, tenant, app string, base IMAPCred
 		return fmt.Errorf("seed imap(%s/%s): %w", tenant, app, err)
 	}
 	return s.w.PutOnce(ctx, path, data)
+}
+
+// SyncIMAP is SyncSMTP for the IMAP record: for an address the record
+// follows rather than keeps, the mail server outside the cluster that the
+// Cluster claim names and may name anew.
+func (s *Seeder) SyncIMAP(ctx context.Context, tenant, app string, base IMAPCreds) error {
+	want := map[string]string{"host": base.Host, "port": base.Port}
+	if err := s.syncMailRecord(ctx, CategoryPath(tenant, app, "imap"), want); err != nil {
+		return fmt.Errorf("sync imap(%s/%s): %w", tenant, app, err)
+	}
+	return nil
 }
 
 // --- Mail without a mail function --------------------------------------------

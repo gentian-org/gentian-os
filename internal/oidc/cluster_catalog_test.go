@@ -122,3 +122,13 @@ func TestResolvePackRefusesTwoCataloguesOfOneProfile(t *testing.T) {
 		t.Fatalf("err = %v, want ErrCatalogAmbiguous", err)
 	}
 }
+
+// An app pack needs a scope and a client role; it names no group.
+func TestAnAppPackNeedsNoEntitlementGroup(t *testing.T) {
+	if err := validatePack("wiki", Pack{ScopeName: "wiki", ClientRole: "user"}, nil); err != nil {
+		t.Fatalf("a pack without entitlementGroup was refused: %v", err)
+	}
+	if err := validatePack("wiki", Pack{ClientRole: "user"}, nil); err == nil {
+		t.Fatal("a pack without scopeName was accepted")
+	}
+}

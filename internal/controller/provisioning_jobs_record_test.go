@@ -48,7 +48,7 @@ func TestProvisioningJobBuildersTranscript(t *testing.T) {
 		"realm delete":         makeRealmDeleteJob(tenant, "demo", "kernel"),
 		"cache user":           makeCacheACLJob(tenant, "wiki", false),
 		"cache user, password": makeCacheACLJob(tenant, "wiki", true),
-		"groups":               makeGentianGroupsJob(tenant, "demo", `[{"name":"g"}]`),
+		"groups":               makeGentianGroupsJob(tenant, "demo"),
 		"postgres role":        makeRoleJob(tenant, "tenant-demo", "demo_wiki", "wiki", true, gentianov1alpha1.SchemaPreferenceAppSchema, true, 25),
 		"mariadb setup":        makeMariaDBSetupJob(tenant, "shop", true, true, 25),
 		"kernel job":           newKernelProvisioningJob("job", "ns", tenant, "wiki", corev1.Container{Name: "c", Image: "i"}),
@@ -56,7 +56,7 @@ func TestProvisioningJobBuildersTranscript(t *testing.T) {
 		"bucket":               makeS3BucketJob(tenant, "wiki", true, backup.ObjectStorageOptions{}),
 		"app instance role":    makeAppInstanceRoleJob(),
 		"tenant smtp":          makeTenantSMTPJob("demo", "demo", "mail.example", "Example"),
-		"oidc pack":            makeOIDCPackJob(tenant, "demo", pack, true, "wiki-users"),
+		"oidc pack":            makeOIDCPackJob(tenant, "demo", pack, true),
 	}
 	var out []string
 	for name, job := range jobs {

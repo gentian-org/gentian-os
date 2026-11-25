@@ -12,6 +12,7 @@ package controller
 
 import (
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -132,21 +133,26 @@ func TestTheExchangeClientAsRendered(t *testing.T) {
 }
 
 // Keycloak admits a client to an exchange only for a token that names it as
-// an audience. The session's token is the zone client's, so the mapper is
-// there -- and only there, since a mapper on anything else would let the
-// tokens of some other client be exchanged.
+// an audience. The session's token is the zone client's, and a device
+// password's is the door's device client's, so the mapper is on those two
+// -- and only there, since a mapper on anything else would let the tokens
+// of some other client be exchanged.
 func TestTheZoneTokenNamesTheExchangeClient(t *testing.T) {
 	for _, c := range exchangeRealmFixtures {
 		objs := renderedObjects(t, c.fixture)
 		mappers := audienceMappersNaming(objs, bouncer.ExchangeClientID)
-		if len(mappers) != 1 {
-			t.Errorf("%s: %d mappers put %s in an audience, want exactly the one on the zone's client", c.fixture, len(mappers), bouncer.ExchangeClientID)
+		on := map[string]map[string]any{}
+		for _, m := range mappers {
+			ref, _, _ := unstructured.NestedString(m, "spec", "forProvider", "clientIdRef", "name")
+			on[ref] = m
+		}
+		zone, devices := c.tenant+"-edge-zone-client", c.tenant+"-door-devices-client"
+		if len(mappers) != 2 || on[zone] == nil || on[devices] == nil {
+			t.Errorf("%s: %d mappers put %s in an audience, on %v; want one on the zone's client and one on the door's device client",
+				c.fixture, len(mappers), bouncer.ExchangeClientID, mapperClients(on))
 			continue
 		}
-		mapper := mappers[0]
-		if ref, _, _ := unstructured.NestedString(mapper, "spec", "forProvider", "clientIdRef", "name"); ref != c.tenant+"-edge-zone-client" {
-			t.Errorf("%s: the mapper is on %q, not on the zone's client", c.fixture, ref)
-		}
+		mapper := on[zone]
 		if realm, _, _ := unstructured.NestedString(mapper, "spec", "forProvider", "realmId"); realm != c.realm {
 			t.Errorf("%s: the mapper is in realm %q, want %q", c.fixture, realm, c.realm)
 		}
@@ -329,4 +335,13 @@ func TestTheExchangeSecretIsFoundByItsRealm(t *testing.T) {
 			t.Errorf("%s: the client is pushed %v, want the generated Secret %v", c.fixture, ref, want)
 		}
 	}
+}
+
+func mapperClients(m map[string]map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

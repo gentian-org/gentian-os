@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "liaison.fullname" . }}
+  labels:
+    {{- include "liaison.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "liaison.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http

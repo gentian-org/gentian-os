@@ -33,14 +33,15 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                  (--identity-file <f> | --passphrase) [--drop-custom-domain]
                                  (the bundle's custom domain is kept unless --drop-custom-domain)
   kubectl gentian tenants delegate-catalogues <name> on|off
+  kubectl gentian tenants delegate-trusted-domains <name> on|off
+                                                            whether the tenant's perimeter approver may keep trusted domains
   kubectl gentian tenants domain <name>                      the domain of its own it is bound to
   kubectl gentian tenants domain <name> <domain> [--yes]     bind it: its addresses move to <label>.<domain>
                                                             (a cluster with many tenants only)
   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
   kubectl gentian tenants mail-mode <name> [<mode>]          what the operator provisions for its mail:
                                                             selfhosted, external, transport-only, disabled
-  kubectl gentian tenants groups <name> [<group>... | --clear]   its own groups, declared in git
-  kubectl gentian tenants sign-in <name> [--from <tenant> --groups <g>,... | --remove <tenant>]
+  kubectl gentian tenants sign-in <name> [--from <tenant> --positions <p>,... | --remove <tenant>]
                                                             people of another tenant of this cluster signing in here
   kubectl gentian tenants partners <name>                    realms of other clusters its realm links accounts with
   kubectl gentian tenants partners <name> add <partner> --issuer <https://<host>/<path to the realm>>
@@ -57,7 +58,7 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian platform-roles holders remove <role> <tenant> <login>   no longer
   kubectl gentian platform-roles candidates                  who could hold one: the platform tenant's people,
                                                             every other tenant's administrators
-  kubectl gentian platform-roles members                     who holds admin and breakGlass through their group
+  kubectl gentian platform-roles members                     the platform tenant's role holders, as the kernel realm knows them
   kubectl gentian platform-roles review [--next <RFC 3339>]  review both lists and record it on the claim
 
   kubectl gentian credentials list [--tenant <tenant>]       what is asked for, and whether it is set
@@ -91,20 +92,21 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
   kubectl gentian release set <vX.Y.Z> [--auto-upgrade none|patch|minor]   run this release; one signed commit by the director
   kubectl gentian release track <branch>       follow a gentian-os branch build by build (a development cluster)
   kubectl gentian settings set <path>=<value> [...]   change them, in one commit: tenancyMode=multi,
-                                               mainAddress.tenant=<tenant>, mail.serviceMode=system,
-                                               platformRoles.auditor=gentian:platform:auditor ...
+                                               mainAddress.tenant=<tenant>, mail.serviceMode=internal ...
   kubectl gentian domains [--problems]         every domain the cluster serves, the DNS records it needs, and whether
                                                the internet has them: present, pending, missing, or held by another record
 
   kubectl gentian apps list --tenant <tenant> [--available]
-  kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--for-everyone]
+  kubectl gentian apps install <app> --tenant <tenant> [--from <source>] [--digest sha256:<hex>] [--positions <a,b>] [--approve-egress] [--grant-integrations] [--approve-authorization]
   kubectl gentian apps uninstall <app> --tenant <tenant> [--purge]
   kubectl gentian apps approve <app> --tenant <tenant>       what the app asks for that nobody has approved yet
-  kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> --reason "<why>" [--expires <RFC 3339>]
+  kubectl gentian apps approve <app> <kind>/<name> --tenant <tenant> [--reason "<comment>"] [--expires <RFC 3339>] [--host <host>]...
                                                             approve one request: egress (the tenant's perimeter approver),
                                                             podSecurity or clusterRoles (the cluster's security officer),
                                                             apiExtensions or a role that writes (break-glass)
   kubectl gentian apps decline <app> <kind>/<name> --tenant <tenant> --reason "<why>"
+  kubectl gentian apps withdraw <app> <kind>/<name> --tenant <tenant>
+                                                            take back one approval; the request waits for an answer again
                                                             decline one, with the same right; the app keeps waiting
   kubectl gentian approvals list                             what awaits the security officer and the perimeter
                                                             approver, across all tenants: who answers, who asked,
@@ -119,6 +121,10 @@ The synopsis of every `kubectl gentian` command, as the plugin's own header stat
                                     [--acknowledge-main-address-rule] [--yes]
   kubectl gentian exposures list --tenant <tenant>            what the tenant has on the internet
   kubectl gentian exposures withdraw <app-instance> <entry> --tenant <tenant>
+  kubectl gentian trusted-domains list --tenant <tenant>      the domains trusted for this tenant alone
+  kubectl gentian trusted-domains add <domain> --tenant <tenant>
+                                                              an egress request whose hosts are all in trusted domains needs no answer
+  kubectl gentian trusted-domains remove <domain> --tenant <tenant>
   kubectl gentian exposures alias <app-instance> <entry> --tenant <tenant> (--host <name>.<cluster's domain> | --remove)
                                                               a second address for a published entry, directly under
                                                               the cluster's own domain; the cluster's administrator's

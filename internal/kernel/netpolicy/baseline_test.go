@@ -26,7 +26,7 @@ import (
 func TestBaselineNetworkPolicy_AllowsKernelAndOperatorIngress(t *testing.T) {
 	t.Parallel()
 
-	policy := netpolicy.BaselineNetworkPolicy("demo", "tenant-demo", netpolicy.DefaultConfig(), nil)
+	policy := netpolicy.BaselineNetworkPolicy("demo", "tenant-demo", netpolicy.DefaultConfig(), netpolicy.ClusterServices{})
 
 	got := map[string]bool{}
 	for _, rule := range policy.Spec.Ingress {
@@ -60,7 +60,7 @@ func TestBaselineNetworkPolicy_AdmitsOnlyTheProxiesOfTheEdge(t *testing.T) {
 	edgePeer := func(narrow bool) *networkingv1.NetworkPolicyPeer {
 		cfg := netpolicy.DefaultConfig()
 		cfg.NarrowEdge = narrow
-		policy := netpolicy.BaselineNetworkPolicy("demo", "tenant-demo", cfg, nil)
+		policy := netpolicy.BaselineNetworkPolicy("demo", "tenant-demo", cfg, netpolicy.ClusterServices{})
 		for _, rule := range policy.Spec.Ingress {
 			for i := range rule.From {
 				if sel := rule.From[i].NamespaceSelector; sel != nil &&
@@ -74,6 +74,9 @@ func TestBaselineNetworkPolicy_AdmitsOnlyTheProxiesOfTheEdge(t *testing.T) {
 	}
 	if peer := edgePeer(true); peer.PodSelector == nil || peer.PodSelector.MatchLabels["app.kubernetes.io/name"] != "envoy" {
 		t.Errorf("the edge namespace is admitted with pod selector %v, want the Envoy proxies alone", peer.PodSelector)
+	}
+	if peer := edgePeer(true); peer.PodSelector.MatchLabels["gateway.envoyproxy.io/owning-gatewayclass"] != netpolicy.EdgeGatewayClassName {
+		t.Errorf("the edge's proxies are selected by %v, want the inbound fleet named: every fleet's proxies carry app.kubernetes.io/name=envoy", peer.PodSelector.MatchLabels)
 	}
 	if peer := edgePeer(false); peer.PodSelector != nil {
 		t.Errorf("with the rules off the edge namespace is admitted with pod selector %v, want the whole namespace", peer.PodSelector)

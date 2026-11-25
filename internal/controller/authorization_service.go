@@ -136,10 +136,11 @@ func authorizationStores(ctx context.Context, c client.Reader) ([]arbiter.Entry,
 				"component", k.Component, "namespace", k.namespace, "error", err.Error())
 			continue
 		}
-		// The realm is the one whose memberships reach the tenant's stores.
+		// The realm is the one whose people's roles reach the tenant's stores.
 		out = append(out, arbiter.Entry{
 			Tenant: k.Tenant, Component: k.Component, KeyHash: k.KeyHash, Model: model,
-			Realm: tenantRealmName(k.holder), MirrorGroups: requirement.MirrorsGroups(), Tuples: tuples,
+			Realm: tenantRealmName(k.holder), MirrorGroups: requirement.MirrorsGroups(),
+			HandRoles: requirement.HandsOverRoles(), Tuples: tuples,
 		})
 	}
 	return out, nil

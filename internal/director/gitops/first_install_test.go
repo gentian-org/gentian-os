@@ -25,7 +25,7 @@ func TestFirstInstallIntoANewTenantsManifest(t *testing.T) {
 	if !strings.Contains(text, "apps: []") {
 		t.Fatalf("the template no longer writes an empty list; this test needs the form it does write:\n%s", text)
 	}
-	out, ok := insertComponentProfile(text, "mathesar-ce", "sha256:"+strings.Repeat("a", 64), "", false)
+	out, ok := insertComponentProfile(text, "mathesar-ce", "sha256:"+strings.Repeat("a", 64), "")
 	if !ok {
 		t.Fatal("not inserted")
 	}
@@ -49,15 +49,15 @@ func TestFirstInstallIntoANewTenantsManifest(t *testing.T) {
 	}
 }
 
-// The same first install, made for everyone: the grant is a key of the entry
-// the install writes, in the form a new tenant's manifest has, and it reads
-// back as the boolean the Tenant's schema declares.
-func TestFirstInstallForEveryoneIntoANewTenantsManifest(t *testing.T) {
+// The same first install from a catalog: the entry reads back as the
+// Tenant's schema declares it, and says nothing of who uses the app, which
+// the positions it is given to say (defaultGrant has no effect).
+func TestFirstInstallFromACatalogIntoANewTenantsManifest(t *testing.T) {
 	text := tenantManifest("demo", "Demo", false, false)
 	if !strings.Contains(text, "apps: []") {
 		t.Fatalf("the template no longer writes an empty list; this test needs the form it does write:\n%s", text)
 	}
-	out, ok := insertComponentProfile(text, "mathesar-ce", "sha256:"+strings.Repeat("a", 64), "main", true)
+	out, ok := insertComponentProfile(text, "mathesar-ce", "sha256:"+strings.Repeat("a", 64), "main")
 	if !ok {
 		t.Fatal("not inserted")
 	}
@@ -75,7 +75,7 @@ func TestFirstInstallForEveryoneIntoANewTenantsManifest(t *testing.T) {
 	if len(doc.Spec.Apps) != 1 {
 		t.Fatalf("apps = %+v\n%s", doc.Spec.Apps, out)
 	}
-	if app := doc.Spec.Apps[0]; app.Profile != "mathesar-ce" || app.Digest == "" || !app.DefaultGrant {
+	if app := doc.Spec.Apps[0]; app.Profile != "mathesar-ce" || app.Digest == "" || app.Catalogue != "main" || app.DefaultGrant {
 		t.Fatalf("app = %+v\n%s", app, out)
 	}
 	var strict map[string]any

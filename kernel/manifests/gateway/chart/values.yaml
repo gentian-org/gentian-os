@@ -1,5 +1,9 @@
 namespace: kernel-edge
 
+# The name Envoy Gateway answers for (GENTIAN_GATEWAY_CONTROLLER_NAME). The
+# class for outgoing connections is rendered here and names it.
+controllerName: gateway.envoyproxy.io/gentian-gatewayclass-controller
+
 # The address DNS points at. Empty leaves the cloud controller to allocate one,
 # which is what NETWORK_MODE=tunnel wants.
 #

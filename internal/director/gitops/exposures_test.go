@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
@@ -154,5 +155,39 @@ spec:
 	if got.Owner != "u-tom" || got.ApexAcknowledgedBy != "u-mia" || got.ApexAcknowledgedAt == "" ||
 		got.ApexAcknowledgedAt != got.LastReviewedAt {
 		t.Fatalf("the reviewed entry = %+v; it must keep its owner and say who acknowledged, when", got)
+	}
+}
+
+// The cookies of an app's own sign-in are recorded with an approval of that
+// kind and only with it, and only as names and paths the registry can write
+// line by line; read back they are what was written.
+func TestSignInCookiesAreRecordedOnlyWithTheirKind(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+	meta := gitops.Meta{Author: gitops.Person{Name: "u-tom", Email: "u-tom@example.com"},
+		Subject: "u-tom", RequestID: "req-1", Decision: "can_expose tenant:demo"}
+	review := time.Now().Add(100 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	entry := func(kind string, c *gentianov1alpha1.SignInCookies) gitops.Exposure {
+		return gitops.Exposure{Install: "synapse", ExposureName: "matrix", Owner: "u-tom", ReviewAt: review, Kind: kind, SignInCookies: c}
+	}
+	good := &gentianov1alpha1.SignInCookies{Names: []string{"oidc_session"}, Paths: []string{"/_synapse/client/oidc"}}
+	for what, e := range map[string]gitops.Exposure{
+		"cookies on another kind":   entry(gitops.KindPublicAppCredential, good),
+		"the kind without cookies":  entry(gitops.KindPublicAppSignIn, nil),
+		"a name that is not a name": entry(gitops.KindPublicAppSignIn, &gentianov1alpha1.SignInCookies{Names: []string{"a]\n  evil: x"}, Paths: []string{"/x"}}),
+		"a path that is not a path": entry(gitops.KindPublicAppSignIn, &gentianov1alpha1.SignInCookies{Names: []string{"a"}, Paths: []string{"/x, /y"}}),
+	} {
+		if _, err := g.PublishExposure(ctx, "demo", e, meta); err == nil {
+			t.Errorf("%s was recorded", what)
+		}
+	}
+	if _, err := g.PublishExposure(ctx, "demo", entry(gitops.KindPublicAppSignIn, good), meta); err != nil {
+		t.Fatal(err)
+	}
+	all, err := g.TenantExposures(ctx, "demo")
+	if err != nil || len(all) != 1 || all[0].SignInCookies == nil ||
+		strings.Join(all[0].SignInCookies.Names, ",") != "oidc_session" || strings.Join(all[0].SignInCookies.Paths, ",") != "/_synapse/client/oidc" {
+		t.Fatalf("read back = %+v, %v", all, err)
 	}
 }

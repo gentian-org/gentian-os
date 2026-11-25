@@ -110,7 +110,7 @@ elsewhere on the same cluster:
 
 ```
 POST /v1/tenants/{t}/apps/{profile}
-{"coordinate": "<catalogue>/<app>", "digest": "sha256:<64 hex>", "defaultGrant": true}
+{"coordinate": "<catalogue>/<app>", "digest": "sha256:<64 hex>", "positions": ["sales"]}
 ```
 
 to the director, with the person's token. The director asks one question:
@@ -119,31 +119,28 @@ may this person install apps in this tenant (`can_install_app` on
 The route is the same whoever calls it — the App Store app with a store's
 confirmation in hand (§6.4), or the command line with no store at all (§9).
 
-**Installing for everyone.** Installing makes an app exist; who may open it is
-the membership of the app's group, decided separately. `"defaultGrant": true`
-makes the common answer — everyone — part of the install: it is written on the
-app's entry in the same commit (`spec.apps[].defaultGrant`), and the operator
-acts on it once the app's group exists. The people who are members of the
-tenant at that moment are added to the group, and the group is marked so that
-somebody invited later has the app preselected. The first is done **once per
-install** and noted in `Tenant.status.defaultGrantedApps`, so a person an
-administrator later takes out of the group stays out; the mark stays. Until it
-is done, and if it fails, the Tenant carries the condition
-`DefaultGrantsApplied=False` with the reason (`WaitingForAppGroup`,
-`GrantFailed`) and the operator tries again. No caller has to wait for the app
-and ask a second time.
+**Who gets the app.** Installing makes an app exist; who may open it is who
+holds a role on it ([iam.md §1.2](iam.md)). The install says which positions
+of the tenant get the app in `"positions"`, written on the app's entry in the
+same commit (`spec.apps[].positions`), and the operator writes the role
+`user` on the app for each position when it projects the tenant. The entry
+is the whole answer for the positions it names: a position taken off it
+loses the app, and so does everyone who had it through that position alone.
+Beside them, the position All apps uses every installed app. There is no
+install "for everyone": the position User is the desktop alone and gives no
+app.
 
-Because this gives people access, a request carrying `"defaultGrant": true` is
-asked a second question, `can_grant` on `tenant:<t>`, and must pass both; it is
-refused with `403` before anything is fetched or written when it does not. The
-realm is taken to be the tenant's name on this path, as it is for
-`provision-app` (§8).
+Because this gives people access, a request that names a position is asked
+a second question, `can_grant` on
+`tenant:<t>`, and must pass both; it is refused with `403` before anything is
+fetched or written when it does not.
 
 | Field | Rule |
 |---|---|
 | `coordinate` | `<catalogue>/<app>`, optional. The catalog must be one the tenant sees (§9): a source of the whole cluster, or a catalog of this tenant's own. The profile bundle is fetched from it and committed before the install. A coordinate in any other catalog is refused. The app named must be the `{profile}` in the path |
 | `digest` | travels with a `coordinate`, and only with one: required beside it, refused without it. Stated with or without capitals; recorded as `sha256:<lowercase hex>` |
-| `defaultGrant` | optional boolean. `true` installs for everyone and needs `can_grant` as well; `false` states that access is given per person and removes the key from an entry that had it; absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
+| `positions` | optional list of position names: the four every tenant has, or ones the tenant declares; another name is refused with `400`. Sent on an installed app it replaces the list, and removes a `defaultGrant` the entry still carries. `user` in it gives nothing and is not written. Absent leaves an installed app's entry as it is, so moving a pin does not change who may open the app |
+| `defaultGrant` | accepted and has no effect |
 
 **An install comes from a catalog source the cluster declares,** for all
 its tenants or for this one (§9). A pin is
@@ -156,15 +153,15 @@ hash to the digest, so the two fields travel together or not at all:
 | `coordinate` in a catalog the cluster declares no source for | refused with `422`, naming the catalog and the sources there are. Nothing is fetched or written |
 | `digest` and no `coordinate` | refused with `422`: there is nowhere to fetch the bytes it is the digest of |
 | `coordinate` and no `digest` | refused with `400` |
-| neither | nothing is fetched and nothing pinned. It installs a profile the cluster already holds, and on an installed app it states `defaultGrant` and leaves the pin as it is |
+| neither | nothing is fetched and nothing pinned. It installs a profile the cluster already holds, and on an installed app it states `positions` and leaves the pin as it is |
 
 | Answer | Meaning |
 |---|---|
 | `202 {"status":"installed","commit":…}` | committed to `gentian-deployments` |
-| `202 {"status":"updated","commit":…}` | the app was installed already, and the pin moved or `defaultGrant` was stated with another value than the entry had |
+| `202 {"status":"updated","commit":…}` | the app was installed already, and the pin moved or `positions` stated another list than the entry had |
 | `200 {"status":"already_installed"}` | nothing to change |
 | `400` | the digest is not a sha256 digest, a coordinate comes with none, the coordinate is not `<catalogue>/<app>`, or it names another app |
-| `403` | the caller may not install in this tenant, or asked to install for everyone and may not grant in it |
+| `403` | the caller may not install in this tenant, or named positions and may not grant in it |
 | `404` | the source does not serve this entry |
 | `422` | the coordinate's catalog is not a source this cluster declares, or a digest came with no coordinate: the build could not be verified. Or the entry is larger than the bundle the cluster carries beside a profile (180 KiB), so its digest could not be checked at rollout. Or the bundle holds what a bundle may not: a kind that is not a companion, an object that is not this profile's, or any companion when the catalog is a tenant's own. Nothing was installed |
 | `502` | the source could not be read, or served bytes that do not hash to the digest. Nothing was installed |
@@ -276,7 +273,7 @@ It is not signed and it is not a permission. What it does:
   profile (§9).
 
   What this does not cover. Only the component reconciler is held; the other
-  readers of a profile -- the tile, the app's groups, the authorization
+  readers of a profile -- the tile, the app's roles, the authorization
   projection -- read it by name as before. One name is one profile for the
   whole cluster, so a tenant that installs an entry at a newer digest replaces
   the profile under every other tenant pinned to the older one, and those are
@@ -614,12 +611,12 @@ person            App Store app                      store                      
   │                     │──────────────────────────────►│                          │
   │                     │  confirmed + confirmation     │                          │
   │                     │◄──────────────────────────────│                          │
-  │  "install", and for everyone or not                 │                          │
+  │  "install", and for which positions                 │                          │
   │────────────────────►│  declare the repository       (director)                 │
   │                     │─────────────────────────────────────────────────────────►│
   │                     │  set its credential           (custodian)                │
   │                     │─────────────────────────────────────────────────────────►│
-  │                     │  install {coordinate, digest, defaultGrant}  (director)  │
+  │                     │  install {coordinate, digest, positions}  (director)     │
   │                     │─────────────────────────────────────────────────────────►│
 ```
 
@@ -716,7 +713,7 @@ token:
    user name and the token to the vault. Both ask `can_write_credential` on
    the tenant. The app hands the credential over once and does not keep it.
 2. Installs at the director (§3) with exactly the confirmation's
-   `coordinate` and `digest`, and the `defaultGrant` the person chose.
+   `coordinate` and `digest`, and the `positions` the person chose.
 3. For the add-ons the confirmation lists: sets the app's add-ons at the
    director (§3), each as the item's `coordinate` and `digest`. Step 2 has
    pinned the app, which is what the director requires of a pinned add-on.
@@ -725,7 +722,8 @@ token:
    and the page carries on by itself once none is left. Each entry is shown
    with what it is, the profile's `reason`, and who answers it: one with
    `approvedBy: perimeter-approver` is approved there and then by a person
-   who holds `can_approve_privilege` on the tenant, with their reason,
+   who holds `can_approve_privilege` on the tenant, with a comment if they
+   leave one,
    through the director's approval route, and otherwise waits for the
    tenant's perimeter approver; one with
    `approvedBy: security-officer` is **requested** — `POST
@@ -907,7 +905,7 @@ may open it are facts the cluster holds.
 
 ```
 director   GET /v1/tenants/{t}/apps                  installed profiles, their digests, their addons and each addon's pin
-director   GET /v1/tenants/{t}/apps/{p}/addons       one app's addons, addonPins: {name, digest, catalogue} for each that is pinned, and addonGrants: {name, defaultGrant} for each that is for everyone
+director   GET /v1/tenants/{t}/apps/{p}/addons       one app's addons, addonPins: {name, digest, catalogue} for each that is pinned, and addonGrants, which has no effect and is empty once the add-ons are set again
 usher      GET /v1/tenants/{t}/apps/status           what the cluster made of them
 usher      GET /v1/tenants/{t}/apps/retained         which uninstalled apps still hold data
 usher      GET /v1/tenants/{t}/resources             the plan, and what is used of it
@@ -929,8 +927,10 @@ An app that waits on a person lists each request nobody granted yet in
 `{privilege, approvedBy, reason, requestedBy, requestedAt, note, expiredAt,
 declinedBy, declinedAt, declineReason}`:
 `approvedBy` is `perimeter-approver` (the tenant's perimeter approver,
-`tenant#can_approve_privilege`) for `egress`, and `security-officer`
-(`cluster#can_approve`) for every other kind. It is the answer the director
+`tenant#can_approve_privilege`) for `egress`, `security-officer`
+(`cluster#can_approve`) for a pod-security waiver and a cluster role that
+reads, and `break-glass` (`cluster#can_set_admission`) for an API extension
+and a cluster role that writes. It is the answer the director
 applies to the approval, so a console offers the button by it and the
 director still decides. `reason` is the profile's own, for the approver to
 read. `requestedBy`, `requestedAt` and `note` are the request a tenant
@@ -982,7 +982,7 @@ so removing an app never takes its data with it by accident.
 | Cache | **kept**: the app's user in the shared instance | the app's user is **removed**; the keys it wrote are not (see the limits below) |
 | Stored credentials — the app's vault paths, and its extensions' | **kept** | **destroyed**, every version |
 | Sign-in (OIDC) client | **removed** | — (already gone) |
-| Access group, and who is in it | **kept**: the app installed again is open to the people it was open to | **destroyed**: the group, and with it every membership; likewise the group of each extension |
+| Who holds a role on it, in the rights store | **kept**: the app installed again is open to the people it was open to | **destroyed**: every entry on the app and on each extension |
 
 An app that is uninstalled and still holds data is **retained**. `GET
 /apps/retained` lists the tenant's retained apps, relayed by the usher from
@@ -1041,7 +1041,7 @@ If one of these fails the answer is `503`, and nothing was destroyed.
 Once admitted, it destroys kind by kind in the platform's one teardown order —
 the order provisioning makes things in, reversed, which the deletion of a
 tenant follows too ([data-lifecycle.md](data-lifecycle.md) §2): files, cache user,
-object storage, database, access group, stored credentials, and last the
+object storage, database, the rights store's entries (`accessGroup`), stored credentials, and last the
 provisioning records. The first step that fails ends it: the answer is `500`
 and says which step failed, what had already been destroyed and what was not
 attempted. Nothing is rolled back; every step is safe to repeat, and asking
@@ -1056,9 +1056,8 @@ The answer of a purge that completed:
   "destroyed": ["files", "cache", "objectStorage", "database", "accessGroup", "credentials", "provisioningRecords"] }
 ```
 
-The access group is removed from the tenant's own realm —
-`spec.isolation.keycloakRealm` when the tenant names one, as the platform
-tenant does, and otherwise the realm called after the tenant.
+`accessGroup` is the kind's name in the answer: what is removed is every
+entry the rights store holds on the app, who was given a role on it.
 
 Limits that remain:
 
@@ -1079,18 +1078,6 @@ Limits that remain:
 Uninstalling tells the store nothing. The acquisition stays the tenant's;
 ending it is between the tenant and the store.
 
-```
-POST /v1/tenants/{t}/actions/provision-app   {"profile": "<name>"}   can_grant
-```
-
-Provisioning grants an installed app — or an add-on switched on inside one,
-by its own name — to everybody who is a member now, and marks it granted by
-default to whoever joins later. It works only once the app exists in the
-cluster; an install that should be for everyone says so in the install itself
-(`defaultGrant`, §3) and needs no second call. The action remains for an app
-that is already installed, and for an add-on, which has no entry of its own
-to carry the field.
-
 ## 9. Without a store
 
 A cluster that names no store, or does not report, has no App Store app.
@@ -1098,13 +1085,13 @@ A cluster that names no store, or does not report, has no App Store app.
 
 ```bash
 kubectl gentian apps list --tenant <t> --available
-kubectl gentian apps install <app> --tenant <t> [--from <source>] [--digest sha256:…] [--for-everyone]
+kubectl gentian apps install <app> --tenant <t> [--from <source>] [--digest sha256:…] [--positions <a,b>]
 ```
 
 through the director, on the same route and under the same question as §3.
 The command looks the entry up in what the director lists of the cluster's
 sources, takes the digest that listing states unless `--digest` names
-another, and sends `{coordinate, digest, defaultGrant}` like every other
+another, and sends `{coordinate, digest, positions}` like every other
 caller. When several sources serve the name it asks for `--from`; on a
 cluster that declares no source it installs nothing.
 The cluster renders no catalog of its own in any interface. A second,

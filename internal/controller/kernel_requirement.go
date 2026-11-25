@@ -105,11 +105,14 @@ type jobWaitRequirement struct {
 	emptyReason   string
 	readyReason   string
 	jobNameForApp func(tenantName, appName string) string
+	// waitsFor says what an app whose Job is not done waits for (appWaits).
+	waitsFor string
 }
 
 func (r *TenantReconciler) reconcileJobWaitRequirement(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
+	waits appWaits,
 	req jobWaitRequirement,
 	collect func(context.Context, *gentianov1alpha1.Tenant, AppCollectionMode) ([]string, error),
 	waitJob func(context.Context, *gentianov1alpha1.Tenant, string) (bool, error),
@@ -131,6 +134,7 @@ func (r *TenantReconciler) reconcileJobWaitRequirement(
 		}
 		if !done {
 			allDone = false
+			waits.add(appName, req.waitsFor)
 		}
 	}
 	if !allDone {

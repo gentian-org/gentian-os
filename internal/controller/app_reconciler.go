@@ -73,7 +73,11 @@ var appClaimGVK = schema.GroupVersionKind{
 //     unless this runs first.
 //   - the loop below — pure status AGGREGATION. Component readiness, then
 //     workload health, then one condition on the Tenant.
-func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+//
+// An app in waits is held back: its Component is not made or changed while
+// its kernel resources are not there (ensureAppComponentsHolding), and the
+// condition names it and what it waits for.
+func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) (ctrl.Result, error) {
 	if err := r.cleanupOrphanedAppWorkload(ctx, tenant); err != nil {
 		return ctrl.Result{}, fmt.Errorf("cleanup orphaned app workload: %w", err)
 	}
@@ -81,7 +85,7 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 	// Every installed app is a Component, and the Component is what installs
 	// it. Before the empty case below, because a tenant whose last app was
 	// removed still has that app's Component to take away.
-	if err := r.ensureAppComponents(ctx, tenant); err != nil {
+	if err := r.ensureAppComponentsHolding(ctx, tenant, waits); err != nil {
 		return ctrl.Result{}, fmt.Errorf("ensure app components: %w", err)
 	}
 
@@ -164,6 +168,9 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		// pending because a pod was refused reads identically to one pending
 		// because Helm is still installing, and they need different responses.
 		msg := "Waiting for the installed apps' components to become Ready"
+		if len(waits) > 0 {
+			msg = fmt.Sprintf("%s; held back for their kernel resources: %s", msg, waits.describe())
+		}
 		if len(stuck) > 0 {
 			msg = fmt.Sprintf("%s; cannot create pods: %s", msg, strings.Join(stuck, "; "))
 		}

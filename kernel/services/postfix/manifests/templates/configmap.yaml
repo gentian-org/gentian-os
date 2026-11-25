@@ -113,7 +113,7 @@ data:
         #
         # An unset variable is the only value that reads as absent to a -n test, so the
         # key has to disappear rather than say no.
-        {{- if eq (.Values.mailServiceMode | default "external") "system" }}
+        {{- if eq (.Values.mailServiceMode | default "relay") "internal" }}
         DKIM_AUTOGENERATE: "1"
         {{- end }}
       postfix:
@@ -561,7 +561,7 @@ metadata:
 data:
   values.yaml: |
     # Env overrides. Nothing rewrites this at install time any more: the relay for
-    # MAIL_SERVICE_MODE=external arrives as relayHost/relayPort from the
+    # a smarthost arrives as relayHost/relayPort from the
     # ApplicationSet and is rendered into postfix-sensitive-values, because this
     # object is Argo CD-managed and an imperative rewrite was reverted on the next
     # sync. Schema is bokysan/mail, which has no top-level `postfix:` key — values

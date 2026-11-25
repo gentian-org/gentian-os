@@ -1,28 +1,25 @@
 # Keycloak event listener
 
-Keycloak is the only place a group membership changes. OpenFGA holds a copy of
-it, and this provider is what keeps the copy current: whenever a user's groups
-may have changed, it states that user's **complete** group set to the director,
-signed. The director compares the statement with what it holds and writes the
-difference.
+Some of what happens to a person only the realm sees: that they arrived
+through an identity provider, that they made an account themselves, that
+they were removed. This provider states each of these to the operator's
+membership listener, signed, and the operator gives or takes what the
+tenant declares for it in the rights store.
 
 It holds a signing key and nothing else. It has no token, calls no API but the
-one endpoint it is configured with, and the director believes nothing from it
-beyond what a realm is entitled to say about its own tenant.
+one endpoint it is configured with, and the operator believes nothing from it
+beyond what a realm is entitled to say about its own people.
 
 ## What triggers a statement
 
 | Keycloak event | Statement |
 |---|---|
-| admin: `GROUP_MEMBERSHIP` create / delete | the user's groups |
-| admin: `USER` create | the user's groups (a user can be created with groups) |
-| admin: `GROUP` update (rename) | the groups of every member |
-| user: `LOGIN`, `REGISTER`, `IDENTITY_PROVIDER_FIRST_LOGIN` | the user's groups — default groups and federation mappers change membership without an admin event |
-| model: group removed | `group.deleted` |
+| user: `LOGIN`, `IDENTITY_PROVIDER_FIRST_LOGIN` through an identity provider | `user.entered`: the provider, and the person's id there (`providerUser`) when the realm holds the link |
+| user: `REGISTER` on the registration page (not through a provider) | `user.registered` |
 | model: user removed | `user.deleted` |
 
-Only top-level groups are stated. Statements are sent after the transaction
-commits, from one background thread, retried for about a minute.
+Statements are sent after the transaction commits, from one background
+thread, retried for about a minute.
 
 ## Wire format
 
@@ -30,8 +27,13 @@ commits, from one background thread, retried for about a minute.
 POST <director-url>
 X-Gentian-Signature: keyid=<key-id>,t=<unix seconds>,sig=<base64 Ed25519 over "<t>.<body>">
 
-{"id":"<uuid>","time":<ms>,"realm":"demo","type":"user.memberships","user":"<user id>","groups":["gentian:tenant:demo:admins"]}
+{"id":"<uuid>","time":<ms>,"realm":"shop","type":"user.entered","user":"<user id>","provider":"tenant-team","providerUser":"<id at the provider>"}
+{"id":"<uuid>","time":<ms>,"realm":"shop","type":"user.registered","user":"<user id>"}
+{"id":"<uuid>","time":<ms>,"realm":"shop","type":"user.deleted","user":"<user id>"}
 ```
+
+The operator's side is `internal/membership`; `WireFormatTest` and its
+tests hold the two to the same fields.
 
 ## Configuration
 
@@ -74,6 +76,13 @@ SPIs it implements are internal and move between minor releases too (the
 admin permission classes the activation link uses changed package between
 26.0 and 26.8). Bump both together and build before pushing.
 
+The image is tagged `src-<hash>` by its tracked files
+(`scripts/tools/listener-tag.sh`), and the identity appset names that tag
+(`kernel/appsets/raw/09-identity.yaml`). Any change in this directory changes
+the tag: run `make lint-listener-tag` and write the line it prints. CI builds
+an image once per tag, and a build that leaves this directory alone does not
+restart Keycloak.
+
 ## The registration form's proof-of-work check
 
 The jar also carries `gentian-pow-captcha` (`io.gentianos.keycloak.captcha`),
@@ -115,3 +124,38 @@ writes when it renders the app, and from nowhere else (`RequestBinding`):
 A value is matched against at most 512 characters, with a bound on the work
 (`BoundedChars`): the pattern is a profile's, the value whoever sends the
 request's. Anything missing or unreadable refuses the request and maps no claim.
+
+## Device passwords
+
+`io.gentianos.keycloak.devicepassword` keeps a person's device passwords as
+credentials of type `gentian-device-password`, beside their password and
+second factor. A device password lets a calendar, contact or file program
+that knows only a username and a password reach the tenant's door
+(`sync.<tenant domain>`); see `docs/concepts/bridges.md`.
+
+| Part | Id | What it does |
+|---|---|---|
+| Endpoint | `gentian-device-passwords` | `POST /realms/<realm>/gentian-device-passwords/users/<id>` with `{"name", "ways"}` makes one and returns it once. Keycloak's admin permissions decide: managing the user is required. The admin API lists (`GET users/<id>/credentials`, never the secret) and removes (`DELETE users/<id>/credentials/<id>`) them. |
+| Authenticator | `gentian-device-password` | The only step of the door's device client's direct grant flow: checks a username or email and a device password, refuses an idle one, records the use, and puts the password's ways on the session (note `gentian.device_password.ways`). |
+| Event listener | `gentian-device-passwords` | Removes all of a person's device passwords when their password is changed or reset, or an administrator signs them out of every session. Listed per realm, with admin events on. |
+
+A device password is five groups of five characters; the first group names
+it among the person's own, the other twenty are a random secret of about 99
+bits, kept as a SHA-256 digest bound to the person and the name. A password
+unused for longer than the realm's offline session idle timeout is refused.
+A wrong one does not count towards Keycloak's lockout of the person.
+
+## Linking at sign-in
+
+The event listener `gentian-home-links`, listed per realm, links a person who
+signs in (`LOGIN`) to an app to the vouching entries the app's own sign-in
+client names: the link the registrar's link route makes, made here with nobody
+asked. Two marks the platform writes decide it:
+
+| Where | Mark |
+|---|---|
+| the app's own sign-in client | attribute `gentianos.io/link-to`: the entries, comma-separated. `vouch-<profile>` for an app that calls a home as the person, `vouch-homesync` for an app that declares `homeSync` |
+| the identity provider `vouch-<profile>` | config `gentianos.io/link-at-sign-in: "true"`, while the component has a home to use |
+
+Only vouching entries are linked, only while they carry the mark, and not for
+a disabled person. A person already linked is left as they are.

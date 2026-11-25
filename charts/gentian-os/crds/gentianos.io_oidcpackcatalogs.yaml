@@ -83,17 +83,19 @@ spec:
                 additionalProperties:
                   description: |-
                     OIDCPackSpec is the OIDC configuration for one clientId.
-                    Making scopeName, clientRole and entitlementGroup optional in the schema is
-                    what lets a service pack omit them; these keep an APP pack from omitting them
-                    by accident, which previously the Required markers guaranteed.
+                    Making scopeName and clientRole optional in the schema is what lets a
+                    service pack omit them; the rule keeps an APP pack from omitting them by
+                    accident.
                     The presence checks are deliberately cheap — CEL costs are estimated against
-                    worst-case string lengths, and comparing these three to the empty string as well pushed the
+                    worst-case string lengths, and comparing these to the empty string as well pushed the
                     rule over the API server's budget. MinLength on each field rejects an empty
                     string when the key IS present, so presence is all this needs to test.
                   properties:
                     clientRole:
                       description: |-
-                        ClientRole is the Keycloak client role mapped from the entitlement group.
+                        ClientRole is the Keycloak client role made on the pack's client. Nobody
+                        is given it: who may use the app is the rights store's to say, and the
+                        app reads a person's roles from the token's roles claim.
                         Required unless serviceClient is true.
                       maxLength: 255
                       minLength: 1
@@ -106,8 +108,9 @@ spec:
                       type: array
                     entitlementGroup:
                       description: |-
-                        EntitlementGroup is the Keycloak group name mapped to the pack client role.
-                        Required unless serviceClient is true.
+                        EntitlementGroup is accepted and ignored: no group is made and none
+                        is mapped to the client role, since no group of the realm carries a
+                        right. Who may use the app is the rights store's to say.
                       maxLength: 255
                       minLength: 1
                       type: string
@@ -140,25 +143,24 @@ spec:
                         ServiceClient provisions a confidential client for a backend service
                         rather than an application users log in to.
 
-                        The default pack shape assumes a user-facing app: a client scope, protocol
-                        mappers, a client role, and an entitlement group that grants it. A service
-                        that only validates other clients' tokens — kernel Dovecot introspecting
-                        XOAUTH2 access tokens is the case this exists for — needs none of that. It
-                        needs client credentials and nothing else, and giving it a scope and an
-                        entitlement group would put an empty role in every realm and imply users
-                        can be granted access to it.
+                        The default pack shape assumes a user-facing app: a client scope,
+                        protocol mappers and a client role. A service that only validates other
+                        clients' tokens — kernel Dovecot introspecting XOAUTH2 access tokens is
+                        the case this exists for — needs none of that. It needs client
+                        credentials and nothing else, and giving it a scope and a role would put
+                        an empty role in every realm and imply people can be given access to it.
 
-                        When true, scopeName, clientRole and entitlementGroup are ignored (and may
-                        be empty), the browser flow is disabled on the client, and no scope, mapper,
-                        role or group mapping is created. publicClient must stay false: a service
+                        When true, scopeName and clientRole are ignored (and may
+                        be empty), the browser flow is disabled on the client, and no scope, mapper
+                        or role is created. publicClient must stay false: a service
                         client with no secret cannot authenticate to the introspection endpoint.
                       type: boolean
                   type: object
                   x-kubernetes-validations:
-                  - message: scopeName, clientRole and entitlementGroup are required
-                      unless serviceClient is true
+                  - message: scopeName and clientRole are required unless serviceClient
+                      is true
                     rule: (has(self.serviceClient) && self.serviceClient) || (has(self.scopeName)
-                      && has(self.clientRole) && has(self.entitlementGroup))
+                      && has(self.clientRole))
                   - message: 'a serviceClient pack cannot be a publicClient: it authenticates
                       to the introspection endpoint with a secret'
                     rule: '!(has(self.serviceClient) && self.serviceClient) || !(has(self.publicClient)

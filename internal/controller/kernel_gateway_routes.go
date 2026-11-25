@@ -189,6 +189,16 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err := r.ensureRegistrarVouchingKeys(ctx); err != nil {
 		return fmt.Errorf("ensure registrar vouching keys: %w", err)
 	}
+	// And its list of the components tenants let give positions, from the
+	// same Secrets and the tenants that name them.
+	if err := r.ensureRegistrarPositionGivers(ctx); err != nil {
+		return fmt.Errorf("ensure registrar position givers: %w", err)
+	}
+	// The confidant's list of the components that keep secrets of people,
+	// from the same Secrets.
+	if err := r.ensureConfidantKeys(ctx); err != nil {
+		return fmt.Errorf("ensure confidant keys: %w", err)
+	}
 	// And the director's list of the components that commission
 	// organizations, from the same Secrets and the tenants that name them.
 	if err := r.ensureDirectorCommissionKeys(ctx); err != nil {

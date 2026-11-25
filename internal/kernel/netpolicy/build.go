@@ -14,7 +14,6 @@ import (
 	"maps"
 	"time"
 
-	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -29,13 +28,22 @@ import (
 // callers below must agree on that or the policy would be built and then not
 // listed, or listed and not built.
 func (in BuildInput) grantedEgress(install string, profile *gentianov1alpha1.ComponentProfile) []networkingv1.NetworkPolicyEgressRule {
+	return egressGrantedBy(in.Privileges, install, profile)
+}
+
+// bridgeEgress are the egress rules the tenant's grants answer for an agent
+// bridge that runs nothing in the tenant: its callers' way out to it.
+func (in BuildInput) bridgeEgress(bridge string, profile *gentianov1alpha1.ComponentProfile) []networkingv1.NetworkPolicyEgressRule {
+	return egressGrantedBy(in.BridgeGrants, bridge, profile)
+}
+
+func egressGrantedBy(grants []gentianov1alpha1.TenantPrivilegeGrant, install string, profile *gentianov1alpha1.ComponentProfile) []networkingv1.NetworkPolicyEgressRule {
 	if profile == nil {
 		return nil
 	}
-	granted := security.GrantedSet(security.TenantGrants(
-		&gentianov1alpha1.Tenant{Spec: gentianov1alpha1.TenantSpec{Privileges: in.Privileges}},
-		install), time.Now())
-	return security.EgressRulesFor(profile, granted)
+	return security.GrantedEgress(profile, security.TenantGrants(
+		&gentianov1alpha1.Tenant{Spec: gentianov1alpha1.TenantSpec{Privileges: grants}},
+		install), time.Now(), nil).Rules
 }
 
 // BuildInput collects tenant state for MAC policy generation.
@@ -48,7 +56,7 @@ type BuildInput struct {
 	Apps []gentianov1alpha1.TenantApp
 	// Placed are the install names of the components the platform places
 	// in the tenant, which Apps leaves out. One of them that may speak as a
-	// person is a caller of the tenant's adapters like an installed one;
+	// person is a caller of the tenant's agent bridges like an installed one;
 	// nothing else is derived from them here.
 	Placed []string
 	// Profiles are the profiles by install name. They may name more than
@@ -60,30 +68,44 @@ type BuildInput struct {
 	// is where the answer is: an app installed through Tenant.spec.apps has
 	// no Component to hang a grant on.
 	Privileges []gentianov1alpha1.TenantPrivilegeGrant
-	Bindings   []*gentianov1alpha1.IntegrationBinding
-	Grants     map[string]*gentianov1alpha1.AppGrant
+	// BridgeGrants are the grants the Tenant carries, read for the agent
+	// bridges that run nothing in the tenant and nothing else: such a
+	// bridge's granted egress is its callers' way out to it
+	// (AgentBridgeNetworkPolicies). An installed app's own grants reach it
+	// through its component policy, not through these.
+	BridgeGrants []gentianov1alpha1.TenantPrivilegeGrant
+	Bindings     []*gentianov1alpha1.IntegrationBinding
+	Grants       map[string]*gentianov1alpha1.AppGrant
 	// PodSelectors are the labels each app's pods carry, for an app whose
 	// delivery does not put the app label on them. A contract's two sides,
 	// and the app's own policies (forPods), are selected by these.
-	PodSelectors  map[string]map[string]string
-	Config        Config
-	KubeAPIEndpts *discoveryv1.EndpointSlice
+	PodSelectors map[string]map[string]string
+	// ModelAccessWithheld are the apps released without the model gateway:
+	// the requirement is optional and the app's key is not delivered. Such
+	// an app's policy opens no path to the gateway.
+	ModelAccessWithheld map[string]bool
+	Config              Config
+	// Cluster are the cluster's DNS and API server, which every pod of the
+	// tenant reaches (BaselineEgress).
+	Cluster ClusterServices
 }
 
 // BuildDesired returns all operator-managed NetworkPolicies for a tenant.
 func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 	out := []*networkingv1.NetworkPolicy{
-		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts, in.adapterExclusion()...),
+		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.Cluster, in.agentBridgeExclusion()...),
 		ExportJobNetworkPolicy(in.TenantName, in.Namespace, in.Config),
 	}
-	out = append(out, AdapterNetworkPolicies(in)...)
+	out = append(out, AgentBridgeNetworkPolicies(in)...)
+	out = append(out, HomeSyncNetworkPolicies(in)...)
+	out = append(out, PorterNetworkPolicies(in)...)
 
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
 		if profile == nil {
 			continue
 		}
-		if np := KernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config); np != nil {
+		if np := kernelAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile, profile, in.Config, !in.ModelAccessWithheld[app.Profile]); np != nil {
 			out = append(out, in.forPods(app.Profile, np))
 		}
 		out = append(out, in.forPods(app.Profile, AppInternalAccessNetworkPolicy(in.TenantName, in.Namespace, app.Profile)))
@@ -175,7 +197,13 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 			names[np.Name] = struct{}{}
 		}
 	}
-	for _, np := range AdapterNetworkPolicies(in) {
+	for _, np := range AgentBridgeNetworkPolicies(in) {
+		names[np.Name] = struct{}{}
+	}
+	for _, np := range HomeSyncNetworkPolicies(in) {
+		names[np.Name] = struct{}{}
+	}
+	for _, np := range PorterNetworkPolicies(in) {
 		names[np.Name] = struct{}{}
 	}
 	// Only while there is a Memcached app to build them for: named

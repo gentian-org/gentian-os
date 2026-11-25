@@ -44,12 +44,14 @@ const (
 	memcachedServiceName    = "memcached"
 	memcachedDeploymentName = "memcached"
 	memcachedPort           = provisioner.MemcachedPort
+	// memcachedUser is the memcache user the official image runs as.
+	memcachedUser int64 = 11211
 )
 
 // ensureCache provisions per-app ACL users on the shared cache (via a Job) and per-tenant
 // Memcached instances (via Deployment + Service named "memcached"). CacheReady is set
 // to True once all Jobs complete and Memcached reports ready replicas.
-func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) (ctrl.Result, error) {
 	redisApps, memcachedApps, err := r.collectCacheApps(ctx, tenant, CollectForProvision)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -73,6 +75,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 		if !done {
 			allDone = false
 			pendingJobs = append(pendingJobs, cacheACLJobName(tenant.Name, appName))
+			waits.add(appName, "its cache user")
 		}
 	}
 
@@ -84,6 +87,7 @@ func (r *TenantReconciler) ensureCache(ctx context.Context, tenant *gentianov1al
 		}
 		if !done {
 			allDone = false
+			waits.addAll(memcachedApps, "the tenant's Memcached")
 		}
 	}
 
@@ -229,10 +233,16 @@ func makeMemcachedDeployment(tenant *gentianov1alpha1.Tenant) *appsv1.Deployment
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: podLabels},
 				Spec: corev1.PodSpec{
+					// Tenant namespaces admit no pod without these (Kyverno's
+					// gentian-disallow-privilege-escalation and
+					// gentian-require-seccomp): the ReplicaSet is refused and
+					// the Deployment stays at zero pods.
+					SecurityContext: meta.NonRootPod(memcachedUser),
 					Containers: []corev1.Container{
 						{
-							Name:  "memcached",
-							Image: kernel.MemcachedImage(),
+							Name:            "memcached",
+							Image:           kernel.MemcachedImage(),
+							SecurityContext: meta.ReadOnlyContainer(),
 							Ports: []corev1.ContainerPort{
 								{
 									Name:          "memcached",

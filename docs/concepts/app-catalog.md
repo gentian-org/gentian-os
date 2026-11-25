@@ -146,6 +146,10 @@ spec:
     - contract: file-store
       capabilities: [webdav:read, webdav:write]
 
+  roles:                          # user and admin every app has; iam.md §1.2
+    declared:
+      - { name: project-manager, title: Project manager }
+
   secrets:
     generated:                    # made per tenant, stored in OpenBao
       - name: admin_password
@@ -183,9 +187,9 @@ Jobs, a second release) belongs in a Composition the app's bundle brings.
 
 | | Fields | Takes effect |
 |---|---|---|
-| **Plain** | `package.chart`, `valueMapping`, `extraValues`, `requires.services`, `provides`, `integrations`, `secrets`, a gateway entry in `expose` with a tile | At install |
+| **Plain** | `package.chart`, `valueMapping`, `extraValues`, `requires.services`, `provides`, `integrations`, `roles` ([app-customization.md §1.2](../guides/app-customization.md)), `secrets`, a gateway entry in `expose` with a tile | At install; who holds a role is given in the tenant, never by the profile |
 | **Needs an approval on the tenant** | `requires.privileges` (pod-security waivers, egress, cluster roles); an `expose` entry for the internet; `clientAuthorization: app` | Only once approved; until then the Component waits or the entry is an ordinary one ([security/design.md §2.14](../security/design.md)) |
-| **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching`; `valueMapping.platform` `directorUrlKey`, `usherUrlKey`, `custodianUrlKey`, `registrarUrlKey`, `storeUrlKey`, `desktopUrlKey` | Refused by the schema otherwise. The annotation `gentianos.io/kernel-egress-namespaces` is ignored below this tier |
+| **Needs `trustTier: platform`** | class `shared-app`, `forwardToken`, `requires.services.rights`, `requires.services.vouching`; `valueMapping.platform` `directorUrlKey`, `usherUrlKey`, `custodianUrlKey`, `registrarUrlKey`, `storeUrlKey`, `desktopUrlKey`, `desktopHostKey` | Refused by the schema otherwise. The annotation `gentianos.io/kernel-egress-namespaces` is ignored below this tier |
 | **Needs a pinned install from a cluster-wide catalog** | `package.composition` (the bundle's own Composition, which also needs `trustTier: platform`), `identity.sidecar` | Otherwise the operator renders the app, or the Component is held |
 
 ---
@@ -229,7 +233,7 @@ The platform's sign-in sidecar is neither: a profile declares
 2. **Bundle checks** by the director at fetch and by the operator at rollout
    (`internal/profilebundle`): digest, kinds, names, origin.
 3. **The director's question**: `can_install_app` for an install, `can_grant`
-   for one made for everyone; for what a profile requests, `can_expose`,
+   for one given to positions; for what a profile requests, `can_expose`,
    `can_approve_privilege` on the tenant, and the cluster's `can_approve` for a
    pod-security waiver.
 4. **Runtime policy**: Kyverno, pod security and network policy in the tenant's
@@ -256,7 +260,6 @@ spec:
     mode: selfhosted
 
   quotas:
-    maxApps: 20
     storage: 100Gi
     cpu: "8"
     memory: 16Gi
@@ -267,7 +270,7 @@ spec:
     - profile: nextcloud-base-ce
       catalogue: gentian
       digest: sha256:…          # the bundle this install pinned
-      defaultGrant: true        # for every member of the tenant
+      positions: [sales]        # its holders use the app, beside the position all-apps
     - profile: openproject-ce
       config:
         replicas: 2
@@ -305,7 +308,8 @@ status:
 ```
 
 What a consumer may use is narrowed by an `AppGrant`, which the tenant's
-administrator sets ([security/design.md](../security/design.md)). Capabilities are declared,
+administrator sets ([security/design.md](../security/design.md)), on the
+Integrations screen or with the install (§15). Capabilities are declared,
 not enforced at run time ([kernel.md §5](kernel.md)).
 
 ---
@@ -322,12 +326,13 @@ sequenceDiagram
     participant OP as operator
     participant XP as Crossplane
 
-    U->>D: install {catalogue/profile, digest}
+    U->>D: install {catalogue/profile, digest, positions}
     D->>D: may this person install here? (can_install_app)
     D->>C: fetch the bundle
     D->>D: bytes hash to the digest, bundle checks
-    D->>Git: commit profile bundle + entry in Tenant.spec.apps
+    D->>Git: commit profile bundle + entry in Tenant.spec.apps (with its positions)
     AC->>OP: sync ComponentProfile and Tenant
+    OP->>OP: rights store: the app, its roles, the positions given it
     OP->>OP: Component; database, storage, identity, secrets
     OP->>XP: rendered ExternalSecret + helm Release + realm client
     XP->>XP: providers reconcile them
@@ -460,22 +465,25 @@ a service outside it.
 | value | serves | responsible | namespace | instances |
 |---|---|---|---|---|
 | `app` | the people of one tenant | tenant administrator, via the director | `tenant-<t>` (+ `-dmz`) | one per tenant |
-| `adapter` | a program acting for a person, by turning one app's abilities into tools | tenant administrator, via the director | `tenant-<t>`, beside the app it adapts | one per tenant |
 | `action` | a component that runs it as one step of its work | tenant administrator, via the director | none: installing it deploys nothing | one per tenant |
+| `bridge` | a person or the tenant, across the boundary of the browser's session, in the ways it declares | tenant administrator, via the director | `tenant-<t>`, beside the app it connects | one per tenant |
 | `service` | other components over contracts, and operators at its own console | platform administrator | `system-<function>` | one |
 | `shared-app` | the people of several tenants, from one backend | platform administrator, via the director | `shared-<app>` | one |
 
-`service`, `adapter` and `action` are each exclusive: a profile that lists one
-lists nothing else. An adapter has `launch: none`, exposes nothing, provides and
-integrates nothing, is never placed, and carries `spec.adapter`, which names
-the app it adapts ([agentic-ai.md](agentic-ai.md)).
+`service`, `action` and `bridge` are each exclusive: a profile that
+lists one lists nothing else. A bridge has `launch: none`, exposes, provides and
+integrates nothing of its own, is never placed, and carries `spec.bridge`: the
+app it connects and its ways, each with a caller, a callee, a protocol and whom
+it speaks as ([bridges.md](bridges.md)). A bridge whose way comes from the
+tenant's agents turns an app's abilities into tools for a program acting for a
+person ([agentic-ai.md](agentic-ai.md)).
 
 An action is one image at one build that another component runs as a step.
 Its package is exactly one entry of `package.images` and nothing else, and
 `spec.action` says what a run starts (`command`), what it takes and returns
 (`inputs`, `outputs`, as JSON Schema), the longest one attempt may take
-(`deadlineSeconds`), what it is given (`resources`) and which adapters the
-calling component may call on its behalf (`adapters`). It has `launch: none`,
+(`deadlineSeconds`), what it is given (`resources`) and which bridges the
+calling component may call on its behalf (`bridges`). It has `launch: none`,
 exposes, provides and integrates nothing, requires no service, is never
 placed, and asks for no privilege but egress. Installing it deploys nothing:
 the Component is `Ready` once its profile is the one the install names, and
@@ -503,7 +511,7 @@ reported in `status.delivery`, never stated as a second field:
 | delivery | package holds | meaning |
 |---|---|---|
 | `workload` | `chart`, `composition`, or the two together | the platform runs it |
-| `api` | `api` (`runtime`, `baseUrl`, `tenantBinding`, optional `tile`) | the platform routes to something already running, inside or outside the cluster |
+| `api` | `api` (`runtime`, `baseUrl` or, for a bridge, `backend`, `tenantBinding`, optional `tile`) | the platform routes to something already running, inside or outside the cluster |
 | `addon` | `addon` (`id`, `of`) | the platform flips a switch inside another component's own addon system; nothing is run and nothing is routed |
 
 The package is a chart, a composition, the two together, an `api`, or an
@@ -523,8 +531,8 @@ assessment.
 
 **Trust tier: how far it was reviewed.** Required, no default (§4).
 `shared-app`, `forwardToken`, `requires.services.rights`, `.vouching`,
-`.logDestination`, `valueMapping.platform.storeUrlKey` and `.desktopUrlKey`
-need `platform`.
+`.logDestination`, `valueMapping.platform.storeUrlKey`, `.desktopUrlKey` and
+`.desktopHostKey` need `platform`.
 
 ### 13.3 Placement
 
@@ -572,7 +580,7 @@ steps, two people: the platform administrator installs the component with
 `class: shared-app` into `shared-<app>` and **offers** it to tenants, one
 `shared_instance:<p>#offered_to@tenant:<t>` tuple each, under
 `can_grant_shared`; nothing is visible to anyone yet. The tenant administrator
-then installs the app and gets its own `app` object, group, OIDC client in its
+then installs the app and gets its own `app` object, roles, OIDC client in its
 own realm, route and tile. Only the backend is shared.
 
 ```
@@ -673,8 +681,11 @@ spec:
           scope: odoo
           reason: "Odoo writes its filestore under /var/lib/odoo."
       egress:
+        - name: microsoft-graph
+          hosts: [graph.microsoft.com]  # by name, through the outgoing gateway
+          reason: "Reads the calendars of people who connected their account."
         - name: smtp-relay
-          rule: {...}                 # a NetworkPolicyEgressRule
+          rule: {...}                 # a NetworkPolicyEgressRule, by address
           reason: "Outbound mail to the tenant's relay."
       clusterRoles:
         - name: read-nodes
@@ -726,6 +737,57 @@ lacks adds it in the same step
 ([security/design.md §3.0](../security/design.md)). One requirement block with one approval
 path means egress is held to the same standard as a waiver, by construction.
 
+An egress request states exactly one of three forms: `hosts` (names, port 443
+unless stated; a profile names all its hosts in one such request, so they are
+answered once), `hostsAtApproval: true` (the approver names the hosts, and the
+grant carries them in `hosts`), or `rule` (a NetworkPolicy egress rule, for a
+protocol that names no host or an address chosen at run time). The first two
+pass the outgoing gateway; a rule is opened in the component's own policy
+([edge.md §3](edge.md)).
+A grant records what it answered (`hosts`, or for a rule its `digest`); a
+later build that asks for more waits for a new approval, and what was
+answered stays open.
+
+A request by `hosts` whose every host is in or under a trusted domain, the
+cluster's (`PlatformSecurityPolicy.spec.trustedDomains`) or the tenant's own
+once delegated (`Tenant.spec.trustedDomains`), is answered by that list. A
+profile the platform ships itself, which no catalog brought, has its `hosts`
+and `rule` requests answered by the platform: nobody in a tenant chose it, and
+what it reaches is decided with the release that ships it. A
+`hostsAtApproval` request is answered by a person in either case.
+
+Whoever installs an app and is the tenant's perimeter approver can answer its
+egress requests in the install. The director says what a build asks for before
+it is installed (`GET /v1/tenants/{t}/catalogues/{s}/entries/{p}/asks?digest=`:
+the app's requests and those of the apps it comes with that nobody answered
+yet, and whether the caller may approve them). The install then names the
+requests approved (`approve` in its body), and each is written as that
+person's grant once the app is installed. A `hostsAtApproval` request is not
+approved with an install: it waits for an approval that names its hosts. A request the build does not state
+refuses the install; so does an approval by somebody who is not the approver.
+An install without `approve` leaves the requests waiting.
+
+The same answer lists the contracts the build and those apps consume from the
+tenant's other apps (`integrations`): each with its capabilities, and whether
+the caller may grant them (`can_grant`). One the app's grant already names, and
+one among apps installed together, which the platform pre-approves, is not
+listed. The install names the contracts granted (`grant` in its body), and
+each is added to the app's `AppGrant` with exactly the capabilities the build
+asks for, under that person's name. A contract the build does not consume
+refuses the install, and so does a grant by somebody without `can_grant`. An
+install without `grant` leaves the integrations waiting for the tenant's
+administrator.
+
+It also lists the entries behind sign-in that keep the app's own
+`Authorization` header and are not approved yet (`exposures`, kind
+`signInAppAuthorization`), and whether the caller may approve them
+(`can_expose`). The install names the entries approved (`expose` in its body),
+and each is written to the tenant's exposure registry as the perimeter
+approver's own approval is, under that person's name. An entry the build does
+not ask to keep the header on refuses the install, and so does an approval by
+somebody without `can_expose`. A public address is never approved with an
+install: it is approved where it is listed with the tenant's public addresses.
+
 ---
 
 ## 16. Secrets: three kinds
@@ -758,14 +820,15 @@ An `expose[]` entry declares one entry point. Its fields:
 | field | meaning |
 |---|---|
 | `name` | the entry's name; what an enablement and a backchannel-logout declaration refer to |
-| `surface` | `gateway` (behind the zone's session, always on) or `perimeter` (a publishing proxy in `tenant-<t>-dmz`, off until approved) |
-| `authMode` | required, no default: `oidc` on the gateway; `none` or `app` on the perimeter |
+| `surface` | `gateway` (behind the zone's session, always on), `perimeter` (a publishing proxy in `tenant-<t>-dmz`, off until approved) or `inside` (the same proxy, reachable only from the cluster's own pods, at a name only the cluster's DNS knows; it names a `subDomain`; [routing.md §7](routing.md)) |
+| `authMode` | required, no default: `oidc` on the gateway; `none` or `app` on the perimeter; `app` inside |
 | `subDomain` | host label in the tenant's zone; empty means the component's name |
 | `apex` | a perimeter entry on the cluster's bare domain; `authMode: none`, no `subDomain` ([routing.md §5](routing.md)) |
 | `paths`, `denyPaths` | what the entry serves; deny wins over allow regardless of specificity, at the bouncer on the gateway and at the proxy on the perimeter |
 | `forwardToken` | passes the edge access token to the backend; `trustTier: platform` only, because that token is valid at the director and at every sibling |
 | `exchangeToken` | the bouncer hands the backend a token exchanged at the tenant's realm for one whose audience is this app and nothing else; any trust tier; gateway and `oidc` only |
 | `clientAuthorization: app` | the `Authorization` header is the app's own and the edge leaves it alone; a request, in force once approved |
+| `signInCookies` | `{names, paths}` on a perimeter entry of `authMode: app`: the cookies of the app's own browser sign-in, which pass on those paths alone, in force once approved as `publicAppSignIn` ([security/design.md §2.14](../security/design.md)) |
 | `annotations` | gateway policy for this host: frame ancestors, escaped-slashes action |
 | `tile` | how the entry appears on the desktop (§17.3) |
 | `backend` | `{component?, service, port}`: the Service routed to |
@@ -873,11 +936,11 @@ extensions' (`clientSessionMaxLifespan`,
 `internal/apprender/identity.go`). Past that age from sign-in the realm
 refuses the client's refresh, so the component cannot renew its tokens for
 that person without a new sign-in, and a new sign-in reads the person's
-groups again. It does **not** end a session the component keeps in its own
+roles again. It does **not** end a session the component keeps in its own
 cookie: a component that does not go back to the realm once a person is
 signed in keeps that session for as long as the component itself allows, and
 only its own configuration shortens it. Unset, the clients keep the realm's
-limits. The edge bounds reachability and does not refresh the groups a
+limits. The edge bounds reachability and does not refresh the roles a
 component captured at its own sign-in (AD-13,
 [decisions/index.md](../decisions/index.md)).
 
@@ -885,8 +948,9 @@ component captured at its own sign-in (AD-13,
 
 The profile declares what **may** be published. What **is** published is
 recorded on the instance. Gateway entries need no enablement: they carry the
-session and are always on. A perimeter entry, and an entry asking
-`clientAuthorization: app`, are off until a perimeter approver enables them
+session and are always on. A perimeter entry, an inside entry, a token
+entry (`authMode: bearer`), and an entry asking `clientAuthorization: app`,
+are off until a perimeter approver enables them
 (`can_expose` on the tenant, [security/design.md §2.14](../security/design.md)); the director
 writes the enablement from the caller's token and commits it to the tenant's
 registry.
@@ -895,7 +959,7 @@ registry.
 # Component.spec
 exposures:
   - exposureName: public-share       # names an entry of the profile
-    kind: public                     # public | publicAppCredential | signInAppAuthorization | tokenEntry
+    kind: public                     # public | publicAppCredential | publicAppSignIn | insideAppCredential | signInAppAuthorization | tokenEntry
     owner: <keycloak subject>        # immutable: a renewal by someone else is a new enablement
     reviewAt: 2026-11-24T00:00:00Z   # always set
     expiresAt: 2026-12-24T00:00:00Z  # optional
@@ -936,7 +1000,7 @@ another object, and no admission path can be relied on at every write.
 
 On the profile (`api/v1alpha1/componentprofile_types.go`):
 
-- `service`, `adapter` and `action` are each exclusive within `classes`;
+- `service`, `action` and `bridge` are each exclusive within `classes`;
   `shared-app` requires `trustTier: platform`;
 - the package is a chart, a composition, the two together, an `api` or an
   `addon`, and nothing else; an action's is exactly one pinned image
@@ -944,20 +1008,26 @@ On the profile (`api/v1alpha1/componentprofile_types.go`):
 - `launch` is required; `tile` needs a tile on an exposure or on
   `package.api`, and a tile means `launch: tile`;
 - `forwardToken`, `requires.services.rights`, `.vouching`, `.logDestination`,
-  `valueMapping.platform.storeUrlKey` and `.desktopUrlKey` require
-  `trustTier: platform`; so does `requires.services.llm` on a placed profile;
+  `valueMapping.platform.storeUrlKey`, `.desktopUrlKey` and `.desktopHostKey`
+  require `trustTier: platform`; so does `requires.services.llm` on a placed profile;
 - a service's exposures are all `surface: gateway`, its tiles ask
   `object: cluster`, and it declares no `clientAuthorization`;
 - `placement` and the default-placement booleans are for class `app`;
-- an adapter has `launch: none`, no `expose`, `provides`, `integrations`,
-  `vouching`, `placement` or `package.addon`, and carries `spec.adapter`;
 - an action has `launch: none`, no `expose`, `provides`, `integrations`,
   `requires.services` or `placement`, no privilege but `egress`, and carries
   `spec.action`;
+- a bridge has `launch: none`, no `expose`, `provides`, `integrations`,
+  `vouching`, `placement`, `package.addon` or tile, and carries `spec.bridge`
+  with at least one way and at most one way from `agents`; a bridge packaged
+  as `api` names a `backend`, or a `baseUrl` when every way goes from
+  `agents` to `outside`; `backend` is for a bridge alone; a way to `partner`
+  needs `requires.services.partners.call`; `endpoint` is for a way from
+  `agents` ([bridges.md](bridges.md));
 - on an entry: a perimeter entry is `none` or `app`, never `oidc`, and the
   four modes nothing checks (`jwt`, `bearer`, `basic`, `signature`) are refused
-  there; `forwardToken` is meaningless on one; `authMode: app` is perimeter
-  only; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
+  there; `forwardToken` is meaningless on one; `authMode: app` is for a
+  perimeter or inside entry; an inside entry is `authMode: app` and names a
+  `subDomain`; `signInCookies` is a perimeter entry of `authMode: app`; `clientAuthorization` and `exchangeToken` are gateway `oidc` only and
   exclude `forwardToken` and each other; `apex` is a perimeter entry with
   `authMode: none` and no `subDomain`; a gateway entry is `oidc`;
 - an OIDC audience is the profile's own name, a dash and a label;
@@ -976,9 +1046,9 @@ immutable.
   namespace, and the director writes `spec.apps` only for a caller holding
   `can_install_app` on that tenant. The Tenant webhook
   (`internal/webhook/tenant_validator.go`) refuses an entry whose profile is
-  not on the cluster and more apps than `spec.quotas.maxApps`.
+  not on the cluster.
 - At reconcile the operator refuses a class it does not run
-  (`ClassUnsupported`: only `app`, `adapter` and `action` are reconciled) and an
+  (`ClassUnsupported`: only `app`, `action` and `bridge` are reconciled) and an
   instance whose class its profile does not list (`ClassMismatch`); nothing is
   rolled out from either (`internal/controller/component_reconciler.go`).
 - Enablements and grants are written only by the director, from the token of
@@ -999,8 +1069,8 @@ name.
 ### 18.4 Why the model closes
 
 A tenant administrator cannot create a service: the only classes the operator
-runs in a tenant namespace are `app` and `adapter`, and an `action` runs
-nothing there. They never need to: what a
+runs in a tenant namespace are `app` and `bridge`, and an `action`
+runs nothing there. They never need to: what a
 component requires arrives through `requires.services`, fulfilled by somebody
 else. When something needs what no contract covers, it ships as an extension
 inside the component's own pod (`spec.extensions`), in the tenant namespace,
@@ -1050,6 +1120,12 @@ spec:
   integrations:
     - contract: central-navigation
       provider: desktop
+
+  roles:                         # app-customization.md §1.2
+    user:  {inApp: [member]}
+    admin: {inApp: [admin]}
+    declared:
+      - {name: project-manager, title: Project manager, inApp: [project_admin]}
 
   secrets:
     generated: [...]

@@ -16,11 +16,13 @@ import (
 
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/kernel/kernelnet"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -108,5 +110,50 @@ func TestARestoreAddressesTheBundleAsItWasWritten(t *testing.T) {
 	w.export.Status.Bundle.AddressingStyle = gentianov1alpha1.S3AddressingVirtualHost
 	if p := w.er.jobParams(w.tenant, "wiki", w.export, backup.Encryption{}); p.AddressingStyle != gentianov1alpha1.S3AddressingVirtualHost {
 		t.Errorf("the export's Jobs address the bundle %q", p.AddressingStyle)
+	}
+}
+
+// A unit that runs in a kernel namespace keeping its pods inside the cluster
+// -- the desktop's database in kernel-data -- is given the way out there too:
+// for this tenant's pods of this run alone, removed when the run ends. A
+// namespace that restricts no egress is given nothing, as a policy there
+// would keep the run's pods from everything but the destination.
+func TestARunIsGivenItsWayOutInAKernelNamespaceThatKeepsPodsIn(t *testing.T) {
+	ctx := context.Background()
+	w := newPlacementWorld(t, true)
+	if err := w.c.Create(ctx, &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
+		Name: kernelnet.EgressPolicyName, Namespace: "kernel-data"}}); err != nil {
+		t.Fatal(err)
+	}
+	unit := func(ns string) captureUnit {
+		return captureUnit{JobName: "u-" + ns, Job: backup.BundleDeleteJob(backup.JobParams{Name: "u-" + ns, Namespace: ns, Tenant: "acme", Export: "export-1"})}
+	}
+	units := []captureUnit{unit("kernel-data"), unit("system-postgresql")}
+	if err := ensureRunDestinationEgress(ctx, w.c, w.er.Scheme, w.export, runKindExport, w.export.Status.Bundle, units); err != nil {
+		t.Fatal(err)
+	}
+	name := sharedRunEgressPolicyName("acme", runKindExport, "export-1")
+	np := &networkingv1.NetworkPolicy{}
+	if err := w.c.Get(ctx, types.NamespacedName{Name: name, Namespace: "kernel-data"}, np); err != nil {
+		t.Fatalf("no way out in kernel-data: %v", err)
+	}
+	sel := np.Spec.PodSelector.MatchLabels
+	if sel[meta.TenantLabel] != "acme" || sel[backup.ExportLabel] != "export-1" || sel[meta.ComponentLabel] != "tenant-export" {
+		t.Errorf("the way out selects %v, not this tenant's pods of this run", sel)
+	}
+	if len(np.Spec.Egress) != 1 || len(np.Spec.Egress[0].Ports) != 1 || np.Spec.Egress[0].Ports[0].Port.IntValue() != 443 {
+		t.Errorf("the way out is %+v, not the destination's port alone", np.Spec.Egress)
+	}
+	err := w.c.Get(ctx, types.NamespacedName{Name: name, Namespace: "system-postgresql"}, &networkingv1.NetworkPolicy{})
+	if !apierrors.IsNotFound(err) {
+		t.Errorf("a namespace restricting no egress was given a policy (%v)", err)
+	}
+
+	// Ended, the run keeps no way out in the shared namespace either.
+	if err := w.er.discardStagedSecrets(ctx, w.export); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.c.Get(ctx, types.NamespacedName{Name: name, Namespace: "kernel-data"}, &networkingv1.NetworkPolicy{}); !apierrors.IsNotFound(err) {
+		t.Errorf("the run ended and keeps its way out of kernel-data (%v)", err)
 	}
 }

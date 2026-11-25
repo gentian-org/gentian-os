@@ -9,31 +9,42 @@
  */
 package io.gentianos.keycloak.events;
 
-import java.util.List;
-import java.util.stream.Collectors;
+import java.util.Map;
 
 import org.keycloak.events.Event;
 import org.keycloak.events.EventListenerProvider;
 import org.keycloak.events.EventType;
 import org.keycloak.events.admin.AdminEvent;
-import org.keycloak.events.admin.OperationType;
-import org.keycloak.events.admin.ResourceType;
-import org.keycloak.models.GroupModel;
+import org.keycloak.models.FederatedIdentityModel;
 import org.keycloak.models.KeycloakSession;
 import org.keycloak.models.RealmModel;
 import org.keycloak.models.UserModel;
 
 /**
- * Decides which Keycloak events can have changed a user's groups, and states
- * that user's groups when one happens.
+ * Tells the platform that a person came into a realm through an identity
+ * provider: the cluster's administrators entering a tenant, people of one
+ * tenant signing in to another. What such a person holds in the tenant is
+ * the rights store's, and the platform gives it when they arrive; the realm
+ * only says that they did, through which provider, and who they are there:
+ * the id of their account at the provider, as the realm's link to it holds
+ * it. For a tenant's provider that is the person's id in the other tenant's
+ * realm, which is how the platform asks what they hold there.
  *
- * It always states the complete set, read from the model inside the
- * transaction that changed it, never "added X" or "removed Y". The receiver
- * compares it with what it holds, so an event delivered twice is harmless and
- * one that was lost is repaired by the next for that user — which, because a
- * login is such an event, is at the latest the next time they sign in.
+ * <p>A person who makes an account on the realm's registration page is told
+ * too, so that the platform gives it what the tenant names for sign-ups. An
+ * account made for a person who came in through a provider is not such an
+ * account, and is not told as one.
+ *
+ * <p>A person who is removed is told too, from the model's own removal event
+ * (the factory), so that what they held goes with them.
  */
 public class DirectorEventListenerProvider implements EventListenerProvider {
+
+    /** The event detail that names the identity provider a sign-in came through. */
+    static final String PROVIDER_DETAIL = "identity_provider";
+    /** The event detail that says how an account was registered, and the value for one a provider brought. */
+    static final String REGISTER_METHOD_DETAIL = "register_method";
+    static final String BROKER_REGISTRATION = "broker";
 
     private final KeycloakSession session;
     private final DirectorEventListenerProviderFactory factory;
@@ -43,67 +54,80 @@ public class DirectorEventListenerProvider implements EventListenerProvider {
         this.factory = factory;
     }
 
-    /**
-     * User events. Groups change outside the admin API too — default groups at
-     * registration, identity-provider and LDAP mappers at login — and none of
-     * that produces an admin event.
-     */
     @Override
     public void onEvent(Event event) {
         EventType type = event.getType();
-        if (type != EventType.LOGIN && type != EventType.REGISTER
-            && type != EventType.IDENTITY_PROVIDER_FIRST_LOGIN) {
+        if (type == EventType.REGISTER) {
+            onRegister(event);
+            return;
+        }
+        if (type != EventType.LOGIN && type != EventType.IDENTITY_PROVIDER_FIRST_LOGIN) {
+            return;
+        }
+        String provider = providerOf(event.getDetails());
+        if (provider == null || event.getUserId() == null) {
             return;
         }
         RealmModel realm = session.realms().getRealm(event.getRealmId());
-        if (realm == null || event.getUserId() == null) {
+        if (realm == null) {
             return;
         }
-        state(realm, session.users().getUserById(realm, event.getUserId()));
+        factory.afterCommit(session,
+            Payload.userEntered(realm.getName(), event.getUserId(), provider, providerUser(realm, event.getUserId(), provider)));
+    }
+
+    /** A person made an account themself: one that came through no provider. */
+    private void onRegister(Event event) {
+        if (!madeThemself(event.getDetails()) || event.getUserId() == null) {
+            return;
+        }
+        RealmModel realm = session.realms().getRealm(event.getRealmId());
+        if (realm == null) {
+            return;
+        }
+        factory.afterCommit(session, Payload.userRegistered(realm.getName(), event.getUserId()));
+    }
+
+    /**
+     * The person's account id at the provider, from the realm's link to it, or
+     * null when the realm holds no such link: the platform then gives nothing
+     * that depends on who they are there.
+     */
+    private String providerUser(RealmModel realm, String userId, String provider) {
+        UserModel user = session.users().getUserById(realm, userId);
+        if (user == null) {
+            return null;
+        }
+        FederatedIdentityModel link = session.users().getFederatedIdentity(realm, user, provider);
+        if (link == null || link.getUserId() == null || link.getUserId().isBlank()) {
+            return null;
+        }
+        return link.getUserId();
+    }
+
+    /** The identity provider a sign-in came through, or null for one that came through none. Pure. */
+    static String providerOf(Map<String, String> details) {
+        if (details == null) {
+            return null;
+        }
+        String provider = details.get(PROVIDER_DETAIL);
+        return provider == null || provider.isBlank() ? null : provider;
+    }
+
+    /**
+     * Whether a registration is of an account the person made on the
+     * registration page, and not one made for a person who came in through
+     * an identity provider (which Keycloak reports as a registration too). Pure.
+     */
+    static boolean madeThemself(Map<String, String> details) {
+        if (providerOf(details) != null) {
+            return false;
+        }
+        return details == null || !BROKER_REGISTRATION.equals(details.get(REGISTER_METHOD_DETAIL));
     }
 
     @Override
     public void onEvent(AdminEvent event, boolean includeRepresentation) {
-        RealmModel realm = session.realms().getRealm(event.getRealmId());
-        if (realm == null || event.getResourcePath() == null) {
-            return;
-        }
-        String[] path = event.getResourcePath().split("/");
-        ResourceType resource = event.getResourceType();
-        OperationType operation = event.getOperationType();
-
-        if (resource == ResourceType.GROUP_MEMBERSHIP && path.length >= 2 && "users".equals(path[0])) {
-            // users/<id>/groups/<group id>, on both join and leave
-            state(realm, session.users().getUserById(realm, path[1]));
-        } else if (resource == ResourceType.USER && operation == OperationType.CREATE
-            && path.length >= 2 && "users".equals(path[0])) {
-            // a user can be created with groups already in the representation
-            state(realm, session.users().getUserById(realm, path[1]));
-        } else if (resource == ResourceType.GROUP && operation == OperationType.UPDATE
-            && path.length >= 2 && "groups".equals(path[0])) {
-            // A rename changes the name every member holds. Each member's new
-            // complete set drops the old name as a side effect.
-            GroupModel group = session.groups().getGroupById(realm, path[1]);
-            if (group != null && group.getParentId() == null) {
-                session.users().getGroupMembersStream(realm, group).forEach(member -> state(realm, member));
-            }
-        }
-        // Deletions of groups and users are handled from the model's removal
-        // events, in the factory: here their content is already gone.
-    }
-
-    private void state(RealmModel realm, UserModel user) {
-        if (user == null) {
-            return;
-        }
-        // Top-level groups only. The platform's roles are top-level groups by
-        // name; a subgroup anyone may have named the same is not one of them.
-        List<String> groups = user.getGroupsStream()
-            .filter(group -> group.getParentId() == null)
-            .map(GroupModel::getName)
-            .sorted()
-            .collect(Collectors.toList());
-        factory.afterCommit(session, Payload.userMemberships(realm.getName(), user.getId(), groups));
     }
 
     @Override

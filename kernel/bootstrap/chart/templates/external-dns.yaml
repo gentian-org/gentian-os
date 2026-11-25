@@ -32,6 +32,25 @@ different zones or reading different Secrets.
 {{- end -}}
 {{- $extdns := index $profile "externalDNS" | default dict -}}
 {{- $cred := index $profile "credential" | default dict -}}
+{{- /*
+What the provider needs beyond its credential, stopped here when it is
+missing. The cert-manager chart makes the same check for its solver
+(templates/_dns.tpl); without this one external-dns would start with half its
+arguments and publish nothing, which reads as a zone that is merely slow.
+*/ -}}
+{{- if index $extdns "enabled" | default false -}}
+  {{- range $p := (index $profile "requiredParams" | default list) -}}
+    {{- if not (index ($.Values.dnsParams | default dict) $p) -}}
+      {{- fail (printf "dnsProvider %q requires dnsParams.%s (see kernel/platforms.yaml)" $provider $p) -}}
+    {{- end -}}
+  {{- end -}}
+  {{- range $p, $re := (index $profile "paramPatterns" | default dict) -}}
+    {{- $v := index ($.Values.dnsParams | default dict) $p | default "" -}}
+    {{- if and $v (not (regexMatch $re (toString $v))) -}}
+      {{- fail (printf "dnsProvider %q: dnsParams.%s is %q, which does not match %s (see kernel/platforms.yaml)" $provider $p (toString $v) $re) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
 {{- if index $extdns "enabled" | default false }}
 # The namespace and credential, ahead of the Application.
 #
@@ -216,6 +235,17 @@ spec:
              again under the operator's feet. */}}
         extraArgs:
           - --annotation-prefix=external-dns.alpha.kubernetes.io/
+          {{- /* The provider's own arguments, from its entry in
+               kernel/platforms.yaml: where the server is, which zone, which
+               key. Rendered against this chart's values, split at line ends
+               so one entry can yield an argument per zone. */}}
+          {{- range $arg := (index $extdns "args" | default list) }}
+          {{- range $line := splitList "\n" (tpl $arg $) }}
+          {{- if trim $line }}
+          - {{ trim $line | quote }}
+          {{- end }}
+          {{- end }}
+          {{- end }}
         {{- $kd := required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
         {{- $labels := splitList "." $kd }}
         domainFilters:

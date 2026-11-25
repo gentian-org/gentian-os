@@ -26,8 +26,11 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -90,6 +93,9 @@ type perimeterEnablement struct {
 	// keepsSignIn says the surface that steps back still answers /sign-in:
 	// on a multi-tenancy cluster, where that path is the sign-in form.
 	keepsSignIn bool
+	// inside marks an inside entry: routed on the inside Gateway, which only
+	// the cluster's pods reach, under a name only the cluster's DNS knows.
+	inside bool
 }
 
 // perimeterMainAddress is what the main address means for one component's
@@ -120,7 +126,7 @@ func livePerimeterExposures(
 	byName := map[string]*gentianov1alpha1.ExposureSpec{}
 	for i := range profile.Spec.Expose {
 		e := &profile.Spec.Expose[i]
-		if e.Surface == gentianov1alpha1.SurfacePerimeter {
+		if e.Surface == gentianov1alpha1.SurfacePerimeter || e.Surface == gentianov1alpha1.SurfaceInside {
 			byName[e.Name] = e
 		}
 	}
@@ -160,6 +166,7 @@ func livePerimeterExposures(
 			release:     helmReleaseOf(comp, profile),
 			stepsBack:   zone.kernel && spec.Apex && main.held,
 			keepsSignIn: main.signInKept,
+			inside:      spec.Surface == gentianov1alpha1.SurfaceInside,
 		})
 	}
 	return out
@@ -189,42 +196,58 @@ func perimeterLabels(comp *gentianov1alpha1.Component, entry string) map[string]
 }
 
 // ensurePerimeter brings the tenant's DMZ to what the enablements say, and
-// removes what they no longer say.
+// removes what they no longer say. It answers how many surfaces are
+// published, inside entries included.
 func (r *ComponentReconciler) ensurePerimeter(
 	ctx context.Context, comp *gentianov1alpha1.Component,
 	profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone,
 ) (int, error) {
+	public, inside, err := r.ensurePerimeterSurfaces(ctx, comp, profile, tenant, zone)
+	return public + inside, err
+}
+
+// ensurePerimeterSurfaces is ensurePerimeter, answering how many surfaces are
+// on the perimeter and how many are inside entries.
+func (r *ComponentReconciler) ensurePerimeterSurfaces(
+	ctx context.Context, comp *gentianov1alpha1.Component,
+	profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone,
+) (public, inside int, err error) {
 	main, err := r.mainAddressFor(ctx, comp, profile, tenant)
 	if err != nil {
-		return 0, fmt.Errorf("main address: %w", err)
+		return 0, 0, fmt.Errorf("main address: %w", err)
 	}
 	live := livePerimeterExposures(comp, profile, zone, time.Now(), main)
 	if err := r.aliasesFor(ctx, comp, tenant, live); err != nil {
-		return 0, fmt.Errorf("alias: %w", err)
+		return 0, 0, fmt.Errorf("alias: %w", err)
 	}
 	dmz := layout.TenantDMZ(tenant.Name)
 
 	if err := r.prunePerimeter(ctx, comp, dmz, live); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if len(live) == 0 {
-		return 0, nil
+		return 0, 0, nil
 	}
 	if err := r.ensureDMZNamespace(ctx, tenant, dmz); err != nil {
-		return 0, fmt.Errorf("dmz namespace: %w", err)
+		return 0, 0, fmt.Errorf("dmz namespace: %w", err)
 	}
 	// A published surface reaches the app as surely as its entries do, and
 	// is held back with them while a restore puts the app back.
 	held, err := heldForRestore(ctx, r.Client, comp)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	for i := range live {
 		if err := r.ensurePerimeterProxy(ctx, comp, &live[i], dmz, held); err != nil {
-			return 0, fmt.Errorf("perimeter %s: %w", live[i].spec.Name, err)
+			return 0, 0, fmt.Errorf("perimeter %s: %w", live[i].spec.Name, err)
+		}
+		if live[i].inside {
+			inside++
+		} else {
+			public++
 		}
 	}
-	return len(live), nil
+	return public, inside, nil
 }
 
 // aliasesFor fills in the alias of each live surface that has one. Whether an
@@ -236,7 +259,7 @@ func (r *ComponentReconciler) aliasesFor(
 ) error {
 	wanted := false
 	for i := range live {
-		wanted = wanted || (live[i].on.Alias != "" && !live[i].website)
+		wanted = wanted || (live[i].on.Alias != "" && !live[i].website && !live[i].inside)
 	}
 	if !wanted {
 		return nil
@@ -259,10 +282,46 @@ func (r *ComponentReconciler) aliasesFor(
 // on the cluster's main address has none: it is under the cluster's domain
 // already.
 func aliasHostFor(in mainAddressInputs, tenant *gentianov1alpha1.Tenant, comp *gentianov1alpha1.Component, p *perimeterEnablement) string {
-	if p.on.Alias == "" || p.website {
+	if p.on.Alias == "" || p.website || p.inside {
 		return ""
 	}
 	return addresses.AliasHost(in, tenant.Name, comp.Name, p.on.ExposureName)
+}
+
+// componentsWithPerimeter maps to every component that has a perimeter proxy,
+// found by the proxies' own egress policies in the tenants' DMZ namespaces:
+// those admit the cluster's DNS (ensurePerimeterPolicies), and a change of it
+// is a change of them.
+func componentsWithPerimeter(c client.Client) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, _ client.Object) []reconcile.Request {
+		tenants := &gentianov1alpha1.TenantList{}
+		if err := c.List(ctx, tenants); err != nil {
+			return nil
+		}
+		home := map[string]string{}
+		for i := range tenants.Items {
+			home[layout.TenantDMZ(tenants.Items[i].Name)] = tenants.Items[i].NamespaceName()
+		}
+		policies := &networkingv1.NetworkPolicyList{}
+		if err := c.List(ctx, policies, client.MatchingLabels{"app.kubernetes.io/name": perimeterProxyAppName}); err != nil {
+			return nil
+		}
+		seen := map[types.NamespacedName]bool{}
+		var out []reconcile.Request
+		for i := range policies.Items {
+			ns, ok := home[policies.Items[i].Namespace]
+			comp := policies.Items[i].Labels["gentianos.io/component"]
+			if !ok || comp == "" {
+				continue
+			}
+			key := types.NamespacedName{Name: comp, Namespace: ns}
+			if !seen[key] {
+				seen[key] = true
+				out = append(out, reconcile.Request{NamespacedName: key})
+			}
+		}
+		return out
+	})
 }
 
 // ensureDMZNamespace makes the tenant's perimeter namespace, labeled by tier
@@ -300,8 +359,25 @@ func (r *ComponentReconciler) ensurePerimeterProxy(
 	// approval's word as well as the profile's: livePerimeterExposures let
 	// this entry through only because the two agree.
 	passCredential := p.spec.AuthMode == gentianov1alpha1.AuthModeApp &&
-		p.on.Kind == gentianov1alpha1.ExposureKindPublicAppCredential
-	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website, passCredential, perimeterLimitsFromEnv(edgeClientAddressHeader(ctx, r.Client)))
+		(p.on.Kind == gentianov1alpha1.ExposureKindPublicAppCredential ||
+			p.on.Kind == gentianov1alpha1.ExposureKindPublicAppSignIn ||
+			p.on.Kind == gentianov1alpha1.ExposureKindInsideAppCredential)
+	// The cookies of the app's own sign-in pass only where the profile
+	// names them now and the approver approved them: a profile may narrow
+	// them on its own, and widening them needs another approval.
+	var signIn *gentianov1alpha1.SignInCookies
+	if p.on.Kind == gentianov1alpha1.ExposureKindPublicAppSignIn && !p.inside {
+		signIn = p.spec.SignInCookies.Intersect(p.on.SignInCookies)
+	}
+	// Behind the inside Gateway every caller is a pod of this cluster, and
+	// that Gateway sees its connection: no tunnel or load balancer names the
+	// caller in a header there, and a header of that name is the caller's
+	// own to write.
+	clientAddressHeader := ""
+	if !p.inside {
+		clientAddressHeader = edgeClientAddressHeader(ctx, r.Client)
+	}
+	config := perimeterProxyConfig(p.spec, upstream, p.spec.Backend.Port, p.website, passCredential, signIn, perimeterLimitsFromEnv(clientAddressHeader))
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: dmz, Labels: labels},
@@ -432,7 +508,7 @@ func perimeterDeployment(name, dmz string, labels map[string]string, configHash 
 // reach the proxy.
 //
 // Out: the proxy may reach exactly one Service in the tenant's namespace, and
-// DNS. Not the tenant's database, not its other applications, not the kernel.
+// the cluster's DNS (netpolicy.DNSEgress). Not the tenant's database, not its other applications, not the kernel.
 // A proxy that is taken can make the requests its URLs already allow and
 // nothing else.
 //
@@ -445,8 +521,6 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 	name, dmz string, labels map[string]string, p *perimeterEnablement,
 ) error {
 	tcp := corev1.ProtocolTCP
-	udp := corev1.ProtocolUDP
-	dns := intstr.FromInt32(53)
 	port := intstr.FromInt32(p.spec.Backend.Port)
 	proxyPort := intstr.FromInt32(perimeterProxyPort)
 
@@ -455,7 +529,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: labels},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
-			Egress: []networkingv1.NetworkPolicyEgressRule{
+			Egress: append([]networkingv1.NetworkPolicyEgressRule{
 				{
 					To: []networkingv1.NetworkPolicyPeer{{
 						NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
@@ -467,10 +541,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 					}},
 					Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &port}},
 				},
-				{Ports: []networkingv1.NetworkPolicyPort{
-					{Protocol: &udp, Port: &dns}, {Protocol: &tcp, Port: &dns},
-				}},
-			},
+			}, netpolicy.DNSEgress(loadClusterDNS(ctx, r.Client))...),
 		},
 	}
 	if err := ensureObject(ctx, r.Client, egress, func(existing *networkingv1.NetworkPolicy) bool {
@@ -483,7 +554,9 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 		return err
 	}
 
-	// In, to the proxy itself: the Gateway's Envoy pods and nobody else.
+	// In, to the proxy itself: the Gateway's Envoy pods and nobody else --
+	// the edge's, or for an inside entry the inside Gateway's, whose fleet
+	// is the only way to it the cluster's pods are given.
 	//
 	// The proxy takes the caller's address from what the Gateway appended
 	// to X-Forwarded-For, limits each address by it and tells the
@@ -502,7 +575,7 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 					NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
 						"kubernetes.io/metadata.name": layout.Namespace(layout.Edge),
 					}},
-					PodSelector: &metav1.LabelSelector{MatchLabels: netpolicy.EdgeProxyPodLabels()},
+					PodSelector: &metav1.LabelSelector{MatchLabels: perimeterFleet(p)},
 				}},
 				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &tcp, Port: &proxyPort}},
 			}},
@@ -553,18 +626,83 @@ func (r *ComponentReconciler) ensurePerimeterPolicies(
 	})
 }
 
+// perimeterFleet are the Envoy pods that forward to one surface's proxy:
+// the edge's, or the inside Gateway's for an inside entry.
+func perimeterFleet(p *perimeterEnablement) map[string]string {
+	if p.inside {
+		return netpolicy.InsideProxyPodLabels()
+	}
+	return netpolicy.EdgeProxyPodLabels()
+}
+
+// insideRouteAnnotations are what an inside entry's route carries for
+// external-dns: a controller that is not external-dns's own. external-dns
+// publishes every route's hostnames with the address of the Gateway it
+// attaches to, and skips a route whose controller annotation names another
+// controller (its source/annotations, IsControllerMismatch). The inside
+// Gateway's address is the cluster's own and its hosts are no public name.
+// The prefix is the one the installer sets for external-dns
+// (kernel/bootstrap/chart/templates/external-dns.yaml).
+func insideRouteAnnotations() map[string]string {
+	return map[string]string{"external-dns.alpha.kubernetes.io/controller": "none"}
+}
+
+// syncInsideRouteAnnotations makes existing carry desired's external-dns
+// controller annotation, or none, and reports whether it changed anything.
+func syncInsideRouteAnnotations(existing, desired *gatewayv1.HTTPRoute) bool {
+	changed := false
+	for k := range insideRouteAnnotations() {
+		want, wanted := desired.Annotations[k]
+		got, has := existing.Annotations[k]
+		switch {
+		case wanted && (!has || got != want):
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			existing.Annotations[k] = want
+			changed = true
+		case !wanted && has:
+			delete(existing.Annotations, k)
+			changed = true
+		}
+	}
+	return changed
+}
+
 // ensurePerimeterRoute publishes the host on the PERIMETER Gateway, which is
 // the edge that carries no session. Putting it on the authenticated Gateway
 // would sit a login in front of a link whose whole purpose is to work without
-// one.
+// one. An inside entry's host goes on the inside Gateway instead, which
+// carries no session either and which nothing outside the cluster reaches.
 func (r *ComponentReconciler) ensurePerimeterRoute(
 	ctx context.Context, name, dmz string, labels map[string]string, p *perimeterEnablement, held bool,
 ) error {
+	route := perimeterRoute(name, dmz, labels, p)
+	if err := withRestoreHold(ctx, r.Client, held, route); err != nil {
+		return err
+	}
+	return ensureObject(ctx, r.Client, route, func(existing *gatewayv1.HTTPRoute) bool {
+		annotated := syncRestoreHoldAnnotation(existing, route)
+		annotated = syncInsideRouteAnnotations(existing, route) || annotated
+		if equality.Semantic.DeepEqual(existing.Spec, route.Spec) {
+			return annotated
+		}
+		existing.Spec = route.Spec
+		return true
+	})
+}
+
+// perimeterRoute is the route of one published surface.
+func perimeterRoute(name, dmz string, labels map[string]string, p *perimeterEnablement) *gatewayv1.HTTPRoute {
 	edge := gatewayv1.Namespace(layout.Namespace(layout.Edge))
 	gwName := gatewayv1.ObjectName(PerimeterGatewayName)
+	section := gatewayv1.SectionName(perimeterListenerName(p.host))
+	if p.inside {
+		gwName = gatewayv1.ObjectName(InsideGatewayName)
+		section = gatewayv1.SectionName(insideListenerName(p.host))
+	}
 	svcKind := gatewayv1.Kind("Service")
 	port := gatewayv1.PortNumber(perimeterProxyPort)
-	section := gatewayv1.SectionName(perimeterListenerName(p.host))
 
 	var rules []gatewayv1.HTTPRouteRule
 	for _, prefix := range perimeterRoutePrefixes(p) {
@@ -606,17 +744,10 @@ func (r *ComponentReconciler) ensurePerimeterRoute(
 		})
 		route.Spec.Hostnames = append(route.Spec.Hostnames, gatewayv1.Hostname(p.alias))
 	}
-	if err := withRestoreHold(ctx, r.Client, held, route); err != nil {
-		return err
+	if p.inside {
+		route.Annotations = insideRouteAnnotations()
 	}
-	return ensureObject(ctx, r.Client, route, func(existing *gatewayv1.HTTPRoute) bool {
-		annotated := syncRestoreHoldAnnotation(existing, route)
-		if equality.Semantic.DeepEqual(existing.Spec, route.Spec) {
-			return annotated
-		}
-		existing.Spec = route.Spec
-		return true
-	})
+	return route
 }
 
 // perimeterRoutePrefixes are the prefixes one published surface is routed

@@ -10,8 +10,8 @@ SPDX-License-Identifier: MPL-2.0
 
 // Package componentkeys is the list of keys components hold, as the operator
 // writes it for a service that recognizes a component by its key: the
-// director's commission keys, the registrar's vouching keys, the bouncer's
-// checkers and the arbiter's table.
+// director's commission keys, the registrar's vouching keys and position
+// givers, the bouncer's checkers and the arbiter's table.
 //
 // The operator gives such a component a key of its own, in a Secret of its
 // tenant's namespace, and lists only the key's hash. The service reads no
@@ -57,6 +57,53 @@ type Entry interface{ key() Key }
 type Commission struct {
 	Key
 	Tenants []string `json:"tenants"`
+}
+
+// Vouching is an entry of the registrar's list: a component that vouches for
+// people, and the component whose page collects people's consent to it,
+// where its profile names one (requires.services.vouching.consent) and that
+// component is installed beside it. Consent is that component's profile,
+// which is what a token made out to it names as its audience; empty where
+// people are linked with the platform's own token alone.
+type Vouching struct {
+	Key
+	Consent string `json:"consent,omitempty"`
+	// ConsentKeyHash is the hash of the consent page's own key (the one its
+	// component holds for the rights check), where Consent names a page. The
+	// registrar takes that key for one question about this component:
+	// whether one person is linked to it. Empty where Consent is, or where
+	// the page's component holds no key.
+	ConsentKeyHash string `json:"consentKeyHash,omitempty"`
+}
+
+// PositionGiver is an entry of the registrar's list of position givers: a
+// component that may give people of other tenants, or of its own, some of
+// those tenants' positions and take them again. Each tenant in Gives names
+// the component in spec.positionGivers with those positions.
+type PositionGiver struct {
+	Key
+	Gives []PositionGrant `json:"gives"`
+}
+
+// PositionGrant is the positions of one tenant a position giver gives.
+// Administering are the ones the tenant names for it that administer the
+// tenant or an app, which it never gives: listed so that a refusal can say
+// why.
+type PositionGrant struct {
+	Tenant        string   `json:"tenant"`
+	Positions     []string `json:"positions"`
+	Administering []string `json:"administering,omitempty"`
+}
+
+// PersonSecrets is an entry of the confidant's list: a component that keeps
+// secrets of people. Component is the component's name, which is the part of
+// the path its entries are under. Profile is the profile it runs, the
+// audience of the token the front door hands its page for a person, and
+// Realm the realm its tenant's people sign in to.
+type PersonSecrets struct {
+	Key
+	Profile string `json:"profile"`
+	Realm   string `json:"realm"`
 }
 
 // Hash is the form a list holds a key in: the SHA-256 of the key, in hex.
@@ -175,6 +222,23 @@ func (l *List[E]) Find(key string) *E {
 		return nil
 	}
 	return Find(*held, key)
+}
+
+// Where returns the first entry match says yes to, or nil.
+func (l *List[E]) Where(match func(E) bool) *E {
+	if l == nil {
+		return nil
+	}
+	held := l.held.Load()
+	if held == nil {
+		return nil
+	}
+	for i := range *held {
+		if match((*held)[i]) {
+			return &(*held)[i]
+		}
+	}
+	return nil
 }
 
 // Follow keeps the list equal to the file until ctx ends; what names the list

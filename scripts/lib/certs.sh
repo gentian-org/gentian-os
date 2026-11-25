@@ -418,6 +418,7 @@ apply_edge_envoyproxy() {
         helm template gentian-edge "${SCRIPT_DIR}/kernel/manifests/gateway/chart" \
             -f "$(gentian_platforms_values)" \
             --set "namespace=${ns}" \
+            --set-string "controllerName=${GENTIAN_GATEWAY_CONTROLLER_NAME}" \
             --set-string "envoy.serviceType=ClusterIP" \
             | kubectl apply -f -
         kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/gateway/gatewayclass.yaml"
@@ -476,6 +477,7 @@ apply_edge_envoyproxy() {
     helm template gentian-edge "${SCRIPT_DIR}/kernel/manifests/gateway/chart" \
         -f "$(gentian_platforms_values)" \
         --set "namespace=${ns}" \
+        --set-string "controllerName=${GENTIAN_GATEWAY_CONTROLLER_NAME}" \
         --set-string "nodeIp=${NODE_IP:-}" \
         --set-string "platform=${PLATFORM:-}" \
         --set-string "addressRef=${EDGE_ADDRESS_REF:-}" \

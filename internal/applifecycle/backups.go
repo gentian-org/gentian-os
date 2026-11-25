@@ -99,6 +99,11 @@ type BackupPolicyResult struct {
 	CredentialRequirement string `json:"credentialRequirement,omitempty"`
 	CredentialSatisfied   bool   `json:"credentialSatisfied"`
 	Message               string `json:"message,omitempty"`
+	// BeforeMove is what this scope states is exported before an app moves
+	// to another build, empty when it inherits; EffectiveBeforeMove is what
+	// applies.
+	BeforeMove          string `json:"beforeMove,omitempty"`
+	EffectiveBeforeMove string `json:"effectiveBeforeMove"`
 }
 
 // BackupDestinationResult is where bundles are written.
@@ -164,7 +169,8 @@ func (s *Service) BackupPolicy(ctx context.Context, scope, tenantName string) (*
 		name = tenantName
 	}
 
-	result := &BackupPolicyResult{Scope: scope, Tenant: tenantName, EffectiveRecipients: []string{}}
+	result := &BackupPolicyResult{Scope: scope, Tenant: tenantName, EffectiveRecipients: []string{},
+		EffectiveBeforeMove: string(gentianov1alpha1.BeforeMoveApp)}
 	var policy gentianov1alpha1.BackupPolicy
 	err := s.client.Get(ctx, types.NamespacedName{Name: name}, &policy)
 	switch {
@@ -187,6 +193,10 @@ func (s *Service) BackupPolicy(ctx context.Context, scope, tenantName string) (*
 				AddressingStyle: string(d.AddressingStyle)}
 		}
 		result.Encryption = encryptionResult(policy.Spec.Encryption)
+		result.BeforeMove = string(policy.Spec.BeforeMove)
+		if policy.Status.EffectiveBeforeMove != "" {
+			result.EffectiveBeforeMove = string(policy.Status.EffectiveBeforeMove)
+		}
 		result.EffectiveEndpoint = policy.Status.EffectiveEndpoint
 		result.EffectiveBucket = policy.Status.EffectiveBucket
 		if policy.Status.EffectiveRecipients != nil {
@@ -197,20 +207,34 @@ func (s *Service) BackupPolicy(ctx context.Context, scope, tenantName string) (*
 		result.Message = conditionMessage(policy.Status.Conditions)
 	}
 
+	if scope != "tenant" {
+		return result, nil
+	}
+	var cluster gentianov1alpha1.BackupPolicy
+	if err := s.client.Get(ctx, types.NamespacedName{Name: backup.ClusterPolicyName}, &cluster); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return nil, err
+		}
+		return result, nil
+	}
+	// Whether the tenant may state its own is the cluster's to say, whether
+	// or not the tenant states one.
+	result.AllowTenantOverride = cluster.Spec.OverrideAllowed()
 	// A tenant with no policy of its own still runs under one. Reading the
 	// cluster's effective values is what lets the screen say what applies
 	// rather than showing an empty form and leaving the reader to guess.
-	if scope == "tenant" && !result.Configured {
-		var cluster gentianov1alpha1.BackupPolicy
-		if err := s.client.Get(ctx, types.NamespacedName{Name: backup.ClusterPolicyName}, &cluster); err == nil {
-			result.EffectiveEndpoint = cluster.Status.EffectiveEndpoint
-			result.EffectiveBucket = cluster.Status.EffectiveBucket
-			if cluster.Status.EffectiveRecipients != nil {
-				result.EffectiveRecipients = cluster.Status.EffectiveRecipients
-			}
-			result.AllowTenantOverride = cluster.Spec.OverrideAllowed()
-		} else if !apierrors.IsNotFound(err) {
-			return nil, err
+	if !result.AllowTenantOverride && cluster.Status.EffectiveBeforeMove != "" {
+		// The tenant's own is refused: the cluster's applies.
+		result.EffectiveBeforeMove = string(cluster.Status.EffectiveBeforeMove)
+	}
+	if !result.Configured {
+		result.EffectiveEndpoint = cluster.Status.EffectiveEndpoint
+		result.EffectiveBucket = cluster.Status.EffectiveBucket
+		if cluster.Status.EffectiveRecipients != nil {
+			result.EffectiveRecipients = cluster.Status.EffectiveRecipients
+		}
+		if cluster.Status.EffectiveBeforeMove != "" {
+			result.EffectiveBeforeMove = string(cluster.Status.EffectiveBeforeMove)
 		}
 	}
 	return result, nil

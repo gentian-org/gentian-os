@@ -58,6 +58,28 @@ func GroupObject(realm, name string) (string, error) {
 // key may write a tuple about.
 const groupType = "group"
 
+// roleType is the type a role handed to a store is of
+// (requires.services.authorization.roles: handOver): role:<name>, with
+// RoleHolderRelation its holders. In a store handed roles no component's
+// key may write a tuple about one, nor pass one along with a question.
+const (
+	roleType           = "role"
+	RoleHolderRelation = "holder"
+)
+
+// isAboutRole reports whether a tuple's object is of type role.
+func isAboutRole(t Tuple) bool {
+	return strings.HasPrefix(t.Object, roleType+":")
+}
+
+// RoleObject is a role handed to a store, by its name on the platform.
+func RoleObject(name string) (string, error) {
+	if !dnsLabel.MatchString(name) {
+		return "", fmt.Errorf("%w: role %q", authz.ErrInvalidID, name)
+	}
+	return roleType + ":" + name, nil
+}
+
 // isAboutGroup reports whether a tuple's object is of type group: a tuple
 // that says something of a group, such as who is in it. A tuple whose user
 // is a group or a group's members (group:x#member) says something of the
@@ -143,15 +165,19 @@ func (m modelTypes) admits(user, relation, objType string) error {
 }
 
 // ValidateStartingTuples holds a profile's starting tuples, and its wish to
-// mirror the realm's groups, to the compiled model. It is asked when the
+// mirror the realm's groups or be handed its people's roles, to the
+// compiled model. It is asked when the
 // profile is admitted, so that a tuple the store would refuse is a failed
 // install rather than a store that never reaches what its profile says.
 //
 // A store that mirrors groups has to take them: a type group with a relation
 // member that users are written with. Its starting tuples may then name no
 // group as their object, because which people are in which group is the
-// realm's to say.
-func ValidateStartingTuples(compiled json.RawMessage, tuples []Tuple, mirror bool) error {
+// realm's to say. A store handed roles has to take them as well: a type
+// role with a relation holder that users are written with; and its
+// starting tuples may name no role as their object, because who holds a
+// role is the rights store's to say.
+func ValidateStartingTuples(compiled json.RawMessage, tuples []Tuple, mirror, handOver bool) error {
 	m, err := readModel(compiled)
 	if err != nil {
 		return fmt.Errorf("the compiled model: %w", err)
@@ -159,6 +185,11 @@ func ValidateStartingTuples(compiled json.RawMessage, tuples []Tuple, mirror boo
 	if mirror {
 		if err := m.admits("user:someone", "member", groupType); err != nil {
 			return fmt.Errorf("groups: mirror needs a type group with a relation member that users are written with: %w", err)
+		}
+	}
+	if handOver {
+		if err := m.admits("user:someone", RoleHolderRelation, roleType); err != nil {
+			return fmt.Errorf("roles: handOver needs a type role with a relation holder that users are written with: %w", err)
 		}
 	}
 	if len(tuples) > MaxStartingTuples {
@@ -175,6 +206,9 @@ func ValidateStartingTuples(compiled json.RawMessage, tuples []Tuple, mirror boo
 		}
 		if mirror && objType == groupType {
 			return fmt.Errorf("tuples[%d]: who is in a group is the realm's to say, and this store mirrors the realm's groups", i)
+		}
+		if handOver && objType == roleType {
+			return fmt.Errorf("tuples[%d]: who holds a role is the rights store's to say, and this store is handed the roles", i)
 		}
 		if err := m.admits(t.User, t.Relation, objType); err != nil {
 			return fmt.Errorf("tuples[%d]: %w", i, err)

@@ -166,3 +166,43 @@ func TestOnlyRungsAboveL0CountAsCarried(t *testing.T) {
 		t.Fatalf("wrong record: %+v", out.ReviewOverdue[0])
 	}
 }
+
+// A component the platform places is the platform's: its binding is not the
+// administrator's to decide while it asks for nothing beyond its grant, as the
+// porter's to the file home asks for nothing. One that asks for more still
+// shows, so nothing it needs is hidden from whoever could grant it.
+func TestAPlacedComponentsSettledBindingIsLeftOut(t *testing.T) {
+	tenant := demoTenant()
+	tenant.Spec.Apps = []gentianov1alpha1.TenantApp{
+		{Profile: "porter", Placed: true},
+		{Profile: "store", Placed: true},
+		{Profile: "drive"},
+	}
+	binding := func(name, consumer, provider string, caps ...string) *gentianov1alpha1.IntegrationBinding {
+		return &gentianov1alpha1.IntegrationBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "tenant-demo"},
+			Spec: gentianov1alpha1.IntegrationBindingSpec{
+				Contract:     name,
+				Provider:     gentianov1alpha1.AppEndpoint{App: provider},
+				Consumer:     gentianov1alpha1.AppEndpoint{App: consumer},
+				Capabilities: caps,
+			},
+		}
+	}
+	s := platformService(t,
+		tenant,
+		binding("file-store", "porter", "drive"),
+		binding("drive-api", "store", "drive", "write"),
+	)
+
+	out, err := s.Integrations(context.Background(), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.EffectiveAccess) != 1 || out.EffectiveAccess[0].Consumer != "store" {
+		t.Fatalf("effective access = %+v", out.EffectiveAccess)
+	}
+	if out.Summary.BindingCount != 1 {
+		t.Fatalf("summary = %+v", out.Summary)
+	}
+}

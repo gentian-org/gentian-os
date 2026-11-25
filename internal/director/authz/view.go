@@ -23,13 +23,14 @@ import (
 // This replaces the idea of exposing OpenFGA's own playground, which is a
 // development tool with a write surface: anything a person wants to CHANGE is
 // changed on the console's other screens, through the director, and lands in
-// git or in Keycloak. There is no second write path, and nothing here has one.
+// git or in the rights store. There is no second write path, and nothing here
+// has one.
 //
 // Two halves, and a view with only the first is close to useless. The tuples
-// say a group holds "admin" on a cluster. What "admin" lets that group do is
-// in the model, several derivations deep -- can_configure is admin,
+// say a position holds "admin" on a tenant. What "admin" lets its holders do
+// is in the model, several derivations deep -- can_configure is admin,
 // can_audit is auditor or security_officer or admin -- and nobody should have
-// to read model.fga to find out. So the view resolves both: which groups hold
+// to read model.fga to find out. So the view resolves both: who holds
 // which role, and which permissions each role carries.
 
 // Binding is one role on one object, and who holds it.
@@ -37,13 +38,32 @@ type Binding struct {
 	// Relation is the role as the model names it: admin, auditor,
 	// security_officer.
 	Relation string `json:"relation"`
-	// Groups are the Keycloak groups holding it, in their Keycloak spelling
-	// rather than the OpenFGA object id. The ids differ only in the
-	// separator, and a person reading this screen knows the Keycloak name.
-	Groups []string `json:"groups"`
+	// Holders are who holds it: positions, people by themselves, and the
+	// cluster's groups.
+	Holders []Holder `json:"holders"`
 	// Grants are the permissions this role carries on this type, resolved
 	// through the model. The answer to "and what does that let them do".
 	Grants []string `json:"grants"`
+	// Declared is true for a role an app's profile declares, as opposed to
+	// one the model names.
+	Declared bool `json:"declared,omitempty"`
+}
+
+// The kinds of holder.
+const (
+	// HolderPosition: a position of the tenant; Name is the position's.
+	HolderPosition = "position"
+	// HolderPerson: a person by themselves; Name is the account's subject,
+	// qualified by its realm for a role the Cluster claim gives by name.
+	HolderPerson = "person"
+	// HolderGroup: a group of the sign-in service; Name is its name there.
+	HolderGroup = "group"
+)
+
+// Holder is one holder of a role.
+type Holder struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
 }
 
 // View is the authorization state of one object.
@@ -51,11 +71,11 @@ type View struct {
 	// Object is the OpenFGA object this describes, such as cluster:gentian-os.
 	Object string `json:"object"`
 	// Bindings are the roles that are held. A role nobody holds is included
-	// with an empty group list: "nobody holds break_glass" is the single most
+	// with an empty list of holders: "nobody holds break_glass" is the single most
 	// useful thing this screen can say, and omitting the row would make it
 	// indistinguishable from a role that does not exist.
 	Bindings []Binding `json:"bindings"`
-	// Unheld counts the bindings with no groups, so a console can say it
+	// Unheld counts the bindings with no holders, so a console can say it
 	// without walking the list.
 	Unheld int `json:"unheld"`
 }
@@ -67,19 +87,33 @@ type modelGraph struct {
 	// byType[type][relation] = the relations it is computed from, empty for a
 	// relation that is assigned directly.
 	byType map[string]map[string][]string
-	// role[type][relation] is true when the relation is assigned to a group's
-	// members or to a user -- that is, when somebody can hold it.
+	// role[type][relation] is true when the relation is assigned to a user,
+	// to a position's holders or to a group's members -- that is, when
+	// somebody can hold it.
 	role map[string]map[string]bool
+	// parent[type][relation] are the relations on another object it follows
+	// from: "admin from tenant" is {Edge: "tenant", Relation: "admin"}.
+	parent map[string]map[string][]parentRef
+}
+
+// parentRef is one "relation from edge" a relation is derived from.
+type parentRef struct {
+	// Edge is the relation that names the other object: tenant, cluster.
+	Edge string
+	// Relation is what has to be held there.
+	Relation string
 }
 
 // parseModel reads the embedded model into a graph of derivations.
 //
 // Only the shapes this model actually uses are handled: a direct assignment,
-// a computedUserset, and a union of those. A tupleToUserset -- "can_audit
-// from cluster" -- crosses to another object and is deliberately NOT followed:
-// this view describes one object, and a permission somebody holds because of
-// their relation to the cluster is the cluster's row to show, not the
-// tenant's. Saying so is better than implying the tenant granted it.
+// a computedUserset and a union of those. A
+// tupleToUserset -- "can_audit from cluster" -- crosses to another object and
+// is deliberately NOT followed into what a role carries: a view describes one
+// object, and a permission somebody holds because of their relation to the
+// cluster is the cluster's row to show, not the tenant's. Saying so is better
+// than implying the tenant granted it. Such a derivation is kept apart
+// (parent), for the reader that can look at the other object too.
 func parseModel(raw []byte) (*modelGraph, error) {
 	var m struct {
 		TypeDefinitions []struct {
@@ -96,11 +130,13 @@ func parseModel(raw []byte) (*modelGraph, error) {
 				ComputedUserset *struct {
 					Relation string `json:"relation"`
 				} `json:"computedUserset"`
-				Union *struct {
+				TupleToUserset *modelTupleToUserset `json:"tupleToUserset"`
+				Union          *struct {
 					Child []struct {
 						ComputedUserset *struct {
 							Relation string `json:"relation"`
 						} `json:"computedUserset"`
+						TupleToUserset *modelTupleToUserset `json:"tupleToUserset"`
 					} `json:"child"`
 				} `json:"union"`
 			} `json:"relations"`
@@ -112,12 +148,13 @@ func parseModel(raw []byte) (*modelGraph, error) {
 	g := &modelGraph{
 		byType: map[string]map[string][]string{},
 		role:   map[string]map[string]bool{},
+		parent: map[string]map[string][]parentRef{},
 	}
 	for _, td := range m.TypeDefinitions {
 		rels := map[string][]string{}
 		roles := map[string]bool{}
 		// A role is a relation somebody can HOLD: the model assigns it to a
-		// group's members, or to a user. A relation whose directly related
+		// user, to a position's holders or to a group's members. A relation whose directly related
 		// type is another object -- which cluster operates a tenant, which
 		// app provides a contract -- is an edge in the graph and not a
 		// binding, and showing one as a binding would read as a permission
@@ -130,23 +167,35 @@ func parseModel(raw []byte) (*modelGraph, error) {
 		// right.
 		if td.Metadata != nil {
 			for name, meta := range td.Metadata.Relations {
+				// What the operator derives is not a role anybody was given.
+				if IsDerived(name) {
+					continue
+				}
 				for _, d := range meta.DirectlyRelatedUserTypes {
-					if d.Type == "user" || (d.Type == "group" && d.Relation == "member") {
+					if d.Type == "user" || (d.Type == "group" && d.Relation == "member") ||
+						(d.Type == "position" && d.Relation == "holder") {
 						roles[name] = true
 						break
 					}
 				}
 			}
 		}
+		parents := map[string][]parentRef{}
 		for name, def := range td.Relations {
 			var from []string
 			if def.ComputedUserset != nil && def.ComputedUserset.Relation != "" {
 				from = append(from, def.ComputedUserset.Relation)
 			}
+			if ref, ok := def.TupleToUserset.ref(); ok {
+				parents[name] = append(parents[name], ref)
+			}
 			if def.Union != nil {
 				for _, c := range def.Union.Child {
 					if c.ComputedUserset != nil && c.ComputedUserset.Relation != "" {
 						from = append(from, c.ComputedUserset.Relation)
+					}
+					if ref, ok := c.TupleToUserset.ref(); ok {
+						parents[name] = append(parents[name], ref)
 					}
 				}
 			}
@@ -154,8 +203,38 @@ func parseModel(raw []byte) (*modelGraph, error) {
 		}
 		g.byType[td.Type] = rels
 		g.role[td.Type] = roles
+		g.parent[td.Type] = parents
 	}
 	return g, nil
+}
+
+// modelTupleToUserset is "relation from edge" as the model's JSON has it.
+type modelTupleToUserset struct {
+	Tupleset struct {
+		Relation string `json:"relation"`
+	} `json:"tupleset"`
+	ComputedUserset struct {
+		Relation string `json:"relation"`
+	} `json:"computedUserset"`
+}
+
+func (t *modelTupleToUserset) ref() (parentRef, bool) {
+	if t == nil || t.Tupleset.Relation == "" || t.ComputedUserset.Relation == "" {
+		return parentRef{}, false
+	}
+	return parentRef{Edge: t.Tupleset.Relation, Relation: t.ComputedUserset.Relation}, true
+}
+
+// permissions lists the can_* relations of a type. Sorted.
+func (g *modelGraph) permissions(typ string) []string {
+	var out []string
+	for name := range g.byType[typ] {
+		if strings.HasPrefix(name, "can_") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // grantsOf resolves which can_* permissions a role carries on a type.
@@ -164,12 +243,25 @@ func parseModel(raw []byte) (*modelGraph, error) {
 // inverts that and follows the chain, since a permission may be computed from
 // another permission rather than straight from a role.
 func (g *modelGraph) grantsOf(typ, role string) []string {
+	var out []string
+	for name := range g.reach(typ, role) {
+		if strings.HasPrefix(name, "can_") {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// reach is every relation of a type that holding one of them implies, the
+// relation itself included. Nil for a type the model does not have.
+func (g *modelGraph) reach(typ, relation string) map[string]bool {
 	rels, ok := g.byType[typ]
 	if !ok {
 		return nil
 	}
-	// reach[r] means "holding role implies r".
-	reach := map[string]bool{role: true}
+	// reach[r] means "holding relation implies r".
+	reach := map[string]bool{relation: true}
 	// The model is small and shallow; iterate to a fixed point rather than
 	// recursing, which also makes a cycle terminate instead of overflowing.
 	for changed := true; changed; {
@@ -187,14 +279,7 @@ func (g *modelGraph) grantsOf(typ, role string) []string {
 			}
 		}
 	}
-	var out []string
-	for name := range reach {
-		if strings.HasPrefix(name, "can_") {
-			out = append(out, name)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return reach
 }
 
 // roles lists the relations of a type that somebody can hold. Sorted, so the
@@ -234,36 +319,90 @@ func viewOf(ctx context.Context, read func(context.Context, Tuple) ([]Tuple, err
 		if err != nil {
 			return View{}, fmt.Errorf("read %s on %s: %w", role, object, err)
 		}
-		groups := []string{}
+		holders := []Holder{}
 		for _, t := range tuples {
-			groups = append(groups, displayGroup(t.User))
+			holders = append(holders, holderOf(t.User))
 		}
-		sort.Strings(groups)
-		if len(groups) == 0 {
+		sort.Slice(holders, func(a, b int) bool {
+			if holders[a].Kind != holders[b].Kind {
+				return holders[a].Kind < holders[b].Kind
+			}
+			return holders[a].Name < holders[b].Name
+		})
+		if len(holders) == 0 {
 			view.Unheld++
 		}
 		view.Bindings = append(view.Bindings, Binding{
 			Relation: role,
-			Groups:   groups,
+			Holders:  holders,
 			Grants:   g.grantsOf(typ, role),
 		})
 	}
 	return view, nil
 }
 
-// displayGroup turns an OpenFGA user id back into the name a person knows.
-//
-// group:gentian/tenant/demo/admins#member is the Keycloak group
-// gentian:tenant:demo:admins. The mapping is reversible because tenant and
-// profile names are DNS labels and contain no '/', which is the reason the
-// encoding chose that separator. Anything that is not a group is left as it
-// is: a tuple naming a user directly is not something this platform writes,
-// and disguising it as a group would hide exactly that.
-func displayGroup(user string) string {
-	rest, ok := strings.CutPrefix(user, "group:")
-	if !ok {
-		return user
+// appView is the view of one app with the roles its profile declares: who
+// was given each. A declared role carries what user carries, since holding
+// it is holding user.
+func appView(ctx context.Context, read readFunc, tenant, profile string) (View, error) {
+	app := App(tenant, profile)
+	view, err := viewOf(ctx, read, app)
+	if err != nil {
+		return View{}, err
 	}
-	rest, _, _ = strings.Cut(rest, "#")
-	return strings.ReplaceAll(rest, "/", ":")
+	g, err := parseModel(modelV1)
+	if err != nil {
+		return View{}, err
+	}
+	declared, err := declaredRolesOf(ctx, read, tenant, app)
+	if err != nil {
+		return View{}, err
+	}
+	for _, role := range declared {
+		tuples, err := read(ctx, Tuple{Relation: "holder", Object: role})
+		if err != nil {
+			return View{}, fmt.Errorf("read %s: %w", role, err)
+		}
+		holders := []Holder{}
+		for _, t := range tuples {
+			holders = append(holders, holderOf(t.User))
+		}
+		sort.Slice(holders, func(a, b int) bool {
+			if holders[a].Kind != holders[b].Kind {
+				return holders[a].Kind < holders[b].Kind
+			}
+			return holders[a].Name < holders[b].Name
+		})
+		if len(holders) == 0 {
+			view.Unheld++
+		}
+		view.Bindings = append(view.Bindings, Binding{
+			Relation: roleNameOf(role), Holders: holders, Grants: g.grantsOf("app", RoleUser), Declared: true,
+		})
+	}
+	return view, nil
+}
+
+// holderOf turns the holder of an entry into what a person reading the
+// screen knows it as.
+//
+// position:demo/sales-manager#holder is the position sales-manager,
+// group:gentian/platform/admin#member the sign-in service's group
+// gentian:platform:admin (the mapping is reversible because the names it is
+// made from contain no '/'), and user:<id> a person by themselves. Anything
+// else is left as it is, as a person: it is not something the platform
+// writes, and dressing it up would hide exactly that.
+func holderOf(user string) Holder {
+	object, relation, _ := strings.Cut(user, "#")
+	if rest, ok := strings.CutPrefix(object, "position:"); ok && relation == "holder" {
+		_, name, _ := strings.Cut(rest, "/")
+		return Holder{Kind: HolderPosition, Name: name}
+	}
+	if rest, ok := strings.CutPrefix(object, "group:"); ok {
+		return Holder{Kind: HolderGroup, Name: strings.ReplaceAll(rest, "/", ":")}
+	}
+	if rest, ok := strings.CutPrefix(object, "user:"); ok && relation == "" {
+		return Holder{Kind: HolderPerson, Name: rest}
+	}
+	return Holder{Kind: HolderPerson, Name: user}
 }

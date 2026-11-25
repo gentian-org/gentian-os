@@ -10,13 +10,25 @@ SPDX-License-Identifier: MPL-2.0
 
 package registrar
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-// The platform tenant has no members group: its people are the kernel
-// realm's administrators, and an invitation there names what it names.
-func TestThePlatformTenantGetsNoMembersGroup(t *testing.T) {
-	got := withMembers(platformTenant, []string{"gentian:platform:admin"})
-	if len(got) != 1 || got[0] != "gentian:platform:admin" {
-		t.Fatalf("groups = %v", got)
+// The platform tenant's people are the cluster's own, who enter by the
+// roles the Cluster claim gives them: an invitation there gives what it
+// names and nothing unasked. Everywhere else it gives the position user.
+func TestThePlatformTenantsPeopleAreGivenNothingUnasked(t *testing.T) {
+	if got, ok := invitedPositions(platformTenant, nil); !ok || len(got) != 0 {
+		t.Fatalf("positions = %v %v", got, ok)
+	}
+	if got, ok := invitedPositions(platformTenant, []string{"operators"}); !ok || strings.Join(got, ",") != "operators" {
+		t.Fatalf("positions = %v %v", got, ok)
+	}
+	if got, ok := invitedPositions("demo", nil); !ok || strings.Join(got, ",") != "user" {
+		t.Fatalf("positions = %v %v", got, ok)
+	}
+	if _, ok := invitedPositions("demo", []string{"a/b"}); ok {
+		t.Fatal("a name that is none is taken for a position")
 	}
 }

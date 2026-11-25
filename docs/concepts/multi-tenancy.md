@@ -16,7 +16,8 @@ type: concept
 A **tenant** is an organization. Each tenant gets:
 
 - A dedicated Kubernetes namespace (`tenant-{name}`), and a second one
-  (`tenant-{name}-dmz`) for what the tenant publishes to the internet.
+  (`tenant-{name}-dmz`) for what the tenant publishes to the internet, or
+  inside the cluster alone (an inside entry, [edge.md §2](edge.md)).
 - A dedicated Keycloak realm with its own user pool, branding, and
   password policy.
 - Per-app PostgreSQL/MariaDB databases with isolated users.
@@ -320,8 +321,8 @@ Breaking realm ↔ namespace correspondence is a configuration error and must ne
 
 ### 5.2 Identity and Access Management (IAM)
 
-For Keycloak realm structure, the groups that give access to apps, and how
-tenant admin vs member are separated, see [iam.md](iam.md) and
+For Keycloak realm structure, the roles and positions that give access to
+apps, and what a tenant's administrator holds, see [iam.md](iam.md) and
 [admin-console.md](admin-console.md).
 
 ## 6. Database Isolation
@@ -368,14 +369,15 @@ The **tenant admin and tenant user are strictly separate identities**.
 It is strongly recommended that a single person does not use the same
 account for both day-to-day app usage and tenant administration.
 
-**What each sees.** Access to an app is membership of its Keycloak group
-(`gentian:tenant:<t>:app:<profile>`), which OpenFGA holds as `can_use` on the
-app; `can_use` excludes the tenant's administrators. So a member's desktop
-shows apps, and an administrator's shows the administration console and the
-App Store app ([iam.md §1.6](iam.md)). Both roles are given in the
+**What each sees.** Access to an app is a role on it, held directly or
+through a position, which OpenFGA answers as `can_use` on the app. The
+position Tenant administrator holds no role on any app. So a person's
+desktop shows the apps they hold a role on, and an administrator's the
+administration console and the App Store app ([iam.md §1.6](iam.md)). Both
+are given in the
 [administration console](admin-console.md).
 
-**How a tenant is administered.** Tenant admins manage people, groups and
+**How a tenant is administered.** Tenant admins manage people, positions and
 installed apps in the administration console, and install apps with the
 **App Store app** or `kubectl gentian apps`. The store's data is served from
 outside the cluster and its interface is an app on the cluster. Every change

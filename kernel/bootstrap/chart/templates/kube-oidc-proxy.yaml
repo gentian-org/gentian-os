@@ -70,9 +70,10 @@ subjects:
   name: kube-oidc-proxy
   namespace: {{ $ns }}
 ---
-# What the impersonated person is allowed. The group is the kernel realm's
-# platform administrators, the same claim the portal and Argo CD read, so
-# there is one answer to "who administers this cluster" rather than three.
+# What the impersonated person is allowed. The group is the cluster's admin
+# role, as the rights store answers it into the token (gentian_cluster_roles,
+# the claim Argo CD and the vault read too), so there is one answer to "who
+# administers this cluster" rather than three.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -83,8 +84,8 @@ roleRef:
   name: cluster-admin
 subjects:
 - kind: Group
-  # Keycloak emits group paths, so the claim carries the leading slash.
-  name: /gentian:platform:admin
+  # The role's name in the claim, behind the proxy's prefix for it.
+  name: "gentian-cluster:admin"
   apiGroup: rbac.authorization.k8s.io
 ---
 # The proxy serves TLS, and what talks to it is inside the cluster, so the
@@ -164,7 +165,10 @@ spec:
         - "--oidc-issuer-url={{ $issuer }}"
         # The name a person recognizes in an audit log and in a RoleBinding.
         - "--oidc-username-claim=preferred_username"
-        - "--oidc-groups-claim=groups"
+        # The cluster roles the person holds are what Kubernetes sees as
+        # their groups, each behind a prefix that no other group has.
+        - "--oidc-groups-claim=gentian_cluster_roles"
+        - "--oidc-groups-prefix=gentian-cluster:"
         # The issuer is served with a public certificate, so the roots the
         # image ships are what verifies it. Named explicitly because the flag
         # is read whether or not it was set, and an empty path fails at start

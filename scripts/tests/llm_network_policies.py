@@ -443,7 +443,7 @@ def check_console():
         if not want and peers:
             raise Failure(f"for the claim {text!r} the gateway admits the edge: {peers}")
         if want:
-            if len(peers) != 1 or match_labels(peers[0].get("podSelector") or {}, "the edge's pods") != {"app.kubernetes.io/name": "envoy"}:
+            if len(peers) != 1 or match_labels(peers[0].get("podSelector") or {}, "the edge's pods") != {"app.kubernetes.io/name": "envoy", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy"}:
                 raise Failure(f"with the console on the gateway must admit the Gateway's Envoy pods and nothing else of the edge: {peers}")
     # The chart's own default is off as well: rendered by hand, no edge.
     by_hand = by_name(helm("llm", app["path"], "-n", app["namespace"], "--set", f"servicesNamespace={app['namespace']}"))
@@ -524,7 +524,7 @@ def check_egress():
     for server, port in (("database", 5432), ("cache", 6379), ("mock", 8000)):
         if not reaches(gateway, ns, own, workloads[WORKLOAD[server]]["labels"], port, ns):
             raise Failure(f"the gateway cannot reach its {server} on {port}")
-    if not reaches(gateway, edge, {NAME_LABEL: edge}, {"app.kubernetes.io/name": "envoy"}, 10443, ns):
+    if not reaches(gateway, edge, {NAME_LABEL: edge}, {"app.kubernetes.io/name": "envoy", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy"}, 10443, ns):
         raise Failure("the gateway cannot reach the edge's Envoy pods, where id.<kernelDomain> resolves inside the cluster")
     for where, labels, pods_, port in (
         (edge, {NAME_LABEL: edge}, {"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/component": "bouncer"}, 8080),

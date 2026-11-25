@@ -226,8 +226,9 @@ func markJobSucceeded(job *batchv1.Job) {
 // in-process (browser security headers in the SharedKernel stage, app-admin
 // group membership in the AppsAndEdge stage). Without a reachable endpoint the
 // SharedKernel stage requeues forever and tenants never reach Ready. The
-// handler issues admin tokens, accepts realm updates (204), and returns empty
-// arrays for group/member/user list queries. The realm itself reads as
+// handler issues admin tokens, accepts realm updates (204), returns empty
+// arrays for group/member/user list queries, and answers a realm's discovery
+// document and signing keys. The realm itself reads as
 // an empty object, so its settings are always written.
 func startFakeKeycloak() *httptest.Server {
 	mux := http.NewServeMux()
@@ -248,6 +249,20 @@ func startFakeKeycloak() *httptest.Server {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	})
+	// What the mail server's configuration is written from: a realm's issuer
+	// and its signing keys.
+	mux.HandleFunc("/realms/", func(w http.ResponseWriter, r *http.Request) {
+		realm, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/realms/"), "/")
+		w.Header().Set("Content-Type", "application/json")
+		switch rest {
+		case ".well-known/openid-configuration":
+			_, _ = io.WriteString(w, `{"issuer":"https://id.test.example/realms/`+realm+`"}`)
+		case "protocol/openid-connect/certs":
+			_, _ = io.WriteString(w, `{"keys":[{"kid":"k-`+realm+`","alg":"RS256","use":"sig","kty":"RSA","n":"AQAB","e":"AQAB"}]}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	})
 	return httptest.NewServer(mux)
 }
@@ -323,7 +338,7 @@ func TestMain(m *testing.M) {
 		// The mail tests assert the shared Postfix AND Dovecot artifacts, which
 		// is what kernel mode provisions. With this unset the suite would run as
 		// external, where Dovecot is deliberately not configured at all.
-		MailServiceMode: "system",
+		MailServiceMode: "internal",
 		// This suite has no vault, and says so: without the statement a
 		// tenant's deletion stops at the step that destroys its stored
 		// credentials, which is what a deployment missing its vault must do.

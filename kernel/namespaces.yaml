@@ -98,11 +98,11 @@ system:
   # them would make `kubectl get ns` claim a function the cluster does not run.
   - name: system-mail
     function: mail
-    when: mail.serviceMode=system
+    when: mail.serviceMode=internal
     holds: Postfix (the MTA and the DKIM signer, with the per-tenant keys) and Dovecot (the mailbox store); nothing here has a load balancer
   - name: system-mail-dmz
     function: mail-dmz
-    when: mail.serviceMode=system
+    when: mail.serviceMode=internal
     holds: the mail edge — a proxy on :25, :587 and :993 that holds no mail, no user and no key — its load balancer, and the DNS records that point at it
   - name: system-llm
     function: llm

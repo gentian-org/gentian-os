@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -132,7 +133,20 @@ func (r *ComponentReconciler) renderInput(
 		return nil, err
 	}
 	in.Addons = ids
-	if in.AdaptedAddons, err = r.adaptedAddonIDs(ctx, comp, profile); err != nil {
+	roles, err := r.tokenRoles(ctx, comp, profile)
+	if err != nil {
+		return nil, err
+	}
+	in.Roles = roles
+	// The granted hosts outside, in the pods' host table, at the address of
+	// each host's Service on the gateway for outgoing connections. The
+	// reconciler holds the chart until every one is carried.
+	ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+	if err != nil {
+		return nil, err
+	}
+	in.HostAliases = ways.aliases
+	if in.BridgedAddons, err = r.bridgedAddonIDs(ctx, comp, profile); err != nil {
 		return nil, err
 	}
 	// A placed component's configuration is the platform's: it was never
@@ -539,6 +553,15 @@ func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1a
 	if content && metadataHolds(existing, obj) {
 		return false, nil
 	}
+	// A release whose chart or values change is deployed by Helm as a new
+	// revision, later; until then its conditions still say how the revision
+	// before went. The one it holds now is noted, and it is not ready until
+	// a later one has been deployed (renderedReady). A release Helm has not
+	// deployed yet has no revision to wait past.
+	var awaited int64
+	if !content && isRelease(obj) && releaseDeploysChange(existing, obj) {
+		awaited = releaseRevision(existing)
+	}
 	patch := client.MergeFrom(existing.DeepCopy())
 	if !content {
 		for k, v := range obj.Object {
@@ -564,11 +587,60 @@ func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1a
 	for k, v := range obj.GetAnnotations() {
 		existingAnnotations[k] = v
 	}
+	if awaited > 0 {
+		existingAnnotations[releaseRevisionBeforeAnnotation] = strconv.FormatInt(awaited, 10)
+	}
 	existing.SetAnnotations(existingAnnotations)
 	if ownedHere(comp, obj) {
 		existing.SetOwnerReferences(obj.GetOwnerReferences())
 	}
 	return !content, r.Patch(ctx, existing, patch)
+}
+
+// releaseRevisionBeforeAnnotation is, on a Release, the Helm revision it had
+// deployed when the operator last changed what it deploys. provider-helm's
+// conditions carry no observed generation: right after the change they
+// still report the revision before as ready.
+const releaseRevisionBeforeAnnotation = "gentianos.io/helm-revision-before"
+
+// What a Helm upgrade is known to follow from: a change of the chart, or of
+// the inline values. provider-helm compares the values it resolves, not the
+// spec, so a change of set or valuesFrom alone may resolve to the same values
+// -- a value moved from a set entry into a valuesFrom document -- and makes no
+// new revision: waiting for one would wait for ever. The chart is compared one
+// way, as the provider fills in beside what is rendered there; the inline
+// values are the render's own and compared both ways, so a value the render
+// stopped saying counts.
+var (
+	releaseChartPath  = []string{"spec", "forProvider", "chart"}
+	releaseValuesPath = []string{"spec", "forProvider", "values"}
+)
+
+// releaseDeploysChange reports whether writing desired over live is known to
+// make Helm deploy a new revision.
+func releaseDeploysChange(live, desired *unstructured.Unstructured) bool {
+	have, _, _ := unstructured.NestedFieldNoCopy(live.Object, releaseChartPath...)
+	want, _, _ := unstructured.NestedFieldNoCopy(desired.Object, releaseChartPath...)
+	if !covers(have, want) {
+		return true
+	}
+	have, _, _ = unstructured.NestedFieldNoCopy(live.Object, releaseValuesPath...)
+	want, _, _ = unstructured.NestedFieldNoCopy(desired.Object, releaseValuesPath...)
+	return !covers(have, want) || !covers(want, have)
+}
+
+// releaseAwaitsRevision says what a release still waits for when the
+// change last written to it has not been deployed: no revision after the
+// one it held then. Empty when nothing is awaited.
+func releaseAwaitsRevision(release *unstructured.Unstructured) string {
+	before, err := strconv.ParseInt(release.GetAnnotations()[releaseRevisionBeforeAnnotation], 10, 64)
+	if err != nil {
+		return ""
+	}
+	if releaseRevision(release) > before {
+		return ""
+	}
+	return fmt.Sprintf("waiting for the chart to deploy what was written (Helm revision %d is the one before it)", before)
 }
 
 func isJob(obj *unstructured.Unstructured) bool {
@@ -745,6 +817,14 @@ func (r *ComponentReconciler) renderedReady(ctx context.Context, objs []*unstruc
 			return false, fmt.Sprintf("waiting for %s %s", obj.GetKind(), obj.GetName()), nil
 		}
 		if crossplaneObjectReady(live) {
+			// A Ready release may still report the revision before the
+			// change last written to it; one that is not Ready says why
+			// first, below, a Helm error before any revision among it.
+			if isRelease(obj) {
+				if waiting := releaseAwaitsRevision(live); waiting != "" {
+					return false, waiting, nil
+				}
+			}
 			continue
 		}
 		if isRelease(obj) {
@@ -899,4 +979,36 @@ func covers(have, want interface{}) bool {
 	default:
 		return equality.Semantic.DeepEqual(have, want)
 	}
+}
+
+// tokenRoles is what the app's sign-in token says of a person's roles: the
+// in-app names its profile gives its roles, and the ones each add-on
+// activated in it gives its own. Nil when none of them names a role inside
+// the app.
+//
+// The names are the profile's own, not a build's: what a role is called in
+// the app is read where the rights store reads which roles there are.
+func (r *ComponentReconciler) tokenRoles(
+	ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
+) (*apprender.TokenRoles, error) {
+	out := &apprender.TokenRoles{Claim: profile.Spec.Roles.RolesClaim(), InApp: map[string]map[string][]string{}}
+	if names := profile.Spec.Roles.InAppNames(); len(names) > 0 {
+		out.InApp[comp.Spec.ProfileRef.Name] = names
+	}
+	for _, name := range comp.Spec.Addons {
+		addon := &gentianov1alpha1.ComponentProfile{}
+		if err := r.Get(ctx, types.NamespacedName{Name: name}, addon); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		if names := addon.Spec.Roles.InAppNames(); len(names) > 0 {
+			out.InApp[name] = names
+		}
+	}
+	if len(out.InApp) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }

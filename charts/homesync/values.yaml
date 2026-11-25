@@ -1,0 +1,32 @@
+# The image is the platform's own: the home sync is one of its programs.
+image:
+  repository: ghcr.io/gentian-org/gentian-os
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# Set by the platform (the profile's valueMapping).
+tenant: ""
+registrar:
+  url: ""
+existingSecret:
+  # The Secret the platform wrote the database credentials into.
+  name: ""
+
+# The Secrets and the ConfigMap the platform writes for this component, by
+# their names (vouching-<profile>, rights-check-<profile>, and the plan).
+vouchingSecret: vouching-homesync
+keySecret: rights-check-homesync
+planConfigMap: homesync-plan
+
+# The pause between rounds.
+interval: 5m
+
+port: 8080
+
+resources:
+  requests:
+    cpu: 20m
+    memory: 32Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi

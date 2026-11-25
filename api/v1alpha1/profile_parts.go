@@ -30,19 +30,144 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
+// DefaultRolesClaim is the token claim a person's roles on an app are
+// written to where its profile names none.
+const DefaultRolesClaim = "gentian_app_roles"
+
+// ProfileRoles are the roles of an app, as its profile declares them.
+//
+// Every app has user, the lowest, and admin, the highest: admin holds every
+// other role of the app. A profile may leave either without a name inside
+// the app, and then the token says nothing for it.
+//
+// Where at least one role has a name inside the app, the token of a person
+// who signs in through the app's own client carries two claims: the claim
+// named here, with the in-app names of the roles the person holds on the app
+// and on the add-ons activated in it, and that claim's name followed by
+// "_mapped", with every in-app name the platform decides. An app sets the
+// first and takes away the rest of the second; what is in neither is its own
+// to keep. A token the front door exchanges for the app (exchangeToken)
+// carries gentian_app_roles in the platform's names instead: user, admin,
+// the declared roles, and an add-on's as <add-on>/<role>.
+type ProfileRoles struct {
+	// Claim is the token claim the roles are written to. An add-on's is not
+	// read: its roles are written to the claim of the app it is activated in.
+	// +optional
+	// +kubebuilder:default=gentian_app_roles
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[A-Za-z][A-Za-z0-9_-]*$`
+	Claim string `json:"claim,omitempty"`
+
+	// User is what the role user is called inside the app.
+	// +optional
+	User *ProfileRoleNames `json:"user,omitempty"`
+
+	// Admin is what the role admin is called inside the app.
+	// +optional
+	Admin *ProfileRoleNames `json:"admin,omitempty"`
+
+	// Declared are the roles of the app between user and admin.
+	// +optional
+	// +kubebuilder:validation:MaxItems=40
+	// +listType=map
+	// +listMapKey=name
+	Declared []ProfileRole `json:"declared,omitempty"`
+}
+
+// ProfileRoleNames is what a role is called inside the app.
+type ProfileRoleNames struct {
+	// InApp are the app's own names for the role: a group, a role, whatever
+	// the app reads from the claim.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	InApp []string `json:"inApp,omitempty"`
+}
+
+// ProfileRole is a role an app declares beside user and admin.
+type ProfileRole struct {
+	// Name is the role's name on the platform.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:XValidation:rule="!(self in ['user', 'admin'])",message="user and admin are roles every app has"
+	Name string `json:"name"`
+
+	// Title is the role as people read it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=80
+	Title string `json:"title,omitempty"`
+
+	// Description says what the role is for.
+	// +optional
+	// +kubebuilder:validation:MaxLength=400
+	Description string `json:"description,omitempty"`
+
+	// Includes are other declared roles of the app whose holders the holders
+	// of this one are too: manager includes salesman.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	Includes []string `json:"includes,omitempty"`
+
+	// InApp are the app's own names for the role.
+	// +optional
+	// +kubebuilder:validation:MaxItems=20
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=128
+	InApp []string `json:"inApp,omitempty"`
+}
+
+// RolesClaim is the claim the profile's roles are written to.
+func (r *ProfileRoles) RolesClaim() string {
+	if r == nil || r.Claim == "" {
+		return DefaultRolesClaim
+	}
+	return r.Claim
+}
+
+// InAppNames is what each role of the profile is called inside the app, by
+// the role's name on the platform. A role with no name inside the app is
+// left out; nil for a profile that declares no roles.
+func (r *ProfileRoles) InAppNames() map[string][]string {
+	if r == nil {
+		return nil
+	}
+	out := map[string][]string{}
+	if r.User != nil && len(r.User.InApp) > 0 {
+		out["user"] = r.User.InApp
+	}
+	if r.Admin != nil && len(r.Admin.InApp) > 0 {
+		out["admin"] = r.Admin.InApp
+	}
+	for _, role := range r.Declared {
+		if len(role.InApp) > 0 {
+			out[role.Name] = role.InApp
+		}
+	}
+	return out
+}
+
 // ProvisioningSpec declares app-specific user lifecycle mappings.
 type ProvisioningSpec struct {
-	// PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
-	// administrator role (for example the Nextcloud "admin" group).
+	// PrivilegedRole is the in-app administrator role the app's
+	// administrators -- whoever holds admin on it in the rights store -- are
+	// put in, for an app that cannot read its people's roles from a token
+	// (for example the Nextcloud "admin" group).
 	// +optional
 	PrivilegedRole *PrivilegedRoleSpec `json:"privilegedRole,omitempty"`
 
-	// SyncJob is how this app applies PrivilegedRole. The operator resolves
-	// app-admins membership, publishes it, and runs this Job; the script inside
-	// speaks whatever protocol the application happens to expose.
+	// SyncJob is how this app applies PrivilegedRole. The operator reads who
+	// administers and who uses the app from the rights store, publishes both
+	// lists, and runs this Job; the script inside speaks whatever protocol the
+	// application happens to expose.
 	//
-	// The division is deliberate and load-bearing: resolving a Keycloak group,
-	// detecting membership changes and running a Job to completion are platform
+	// The division is deliberate and load-bearing: reading the rights store,
+	// detecting changes and running a Job to completion are platform
 	// concerns, so they live here. Knowing that one app wants a JSON-RPC call
 	// and another an OCS POST is not, so it lives in the catalog entry that
 	// owns that app. No application's protocol, endpoint or account model may
@@ -130,11 +255,11 @@ type ProvisioningSecretKeyRef struct {
 type PrivilegedRoleKind string
 
 const (
-	// PrivilegedRoleKindGroup maps app-admins to an application-native group.
+	// PrivilegedRoleKindGroup puts the app's administrators in an application-native group.
 	PrivilegedRoleKindGroup PrivilegedRoleKind = "group"
 )
 
-// PrivilegedRoleSpec identifies the in-app privileged role for app-admins members.
+// PrivilegedRoleSpec identifies the in-app privileged role of the app's administrators.
 type PrivilegedRoleSpec struct {
 	// Kind is the application's native role type. Only "group" is supported today.
 	// +kubebuilder:validation:Required
@@ -236,6 +361,13 @@ type ServiceRequirements struct {
 	// +optional
 	Vouching *VouchingRequirement `json:"vouching,omitempty"`
 
+	// PersonSecrets declares that the component keeps secrets that belong to
+	// one person each, with the confidant: the lasting credential of a
+	// sign-in a person gave it at a service outside the cluster, for example.
+	// See PersonSecretsRequirement.
+	// +optional
+	PersonSecrets *PersonSecretsRequirement `json:"personSecrets,omitempty"`
+
 	// Partners declares that the component calls apps of partner realms on
 	// a person's behalf, takes such calls, or commissions partners of other
 	// tenants. See PartnersRequirement.
@@ -265,7 +397,7 @@ type ServiceRequirements struct {
 //
 // A run is one pod in the tenant's namespace for runs. It reaches the
 // component that started it, at Callback, and nothing else of the platform:
-// its inputs and outputs, a question to a person and a call to an adapter all
+// its inputs and outputs, a question to a person and a call to a bridge all
 // go through the component, with a credential the component made for that
 // run.
 type RunsRequirement struct {
@@ -391,28 +523,40 @@ type AuthorizationRequirement struct {
 	// +kubebuilder:validation:MaxLength=65536
 	Model string `json:"model"`
 
-	// Groups "mirror" has the platform keep the tenant realm's group
-	// memberships in the store, as tuples
-	// group:<realm>/<group name>#member of user:<realm>/<subject>: every
-	// top-level group of the realm, kept equal to the realm as people join
-	// and leave. The model must define a type group with a relation member
-	// users are written with. A component's own key cannot write a tuple
-	// whose user or object is a group, mirrored or not.
+	// Groups "mirror" is accepted and has no effect: no group of the realm
+	// carries a right, and the platform writes nothing for it. Remove it
+	// from a profile. A component's own key cannot write a tuple whose user
+	// or object is a group.
 	// +optional
 	// +kubebuilder:validation:Enum=mirror
 	Groups string `json:"groups,omitempty"`
+
+	// Roles "handOver" has the platform keep, in the store, the roles each
+	// person holds on the app: one tuple user:<realm>/<subject> holder
+	// role:<name> per role, for user, admin and every role the profile
+	// declares (spec.roles.declared), as the rights store answers them --
+	// through positions, included roles and the base's administrators. The
+	// positions they come through are not handed over. The model must
+	// declare a type role whose relation holder users are written with; the
+	// component's own key may not write a tuple about a role, and the
+	// starting tuples name no role as their object. A role given or taken
+	// in the console reaches the store within seconds.
+	// +optional
+	// +kubebuilder:validation:Enum=handOver
+	Roles string `json:"roles,omitempty"`
 
 	// Tuples are the store's starting tuples, written by the platform and
 	// held to the model when the profile is admitted. One the profile no
 	// longer names is taken out again; what the component wrote itself is
 	// never touched. A store that mirrors groups names no group as an
-	// object here.
+	// object here, and one that is handed roles no role.
 	// +optional
 	// +kubebuilder:validation:MaxItems=100
 	Tuples []AuthorizationTuple `json:"tuples,omitempty"`
 }
 
-// MirrorsGroups reports whether the store holds the realm's memberships.
+// MirrorsGroups reports whether the profile declares groups "mirror",
+// which reserves the type group in its store and mirrors nothing.
 func (a *AuthorizationRequirement) MirrorsGroups() bool {
 	return a != nil && a.Groups == AuthorizationGroupsMirror
 }
@@ -420,6 +564,15 @@ func (a *AuthorizationRequirement) MirrorsGroups() bool {
 // AuthorizationGroupsMirror is requires.services.authorization.groups'
 // one value.
 const AuthorizationGroupsMirror = "mirror"
+
+// HandsOverRoles reports whether the profile declares roles "handOver".
+func (a *AuthorizationRequirement) HandsOverRoles() bool {
+	return a != nil && a.Roles == AuthorizationRolesHandOver
+}
+
+// AuthorizationRolesHandOver is requires.services.authorization.roles' one
+// value.
+const AuthorizationRolesHandOver = "handOver"
 
 // AuthorizationTuple is one relation between a user and an object, as
 // OpenFGA writes it: user:acme/123 is viewer of project:42.
@@ -482,6 +635,21 @@ type PartnersRequirement struct {
 	ServiceAccount string `json:"serviceAccount,omitempty"`
 }
 
+// PersonSecretsRequirement declares that a component keeps secrets of
+// people with the confidant (docs/security/secrets.md).
+//
+// The component is given a key of its own and the confidant's address, in
+// the Secret rights-check-<component> (RIGHTS_CHECK_KEY, CONFIDANT_URL), and
+// the confidant is told the key's digest. With the key the component reads,
+// replaces and removes its own entries of the people of its own tenant, and
+// no other component's. The first entry it keeps for a person needs a token
+// of that person as well: the one the front door hands the component's own
+// page for them (an exposure with exchangeToken).
+//
+// It requires trustTier platform: a secret kept for a person opens what
+// that person may reach somewhere else.
+type PersonSecretsRequirement struct{}
+
 // VouchingRequirement declares that a component vouches for people at the
 // tenant's realm (RFC 7523, the JWT authorization grant).
 //
@@ -495,7 +663,9 @@ type PartnersRequirement struct {
 //     audience);
 //   - delivers the client's secret and what the component has to know in the
 //     Secret vouching-<profile> of the tenant's namespace (VOUCHING_ISSUER,
-//     VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL);
+//     VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL), kept
+//     current, which the component mounts as files and reads when it uses
+//     them;
 //   - gives it the component's own key (the Secret rights-check-<profile>),
 //     as for requires.services.rights.
 //
@@ -514,6 +684,8 @@ type PartnersRequirement struct {
 // issuer: the realm believes nothing it says about anybody.
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || (has(self.exchange) && self.exchange)",message="vouching.keys is required: only a component that does nothing but exchange a present person's token (exchange: true) may leave it out"
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.director) || size(self.director) == 0",message="vouching.director needs vouching.keys: a token for the director is obtained with a signed statement"
+// +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.homes) || !self.homes",message="vouching.homes needs vouching.keys: a person's token for a home is obtained with a signed statement"
+// +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.consent) || self.consent == ''",message="vouching.consent needs vouching.keys: a person is linked to a component that signs statements"
 type VouchingRequirement struct {
 	// Keys says where the component publishes the keys its statements are
 	// signed with, as a JWKS. The realm fetches them from there. Left out
@@ -541,8 +713,37 @@ type VouchingRequirement struct {
 	// (exchangedBy on the entry) names this one. So what the component can
 	// exchange is what came in through such an entry: a person present, who
 	// connected a program and need not be linked.
+	//
+	// A certified component that calls a home as the person
+	// (integrations[].asPerson) and names no keys exchanges too, and only
+	// this: the token the edge hands it on an entry that says exchangeToken
+	// also names its client, and its client is given the scopes of the homes
+	// granted to it and no other. It reaches a home for a person who is
+	// signed in and at its address, and for nobody else.
 	// +optional
 	Exchange bool `json:"exchange,omitempty"`
+
+	// Homes gives the component's client the scopes of the tenant's homes
+	// (home-<profile> for the provider of calendar-store, contacts-store and
+	// file-store), and has the people who sign in to an app that declares
+	// homeSync linked to it: what the platform's home sync acts with. It
+	// needs keys, and trustTier platform as all vouching for any app does.
+	// +optional
+	Homes bool `json:"homes,omitempty"`
+
+	// Consent names the profile of the component whose page asks people
+	// whether this one may speak for them, where that is not this
+	// component's own page. A person is then linked to this component also
+	// on a request to the registrar that carries the token the front door
+	// made out to the named component for that person (exposure
+	// exchangeToken): the token the page holds while the person is on it.
+	// It links the person the token names and nobody else, and opens no
+	// other route. It counts while the named component is installed in the
+	// same tenant, at trustTier platform, with such an exposure.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Consent string `json:"consent,omitempty"`
 }
 
 // DirectorScope is one thing a vouched token may do at the director.
@@ -633,6 +834,14 @@ type RightsRequirement struct {
 	// the key asks the app question alone.
 	// +optional
 	Audit bool `json:"audit,omitempty"`
+	// BreakGlass lets the same key ask one question more, for a person of
+	// the platform tenant: do they hold break_glass on the cluster now
+	// (cluster#break_glass): named on the Cluster claim, until their
+	// expiresAt. It is for a component that hands such a
+	// person a short-lived credential, and is honored for a component of the
+	// platform tenant only, as Audit is.
+	// +optional
+	BreakGlass bool `json:"breakGlass,omitempty"`
 }
 
 // LLMRequirement declares that a component uses the platform's model gateway.
@@ -655,14 +864,14 @@ type RightsRequirement struct {
 type LLMRequirement struct {
 	// Optional means the component runs without the gateway. While the
 	// cluster serves no models, or the component's key is not delivered yet,
-	// it is released all the same: without credentials, without a network
-	// path to the gateway, and told so through valueMapping.llm.availableKey.
-	// When the key arrives the component is rendered again with it.
+	// it is released all the same: without credentials and without a network
+	// path to the gateway. When the key arrives the component is rendered
+	// again with it.
 	//
-	// Honored for a component the platform places on tenants itself. For an
-	// app a tenant installs the requirement holds the release as if this
-	// were not set: its chart's values read the key from where it is kept,
-	// and its release cannot be rendered without it.
+	// A component the platform places on tenants itself is told so through
+	// valueMapping.llm.availableKey. An app a tenant installs is given
+	// neither valueMapping.llm.baseUrlKey nor apiKeyKey until then, so its
+	// chart's defaults for the two are what say there is no gateway.
 	// +optional
 	Optional bool `json:"optional,omitempty"`
 }
@@ -1210,6 +1419,8 @@ type MCPRequirement struct {
 // APIIntegration configures how an ApiProfile (deploymentMethod: api) reaches
 // its backing external service. No workload pods are created; the operator only
 // contributes catalog and portal metadata.
+//
+// +kubebuilder:validation:XValidation:rule="has(self.baseUrl) != has(self.backend)",message="an api names where it is answered once: baseUrl, or backend for a bridge"
 type APIIntegration struct {
 	// Runtime selects how the tenant reaches the external service.
 	// redirect sends the browser to baseUrl (default).
@@ -1221,10 +1432,18 @@ type APIIntegration struct {
 	Runtime APIIntegrationRuntime `json:"runtime,omitempty"`
 
 	// BaseURL is the external service origin (e.g. https://service.example).
-	// +kubebuilder:validation:Required
+	// Every entry packaged as an api names one, except a bridge, which names
+	// a backend.
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:Pattern=`^https?://.+`
-	BaseURL string `json:"baseUrl"`
+	BaseURL string `json:"baseUrl,omitempty"`
+
+	// Backend is the Service of the tenant a bridge is answered by: the
+	// Service of the app it connects, which speaks the bridge's protocols
+	// itself. Runtime, TenantBinding and Tile say nothing of such an entry.
+	// +optional
+	Backend *APIBackend `json:"backend,omitempty"`
 
 	// TenantBinding declares how the tenant is identified to the external
 	// service. tenant-domain appends the tenant effective domain as a query
@@ -1398,7 +1617,7 @@ type PlatformValueMapping struct {
 
 	// RegistrarURLKey receives the registrar's in-cluster URL: where a
 	// console relays, with the person's own token, the managing of a
-	// tenant's people and groups. Like the two above, naming it is what
+	// tenant's people and what they hold. Like the two above, naming it is what
 	// opens the component's egress to the control namespace.
 	//
 	// The registrar serves the paths the director served for people, so a
@@ -1503,6 +1722,19 @@ type PlatformValueMapping struct {
 	// name it.
 	// +optional
 	DesktopURLKey string `json:"desktopUrlKey,omitempty"`
+
+	// DesktopHostKey receives the host the desktop answers on in the
+	// component's zone, from the desktop profile's first gateway entry, and
+	// the empty string where there is no desktop. A component sends a person
+	// back there after something it started for them in the desktop, at an
+	// address the platform states rather than one a request names.
+	//
+	// Like the URL keys above it is more than a fact: naming it is also what
+	// lets the desktop's API reach the component, in-cluster, on the ports of
+	// the component's own gateway entries, so the desktop can call it with
+	// the person's own token. Only a platform-trust profile may name it.
+	// +optional
+	DesktopHostKey string `json:"desktopHostKey,omitempty"`
 }
 
 // IntegrationValueMapping maps integration credentials to Helm chart keys.
@@ -1516,6 +1748,13 @@ type IntegrationValueMapping struct {
 	// PasswordKey is the Helm value key for the integration password.
 	// +optional
 	PasswordKey string `json:"passwordKey,omitempty"`
+	// HomeScopeKey is the Helm value key for the scope the component asks
+	// the tenant's realm a person's token for the home with, for a contract
+	// it calls as the person (spec.integrations[].asPerson). The operator
+	// sets it while the tenant's administrator grants the contract, and
+	// leaves it out otherwise. A name, not a credential.
+	// +optional
+	HomeScopeKey string `json:"homeScopeKey,omitempty"`
 }
 
 // OIDCValueMapping maps OIDC provider values to Helm chart keys.
@@ -2161,6 +2400,7 @@ type VolumeValueMapping struct {
 }
 
 // ContractRef identifies an integration contract this app provides.
+// +kubebuilder:validation:XValidation:rule="!has(self.files) || self.name == 'file-store'",message="files is for the contract file-store"
 type ContractRef struct {
 	// Name is the contract name (e.g., "file-store", "project-management").
 	// +kubebuilder:validation:Required
@@ -2179,7 +2419,70 @@ type ContractRef struct {
 	// to the provider's pods as a whole.
 	// +optional
 	Endpoint *ContractEndpoint `json:"endpoint,omitempty"`
+
+	// Files is what a provider of file-store says about itself beyond
+	// WebDAV, so that the platform's file dialog (the porter) can show a
+	// person their files and name one of them. Without it the dialog does
+	// not offer this provider.
+	// +optional
+	Files *FileHomeFacts `json:"files,omitempty"`
 }
+
+// FileHomeFacts are the three things WebDAV leaves open and a file home
+// declares: where a person's files start, which property holds a file's id,
+// and the address that opens a file by that id.
+type FileHomeFacts struct {
+	// Root is where a person's files start, as a path below the contract's
+	// endpoint. "{principal}" stands for the last part of the address the
+	// home names as the person's principal (DAV:current-user-principal).
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._~/-]*(\{principal\}[A-Za-z0-9._~/-]*)?$`
+	Root string `json:"root"`
+
+	// IDProperty is the WebDAV property that holds a file's id: one that
+	// stays the same when the file is moved or renamed, and is the same for
+	// everybody who may see the file. Written "{namespace}name".
+	// +kubebuilder:validation:MinLength=3
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^\{[^{}\s]+\}[A-Za-z_][A-Za-z0-9._-]*$`
+	IDProperty string `json:"idProperty"`
+
+	// Open is the address that opens a file by its id in a browser.
+	Open FileOpenAddress `json:"open"`
+}
+
+// FileOpenAddress is where a file home opens a file by its id: one of the
+// provider's own gateway entries and a path on it. Whoever follows it is
+// asked by the home, signed in as themselves.
+type FileOpenAddress struct {
+	// Entry is the name of the provider's gateway entry (expose[].name).
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Entry string `json:"entry"`
+
+	// Path is the path on that entry, with "{id}" where the id goes. It
+	// carries the id and nothing else of the file.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._~/?=&-]*\{id\}[A-Za-z0-9._~/?=&-]*$`
+	Path string `json:"path"`
+}
+
+// FileDialogUse is one thing an app asks the platform's file dialog for.
+// +kubebuilder:validation:Enum=pick;open;save
+type FileDialogUse string
+
+const (
+	// FileDialogPick has the person choose a file; the app is told its
+	// name, its id and the address that opens it.
+	FileDialogPick FileDialogUse = "pick"
+	// FileDialogOpen has the person choose a file the app's page then reads,
+	// and writes back to.
+	FileDialogOpen FileDialogUse = "open"
+	// FileDialogSave has the person choose where the app's page writes a
+	// file.
+	FileDialogSave FileDialogUse = "save"
+)
 
 // ContractEndpoint is the Service and port a provider answers a contract on.
 type ContractEndpoint struct {
@@ -2205,6 +2508,8 @@ type ContractEndpoint struct {
 }
 
 // IntegrationRef identifies an optional integration contract this app can consume.
+// +kubebuilder:validation:XValidation:rule="!has(self.asPerson) || !self.asPerson || self.contract in ['file-store', 'calendar-store', 'contacts-store']",message="asPerson is for a home's contract: file-store, calendar-store or contacts-store"
+// +kubebuilder:validation:XValidation:rule="!has(self.dialog) || self.dialog.size() == 0 || self.contract == 'file-store'",message="dialog is for the contract file-store"
 type IntegrationRef struct {
 	// Contract is the name of the contract to consume.
 	// +kubebuilder:validation:Required
@@ -2218,4 +2523,38 @@ type IntegrationRef struct {
 	// Capabilities lists the specific capabilities required from the contract.
 	// +optional
 	Capabilities []string `json:"capabilities,omitempty"`
+
+	// AsPerson says the app calls the contract's provider -- the tenant's
+	// home for that kind of data -- as the person it acts for, with that
+	// person's rights there, for as long as the tenant's administrator
+	// grants the contract. The tenant's realm gives it a token valid at that
+	// provider and nowhere else, in one of two ways.
+	//
+	// An app that acts while the person is away signs statements as a
+	// vouching component does (requires.services.vouching.keys). A person is
+	// linked when they sign in to the app, and the app obtains their token
+	// from then on.
+	//
+	// An app that acts only while the person is present names no keys
+	// (requires.services.vouching.exchange): it exchanges the token the edge
+	// hands it for that person. Nobody is linked, and it obtains a token for
+	// nobody who is not signed in at its address at that moment.
+	//
+	// For file-store, calendar-store and contacts-store only.
+	// +optional
+	AsPerson bool `json:"asPerson,omitempty"`
+
+	// Dialog says the app's pages ask the platform's file dialog (the
+	// porter) for files, and what for: pick, open, save. The person chooses
+	// in a window of the platform's, and the page is handed what they chose
+	// and nothing else: a picked file's name, id and address, or a handle
+	// for the one file to read or write. The app is given no token for the
+	// home and its server reaches no file. It holds while the tenant's
+	// administrator grants the contract.
+	//
+	// For file-store only.
+	// +optional
+	// +kubebuilder:validation:MaxItems=3
+	// +listType=set
+	Dialog []FileDialogUse `json:"dialog,omitempty"`
 }

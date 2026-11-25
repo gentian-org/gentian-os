@@ -98,11 +98,9 @@ pairs, and only the reserved pair is priced:
 | `storage` | `requests.storage` | Already request-shaped; PVCs reserve what they ask for |
 
 The rule deciding what belongs in a plan is that a plan is a quantity of
-capacity, so its fields are the ones that become ResourceQuota keys. `maxApps`
-becomes none — the Tenant admission webhook enforces it against `spec.apps` —
-so it is a policy limit set per cluster or per tenant, and no plan touches it in
-either direction. Writing it would sell a policy as capacity; nulling it would
-have a plan change quietly delete a cluster's app cap.
+capacity, so its fields are the ones that become ResourceQuota keys. How many
+apps a tenant installs is no such quantity and is not limited: what the apps
+reserve and use is.
 
 The catalog's limits multiples — 4× CPU, 2× memory — come from that table
 rather than from a round number. A tighter ceiling would refuse pods on a plan
@@ -326,6 +324,26 @@ cluster's administrator. Whatever takes the order (a person, or a commerce
 backend that moves tenants once they paid) moves the tenant through the
 director's route in §7.
 
+The tenant's administrator may also ask the cluster's administrators
+directly. A request names the plan and an optional reason; the director
+commits it as `plan-request.yaml`, a patch of annotations on the Tenant
+(`gentianos.io/plan-request`, `-by`, `-at`, `-reason`), so the operator
+hands it out with the tenant's resources (`request`) and the cluster's view
+lists every tenant's. One request per tenant: a new one replaces it.
+
+```
+PUT    /v1/clusters/{c}/tenants/{t}/resources/request   can_administer (tenant)   {"plan": "nodes-2", "reason": "..."}
+DELETE /v1/clusters/{c}/tenants/{t}/resources/request   can_administer (tenant), or can_configure
+```
+
+A plan the tenant is on, a retired plan or an unknown one is refused (`409`,
+`409`, `404`); a plan the tenant does not fit under may be asked for, and
+forcing it is the cluster's administrator's decision. The cluster's
+administrator answers by moving the tenant (§7), which removes the request in
+the same commit, or by declining it (`DELETE`). The tenant's administrator
+withdraws it the same way. Nobody is notified: the request is shown where it
+is answered.
+
 A component that does it unattended speaks for a cluster administrator who
 linked themselves to it: a component of the platform tenant that declares
 `requires.services.vouching.director` obtains a short-lived token of that
@@ -436,11 +454,13 @@ The reads are the usher's and the write is the director's, each guarded by the
 relation named:
 
 ```
-GET  /v1/tenants/{t}/resources                 can_view       plan, ceiling, committed, live, ordering notice
+GET  /v1/tenants/{t}/resources                 can_view       plan, ceiling, committed, live, ordering notice, pending request
 GET  /v1/tenants/{t}/resources/plans           can_view       catalogue, with blocked reasons
 GET  /v1/tenants/{t}/resources/usage           can_view       thinned sample series
 GET  /v1/tenants/{t}/resources/report          can_view       billable plan intervals
 PUT  /v1/clusters/{c}/tenants/{t}/resources    can_configure  {"plan": "nodes-2", "force": false}
+PUT  /v1/clusters/{c}/tenants/{t}/resources/request     can_administer  a request for another plan (§5)
+DELETE /v1/clusters/{c}/tenants/{t}/resources/request   can_administer or can_configure  withdraw or decline it
 GET  /v1/clusters/{c}/resources                can_audit      every tenant's state, for the cluster's view
 GET  /v1/clusters/{c}/resources/report         can_audit      every tenant's billable intervals over one window
 ```

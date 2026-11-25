@@ -34,6 +34,10 @@ func ArbiterPodLabels() map[string]string {
 	return map[string]string{"app.kubernetes.io/name": "arbiter", "app.kubernetes.io/part-of": "gentian-os"}
 }
 
+// ConfidantPort is the confidant's listener (cmd/confidant, CONFIDANT_ADDR:
+// charts/gentian-os/values.yaml, confidant.port).
+const ConfidantPort = int32(9446)
+
 // RegistrarPort is the registrar's listener (internal/registrar, REGISTRAR_ADDR:
 // the two must agree).
 const RegistrarPort = int32(9445)
@@ -67,7 +71,9 @@ func ContractNetworkPolicies(
 	if consumer == "" || provider == "" || consumer == provider {
 		return nil
 	}
-	effective := EffectiveContractCapabilities(binding, grant)
+	// The file dialog's capabilities open nothing between the two: the
+	// porter, not the consumer, reaches the home.
+	effective := ReachCapabilities(binding, grant)
 	if len(effective) == 0 {
 		return nil
 	}

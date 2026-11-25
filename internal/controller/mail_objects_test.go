@@ -210,7 +210,7 @@ func mailPinCluster(t *testing.T) (*controller.TenantReconciler, client.Client, 
 	}
 	objects = append(objects, tenant)
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(objects...).Build()
-	r := &controller.TenantReconciler{Client: c, MailServiceMode: "system", KernelDomain: "example.test", KernelRealm: "kernel"}
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "internal", KernelDomain: "example.test", KernelRealm: "kernel"}
 	return r, c, tenant
 }
 
@@ -392,7 +392,7 @@ func TestMail_NotReadyWhileTheMapPostfixMountsLacksTheDomain(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: layout.System("mail")}},
 	).Build()
-	r := &controller.TenantReconciler{Client: c, MailServiceMode: "system", KernelDomain: "example.test"}
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "internal", KernelDomain: "example.test"}
 	ctx := context.Background()
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "relay"},
@@ -540,7 +540,7 @@ func TestMail_RealmCredentialIsMintedBeforeTheRealm(t *testing.T) {
 
 	t.Run("the cluster's own mail: minted, and the same on the next pass", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(mailNS()).Build()
-		r := &controller.TenantReconciler{Client: c, MailServiceMode: "system", KernelDomain: "example.org", TenancyMode: "multi"}
+		r := &controller.TenantReconciler{Client: c, MailServiceMode: "internal", KernelDomain: "example.org", TenancyMode: "multi"}
 		tenant := newTenant("team", "")
 		if err := r.EnsureRealmMailCredentialForTest(ctx, tenant); err != nil {
 			t.Fatalf("mint: %v", err)
@@ -583,10 +583,10 @@ func TestMail_RealmCredentialIsMintedBeforeTheRealm(t *testing.T) {
 		tenant *gentianov1alpha1.Tenant
 		mailNS bool
 	}{
-		{"a relay", controller.TenantReconciler{MailServiceMode: "external", KernelDomain: "example.org"}, newTenant("team", ""), true},
-		{"no mail function composed", controller.TenantReconciler{MailServiceMode: "system", KernelDomain: "example.org"}, newTenant("team", ""), false},
-		{"a tenant that is not registered in the cluster's mail", controller.TenantReconciler{MailServiceMode: "system", KernelDomain: "example.org"}, newTenant("team", gentianov1alpha1.MailModeTransportOnly), true},
-		{"the tenant that adopts the kernel realm", controller.TenantReconciler{MailServiceMode: "system", KernelDomain: "example.org", KernelRealm: "kernel"},
+		{"a relay", controller.TenantReconciler{MailServiceMode: "relay", KernelDomain: "example.org"}, newTenant("team", ""), true},
+		{"no mail function composed", controller.TenantReconciler{MailServiceMode: "internal", KernelDomain: "example.org"}, newTenant("team", ""), false},
+		{"a tenant that is not registered in the cluster's mail", controller.TenantReconciler{MailServiceMode: "internal", KernelDomain: "example.org"}, newTenant("team", gentianov1alpha1.MailModeTransportOnly), true},
+		{"the tenant that adopts the kernel realm", controller.TenantReconciler{MailServiceMode: "internal", KernelDomain: "example.org", KernelRealm: "kernel"},
 			func() *gentianov1alpha1.Tenant {
 				tn := newTenant("platform", "")
 				tn.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
@@ -641,14 +641,14 @@ func TestMail_RealmMailIsStatedOnceItsPasswordExists(t *testing.T) {
 		return sec
 	}
 	supplied := map[string]string{
-		"smtp_configure": "true", "mail_service_mode": "external",
+		"smtp_configure": "true", "mail_service_mode": "relay",
 		"smtp_host": "relay.example.org", "smtp_port": "465", "smtp_ssl": "true", "smtp_starttls": "false",
 		"smtp_user": "relay-user", "smtp_password": "relay-secret", "smtp_from": "noreply@example.org",
 	}
 
 	t.Run("a relay, supplied: its host and login, and the password by name", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(relay(supplied)).Build()
-		r := &controller.TenantReconciler{Client: c, MailServiceMode: "external", KernelDomain: "example.org", KernelRealm: "kernel"}
+		r := &controller.TenantReconciler{Client: c, MailServiceMode: "relay", KernelDomain: "example.org", KernelRealm: "kernel"}
 		got, err := r.TenantRealmMailForTest(ctx, tenant("team", "", false))
 		if err != nil {
 			t.Fatal(err)
@@ -674,7 +674,7 @@ func TestMail_RealmMailIsStatedOnceItsPasswordExists(t *testing.T) {
 		}
 		notYet["smtp_configure"], notYet["smtp_user"], notYet["smtp_password"] = "false", "", ""
 		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(relay(notYet)).Build()
-		r := &controller.TenantReconciler{Client: c, MailServiceMode: "external", KernelDomain: "example.org", KernelRealm: "kernel"}
+		r := &controller.TenantReconciler{Client: c, MailServiceMode: "relay", KernelDomain: "example.org", KernelRealm: "kernel"}
 		if got, err := r.TenantRealmMailForTest(ctx, tenant("team", "", false)); err != nil || got != nil {
 			t.Fatalf("before the credential: got %v, %v; want none", got, err)
 		}
@@ -693,7 +693,7 @@ func TestMail_RealmMailIsStatedOnceItsPasswordExists(t *testing.T) {
 
 	t.Run("no Secret at all: no mail server", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
-		r := &controller.TenantReconciler{Client: c, MailServiceMode: "external", KernelDomain: "example.org", KernelRealm: "kernel"}
+		r := &controller.TenantReconciler{Client: c, MailServiceMode: "relay", KernelDomain: "example.org", KernelRealm: "kernel"}
 		if got, err := r.TenantRealmMailForTest(ctx, tenant("team", "", false)); err != nil || got != nil {
 			t.Fatalf("got %v, %v; want none", got, err)
 		}
@@ -703,7 +703,7 @@ func TestMail_RealmMailIsStatedOnceItsPasswordExists(t *testing.T) {
 	// nothing otherwise -- the kernel realm's login in keycloak-smtp-credentials
 	// is never a tenant realm's.
 	kernelLogin := relay(map[string]string{
-		"smtp_configure": "true", "mail_service_mode": "system", "smtp_host": "mail.example.org", "smtp_port": "587",
+		"smtp_configure": "true", "mail_service_mode": "internal", "smtp_host": "mail.example.org", "smtp_port": "587",
 		"smtp_user": "gentian-system@example.org", "smtp_password": "kernel-secret", "smtp_from": "noreply@example.org",
 	})
 	for _, tc := range []struct {
@@ -720,7 +720,7 @@ func TestMail_RealmMailIsStatedOnceItsPasswordExists(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(mailNS.DeepCopy(), kernelLogin.DeepCopy()).Build()
-			r := &controller.TenantReconciler{Client: c, MailServiceMode: "system", KernelDomain: "example.org", KernelRealm: "kernel", TenancyMode: "multi"}
+			r := &controller.TenantReconciler{Client: c, MailServiceMode: "internal", KernelDomain: "example.org", KernelRealm: "kernel", TenancyMode: "multi"}
 			if tc.mint {
 				if err := r.EnsureRealmMailCredentialForTest(ctx, tc.tenant); err != nil {
 					t.Fatal(err)
@@ -771,7 +771,7 @@ func TestMail_RealmMailKeysAreInTheXTenantSchema(t *testing.T) {
 		Data: map[string][]byte{"smtp_configure": []byte("true"), "smtp_host": []byte("relay.example.org"),
 			"smtp_user": []byte("relay-user"), "smtp_password": []byte("x")},
 	}).Build()
-	r := &controller.TenantReconciler{Client: c, MailServiceMode: "external", KernelDomain: "example.org", KernelRealm: "kernel"}
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "relay", KernelDomain: "example.org", KernelRealm: "kernel"}
 	got, err := r.TenantRealmMailForTest(context.Background(),
 		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "team", Namespace: "default"}})
 	if err != nil || got == nil {

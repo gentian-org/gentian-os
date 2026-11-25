@@ -208,6 +208,16 @@ func run(log *slog.Logger) error {
 		definitions = schemacheck.Cached(func() (schemacheck.Report, error) {
 			return client.Definitions(context.Background())
 		}, schemacheck.DefaultSourceTTL, nil)
+		// And a tenant's manifest is put to the cluster before it is
+		// committed: applied as a dry run by the operator, which answers
+		// what the Tenant webhook and the schema would. A manifest the
+		// cluster would refuse is one Argo CD applies nothing of, with
+		// every later change to that tenant held up behind it. An operator
+		// that cannot be asked holds nothing back.
+		repo.GuardTenants(client.AdmitTenant, func(tenant string, err error) {
+			log.Warn("the cluster could not be asked whether it takes a tenant's manifest; the change is committed unasked",
+				"tenant", tenant, "error", err)
+		})
 	}
 	// The dispatcher carries out what is done once and follows nothing
 	// declared. It admits this process as the operator does, by a token
@@ -264,6 +274,7 @@ func run(log *slog.Logger) error {
 	// (internal/director/catalogue/address.go): an address somebody typed
 	// must not be a way to reach into the cluster this process runs in.
 	entries := catalogue.NewFetcher()
+	entries.CacheFor = durationFromEnv(log, "DIRECTOR_CATALOGUE_CACHE")
 	// A catalog may instead be an OCI artifact, read with the credential of
 	// a repository its owner declared: a tenant's for a tenant's catalog,
 	// the cluster's for one of the whole cluster. The declaration is read
@@ -316,13 +327,16 @@ func run(log *slog.Logger) error {
 		envvar.Or("DIRECTOR_COMMISSION_KEYS", "/etc/gentian/commission/keys.json"), 5*time.Second, log, api.CommissionKeysList)
 
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
-		Catalogue:      entries,
-		StoreURL:       storeURL,
-		Cluster:        cluster,
-		Lifecycle:      lc,
-		Acts:           acts,
-		CommissionKeys: commissionKeys,
-		CallerLimit:    api.CallerLimitFromEnv()})
+		TakeOutRefused:      true,
+		RecordEgressAnswers: true,
+		Catalogue:           entries,
+		StoreURL:            storeURL,
+		Cluster:             cluster,
+		Lifecycle:           lc,
+		Acts:                acts,
+		CommissionKeys:      commissionKeys,
+		UpdaterEvery:        durationFromEnv(log, "DIRECTOR_UPDATER_EVERY"),
+		CallerLimit:         api.CallerLimitFromEnv()})
 	if err != nil {
 		return err
 	}
@@ -455,4 +469,20 @@ func seedPlatformSecurity(repo *gitops.GitOps, raw string, log *slog.Logger) {
 			"attempt", attempt, "error", err.Error())
 		time.Sleep(time.Minute)
 	}
+}
+
+// durationFromEnv reads a Go duration from the environment. Unset, empty, or
+// not a positive duration is zero, which leaves the director's own default;
+// one that cannot be read is said in the log.
+func durationFromEnv(log *slog.Logger, name string) time.Duration {
+	raw := envvar.Or(name, "")
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Warn("not a positive duration; the default is kept", "variable", name, "value", raw)
+		return 0
+	}
+	return d
 }

@@ -101,7 +101,8 @@ whether anybody may make an account in its realm themselves
 (`--self-sign-up`, `spec.signUp.enabled`). The command says what that opens
 before it asks the director: a registration page at the cluster's identity
 provider, an e-mail confirmation and a proof-of-work check, and accounts that
-are in none of the tenant's groups and so have nothing of the platform's. For
+hold only the positions `spec.signUp.positions` names, none by default, and
+so have nothing of the platform's otherwise. For
 a tenant whose apps serve the public, not for a workspace
 ([iam.md §1.1b](../concepts/iam.md)):
 
@@ -457,7 +458,9 @@ kubectl gentian apps list --tenant demo --available                  # what the 
 kubectl gentian apps install xwiki-ce --tenant demo                  # the build the catalog lists
 kubectl gentian apps install xwiki-ce --tenant demo --from in-house  # when several catalogues serve the name
 kubectl gentian apps install xwiki-ce --tenant demo --digest sha256:<64 hex>   # a build you name yourself
-kubectl gentian apps install xwiki-ce --tenant demo --for-everyone   # and grants it to every member
+kubectl gentian apps install xwiki-ce --tenant demo --positions sales,support   # and gives it to these positions
+kubectl gentian apps install xwiki-ce --tenant demo --approve-egress # and approves the outbound access it asks for
+kubectl gentian apps install xwiki-ce --tenant demo --grant-integrations # and grants what it consumes of the tenant's other apps
 kubectl gentian apps uninstall xwiki-ce --tenant demo            # removes the app, keeps its data
 kubectl gentian apps uninstall xwiki-ce --tenant demo --purge    # removes the app, then destroys its data
 kubectl gentian apps outdated [--tenant demo]                     # which installs are behind their catalog, and why they stay
@@ -520,8 +523,8 @@ did.
 
 **Uninstalling** removes the app from the tenant: its workloads and its
 sign-in client go, and everything it stored stays — its database, its object
-storage, its cache user, its files, its stored credentials, and the access
-group with everybody who is in it. The app is then *retained*: uninstalled,
+storage, its cache user, its files, its stored credentials, and who holds a
+role on it in the rights store. The app is then *retained*: uninstalled,
 data retained. Installing it again in the same tenant finds all of it.
 A backup taken after the uninstall goes on holding that data, as an
 uninstalled app's; a backup asked for some apps only names the ones it left
@@ -557,12 +560,35 @@ safe to repeat, and running the command again continues with what is left.
 What each act keeps and destroys, kind by kind, is in
 [store-contract.md](../concepts/store-contract.md) §8.
 
-`--for-everyone` writes `defaultGrant: true` on the app's entry in the same
-commit. Every member of the tenant then has the app by default: the people who
-are members when the app's group first exists are added to it once, and
-somebody invited later has it preselected. It needs the right to grant in the
-tenant as well as to install. Without the flag, access is given per person
+`--positions` names the positions of the tenant the app is given to, written
+on the app's entry in the same commit: the holders of each then use it. It
+needs the right to grant in the tenant as well as to install. The position
+All apps (`all-apps`) uses every installed app without being named, and User
+(`user`) is the desktop alone and gives no app. Without the flag, the app is
+given to positions or people in the Admin Console
 ([store-contract.md](../concepts/store-contract.md) §3).
+
+An install first says what the build, and the apps it comes with, ask for
+beyond the tenant: each egress request that would wait for an approval, with
+its hosts and the profile's reason. `--approve-egress` approves those requests
+with the install: each is recorded as a grant by you, as `apps approve` records
+one. A request marked `hostsAtApproval` is not approved with the install; it
+waits for `apps approve` with its hosts. It needs the perimeter approver's right in the tenant
+(`can_approve_privilege`); without that right nothing is installed. Without the
+flag the app is installed and waits for the approver.
+
+It also lists what the build consumes of the tenant's other apps: each
+contract with its capabilities. `--grant-integrations` grants those with the
+install, each with exactly what the build asks for. It needs the right to grant
+in the tenant (`can_grant`); without that right nothing is installed. Without
+the flag the integrations wait for a grant in the Admin Console.
+
+And the entries behind sign-in that keep the app's own `Authorization`
+header, which wait for the perimeter approver like any entry under
+`exposures requests`. `--approve-authorization` approves those with the
+install, each recorded as `exposures approve` records one, by you. It needs
+the right to approve the tenant's entries (`can_expose`); without that right
+nothing is installed. A public address is never approved with an install.
 
 Inspect app reconciliation:
 
@@ -577,16 +603,15 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 `--env`/`--stage` flag; they always target the one cluster selected by
 `GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
 
-### Groups, and people of another tenant signing in
+### People of another tenant signing in
 
-A tenant's own groups are declared in git, made by the platform and filled
-in the Admin Console. People of another tenant of the cluster may sign in to
-a tenant with their account there, given some of its groups (`members`, or
-its own); see [identity-brokering.md](../guides/identity-brokering.md).
+People of another tenant of the cluster may sign in to a tenant with their
+account there, given some of its positions when they arrive (`user`, or
+positions the tenant declares); see
+[identity-brokering.md](../guides/identity-brokering.md).
 
 ```bash
-kubectl gentian tenants groups customers website-editors store-editors
-kubectl gentian tenants sign-in customers --from team --groups website-editors,members
+kubectl gentian tenants sign-in customers --from team --positions website-editor,user
 kubectl gentian tenants sign-in customers                 # what it declares
 ```
 
@@ -611,7 +636,8 @@ way out to an address (`egress`), a relaxed pod security (`podSecurity`),
 cluster roles (`clusterRoles`), types of its own (`apiExtensions`) -- waits
 until a person answers each request;
 its component reads `waiting for approval of <kind>/<name>`. The answer is a
-commit through the director, with you as the approver and your reason in it.
+commit through the director, with you as the approver. `--reason` adds a
+comment of yours to it and may be left out.
 An `egress` request is the tenant's perimeter approver's to answer (and the
 cluster's administrator's, in a tenant the cluster operates); a `podSecurity`
 request and a cluster role that reads are the cluster's security officer's;
@@ -620,13 +646,24 @@ the same as a button, to whoever holds the right the request needs.
 
 ```bash
 kubectl gentian apps approve aluvian-commerce --tenant team     # what it waits for
+kubectl gentian apps approve aluvian-commerce egress/intake --tenant team
 kubectl gentian apps approve aluvian-commerce egress/intake --tenant team \
-  --reason "reads the website's and the store's order requests over https"
+  --reason "reads the website's and the store's order requests over https"   # with a comment
 ```
 
 An `apiExtensions` approval names the definitions it approves: the command
 sends the digest the cluster reports for the pending request, and a later
 change to them waits for a new approval.
+
+An egress request marked `hostsAtApproval` names no hosts of its own: its
+installation chooses them, such as the operator's own ERP. Its approval names
+them, one `--host` each, with a port where it is not 443, and opens those
+hosts and no others. The command refuses such an approval without a host.
+
+```bash
+kubectl gentian apps approve operations-sync-ee egress/backends --tenant team \
+  --host erp.example.org --host files.example.org:8443
+```
 
 `--expires <RFC 3339>` bounds the approval. Removing the entry from the
 tenant's `privileges.yaml` in git withdraws it, and the app waits again.
@@ -668,6 +705,32 @@ waiting, but the tenant's console and the App Store's install step show who
 declined, when and why, and offer to ask again. Asking again clears the
 decline, as does an approval made after it.
 
+An approval is taken back with `apps withdraw`, by whoever may approve a
+request of the kind. It is one commit: the request waits for an answer
+again, and the platform takes away what the approval gave.
+
+```bash
+kubectl gentian apps withdraw aluvian-commerce egress/intake --tenant team
+```
+
+A tenant can keep **trusted domains** of its own, beside those the cluster
+trusts (`PlatformSecurityPolicy` `spec.trustedDomains`): an `egress` request
+that names hosts is granted without a further answer when every host is in a
+trusted domain, or under one. The list is the tenant's
+`spec.trustedDomains.domains`. The cluster's administrator says whether the
+tenant keeps one (`spec.trustedDomains.delegated`), and the tenant's
+perimeter approver then adds and removes domains; a list that is not
+delegated answers nothing. The Admin Console's Perimeter page offers the same
+to the perimeter approver.
+
+```bash
+kubectl gentian tenants delegate-trusted-domains team on    # the cluster's administrator: team may keep a list
+kubectl gentian trusted-domains list --tenant team
+kubectl gentian trusted-domains add example.org --tenant team      # covers example.org and every name under it
+kubectl gentian trusted-domains remove example.org --tenant team   # a request it answered waits for an answer again
+kubectl gentian tenants delegate-trusted-domains team off   # the list stays and answers nothing
+```
+
 What was approved, for every tenant at once, is read with `cluster#can_audit`
 from the director's `GET /v1/clusters/{c}/privileges` -- `200 {"cluster",
 "privileges": [{"tenant","install","privilege","approver","approvedAt",
@@ -695,11 +758,19 @@ kubectl gentian exposures withdraw cloud share --tenant demo
 
 `requests` shows every entry an installed app declares for the internet: its
 kind, the address it is published at, its paths, who can reach it, and its
-state. The same list carries the one request that is not a public address:
-an entry behind sign-in that asks to keep the app's own `Authorization`
-header (KIND "Behind sign-in: keeps the app's own Authorization header").
-It is approved, reviewed and withdrawn with the same commands, and nothing
-is published for it.
+state. The same list carries the requests that are not a public address,
+each approved, reviewed and withdrawn with the same commands:
+
+- an entry behind sign-in that asks to keep the app's own `Authorization`
+  header (KIND "Behind sign-in: keeps the app's own Authorization header");
+  nothing is published for it;
+- an inside entry (`surface: inside`, kind `insideAppCredential`, KIND
+  "Inside the cluster only: passes the caller's credential to the app"): its
+  address is known to the cluster's own DNS alone, and only pods of the
+  cluster whose component was granted the host as egress reach it
+  ([edge.md §2](../concepts/edge.md)). `approve` prints that it puts nothing
+  on the internet, then the address, paths, kind, access and limit.
+
 `requested` is declared and not approved, so nothing is published.
 `approved`, `review due` and `expired` are as in `list`, with who approved it
 and until when. `unmatched` is an entry in the registry that matches no entry
@@ -709,8 +780,9 @@ Whoever may see the tenant may read the list.
 Under SIGN-IN, `none: anyone` means anyone on the internet reaches the paths
 without signing in, and no credential is passed to the app. `none: the app
 checks the credential` is a public address whose callers' `Authorization`
-header is passed to the app (`authMode: app`). The platform checks nobody at
-a published address in either case. `required` is an entry behind sign-in.
+header is passed to the app (`authMode: app`), or an inside entry. The
+platform checks nobody at a published or inside address in either case.
+`required` is an entry behind sign-in.
 KIND, and everything `approve` prints about an entry, are the director's own
 words.
 
@@ -980,23 +1052,23 @@ kubectl gentian tenants activate-admin <tenant> [--recovery-email <address>]
 ./install.sh --activate-admin                        # the platform admin
 ```
 
-The first asks the registrar, which changes nothing about a member of a
-group that holds a platform role or a person of the platform tenant who
-holds one by name, and answers 403 for the platform admin's
-account. That account's link comes from the install host, with the installer's
+The first asks the registrar, which changes nothing about a person of the
+platform tenant the Cluster claim names a role holder, and answers 403 for
+the platform admin's account. That account's link comes from the install host, with the installer's
 own credential — which is also the way in when nobody can sign in.
 
 ### Cluster roles held by name
 
-`admin` and `breakGlass` are held through a group of the kernel realm
-(`spec.platformRoles`). Every other cluster role is held by a person the
-cluster's administrator names on the Cluster claim, who keeps their own
-account: an entry of `spec.platformAccess.roleHolders`, with a reason and an
+Every cluster role is held by a person the cluster's administrator names on
+the Cluster claim, who keeps their own account; while the claim names no
+`admin`, the account the install made holds that role. Each is an entry of `spec.platformAccess.roleHolders`, with a reason and an
 optional expiry ([iam.md §1.1c](../concepts/iam.md)). The role is held only with a
 token of that person's realm, and used from their tenant's console.
 
 | Role | Who may be named | Scope |
 |---|---|---|
+| `admin` -- administering the cluster (`can_configure`, `can_deploy_tenant`) | a person of the platform tenant | `cluster` |
+| `breakGlass` -- admission overlays and raw file edits (`can_set_admission`, `can_edit_raw`), with a reason and until a time | a person of the platform tenant | `cluster` |
 | `securityOfficer` -- approving what escapes the default posture: a pod-security waiver, a cluster role, `trustTier: platform` (`cluster#can_approve`) | a person of the platform tenant, or an administrator of another tenant | `cluster` |
 | `auditor` -- reading across the cluster (`cluster#can_audit`) | the same | `cluster` |
 | `serviceAdmin` -- the claim's system section (`can_operate_system`) | a person of the platform tenant | `cluster` |
@@ -1007,7 +1079,7 @@ token of that person's realm, and used from their tenant's console.
 ```bash
 kubectl gentian platform-roles candidates                               # who could hold one: the platform tenant's people, every other tenant's administrators
 kubectl gentian platform-roles holders                                  # ROLE SCOPE TENANT LOGIN EMAIL EXPIRES REASON IN EFFECT, as the claim declares
-kubectl gentian platform-roles members                                  # who holds admin and breakGlass through their kernel Keycloak group
+kubectl gentian platform-roles members                                  # the platform tenant's people the claim names, by role, as the kernel realm knows them
 kubectl gentian platform-roles review [--next <RFC 3339>]              # show both, type "reviewed", and the review is one commit
 kubectl gentian platform-roles holders add securityOfficer acme it@acme.example --reason "acme's CISO approves waivers"   # one commit
 kubectl gentian platform-roles holders add perimeterApprover acme it@acme.example --reason "acme publishes its shop" --expires 2027-06-30T00:00:00Z
@@ -1032,7 +1104,8 @@ The director's routes, all on the Cluster claim:
 | `DELETE /v1/clusters/{c}/platform-roles/holders/{role}/{tenant}/{subject}` | `can_configure` | | `202` or `200 unchanged`, as above |
 
 Who holds a role over the cluster is reviewed on an interval. `review` shows
-the group members and the holders, refuses a list the registrar could not read
+the platform tenant's holders as the kernel realm knows them and the holders
+as the claim names them, refuses a list the registrar could not read
 in full, and records the review once you type `reviewed`: the claim's
 `spec.platformAccess.accessReview` keeps who reviewed, when, and when the next
 one is due (a quarter later unless `--next` names a date within the year), and
@@ -1049,11 +1122,14 @@ The holders answer carries `"accessReview": {"reviewedAt","reviewedBy","nextRevi
 The candidates are the registrar's: `GET /v1/clusters/{c}/role-candidates`,
 `can_configure`, answers `200 {"cluster", "complete", "tenants": [{"tenant","displayName","realm","platform","people": [...],"unavailable"}]}`.
 
-The members of the `admin` and `breakGlass` groups are the registrar's to read, from the
-kernel realm, and Keycloak's to change: `GET /v1/clusters/{c}/platform-role-members`,
-`can_audit`, answers `200 {"cluster", "complete", "roles": [{"role","group","members": [{"id","username","email",...}],
-"unavailable"}]}`; a group that could not be read has `members: null`,
-`unavailable: true` and makes `complete` false.
+The platform tenant's role holders, as the kernel realm knows them now, are
+the registrar's to read: `GET /v1/clusters/{c}/platform-role-members`,
+`can_audit`, answers `200 {"cluster", "complete", "roles": [{"role","members": [{"id","username","email",...}],
+"unavailable"}]}`, one line per role the claim names a holder of the platform
+tenant for. A holder the realm could not be asked about, or no longer knows,
+is listed as the claim names them, with `unavailable: true` on the role and
+`complete` false. Who holds a role is changed on the claim only (`holders
+add`/`remove`).
 
 The other way round, a tenant's administrators may let the platform's
 administrators sign in to their tenant: the switch is the tenant's own, off by
@@ -1061,7 +1137,7 @@ default, and it is not the tenant's `operated_by` consent (that one covers the
 director, this one the sign-in).
 
 ```bash
-kubectl gentian tenants platform-access acme on      # members of gentian:platform:admin may enter acme as its administrators
+kubectl gentian tenants platform-access acme on      # the cluster's administrators may enter acme as its administrators
 kubectl gentian tenants platform-access acme off
 ```
 
@@ -1077,8 +1153,7 @@ kubectl get secret keycloak-idp-credentials -n kernel-authentication \
 ```
 
 ArgoCD has no local admin: D-03 sets `admin.enabled: "false"` and deletes
-`argocd-initial-admin-secret`. Sign in through Keycloak as a member of
-`gentian:platform:admin`. Break glass, when Keycloak itself is down, is
+`argocd-initial-admin-secret`. Sign in through Keycloak as an administrator of the cluster. Break glass, when Keycloak itself is down, is
 kubectl in the gitops namespace: set a new password, switch the account on,
 and reach the server by port-forward (the edge needs Keycloak too):
 
@@ -1126,8 +1201,8 @@ bao login -method=oidc -path=oidc role=cluster-admin   # opens a browser; sign i
 export BAO_TOKEN="$(bao print token)"
 ```
 
-The `cluster-admin` role admits the platform administrators' group and may
-read and write `secret/gentian-os/kernel/*`. After the handover this is the
+The `cluster-admin` role admits a token whose `gentian_cluster_roles` names
+`admin`, the cluster's administrators, and may read and write `secret/gentian-os/kernel/*`. After the handover this is the
 only way in: the installer's own token is revoked by `E-03`.
 `scripts/recovery.sh --from-vault` and the `bao kv get` examples in §11 and
 in [reference/install.md](install.md) §4 assume `BAO_ADDR` and
@@ -1152,7 +1227,18 @@ kubectl get tenant -o custom-columns=NAME:.metadata.name,GATEWAY:.status.conditi
 # Envoy policies attached to routes
 kubectl get backendtrafficpolicy -n tenant-demo
 kubectl get backendtrafficpolicy -n kernel-edge -l app.kubernetes.io/managed-by=gentian-os
+
+# Inside entries and outgoing connections: classes of their own (installer step A-05)
+kubectl get gatewayclass gentian-envoy-inside gentian-envoy-out
+kubectl get gateway inside -n kernel-edge                 # exists while an inside entry is approved
+kubectl get gateway -n kernel-edge | grep outgoing        # outgoing-<n>, from the first grant on
+kubectl get component <app> -n tenant-demo -o jsonpath='{.status.outgoingHosts}'
+kubectl -n kernel-edge logs <outgoing Envoy pod> -c envoy # one JSON line per connection: host, port, client, bytes
 ```
+
+A Component that waits for its listener on the outgoing gateway reads
+`OutgoingGatewayPending`. The whole edge, both directions:
+[edge.md](../concepts/edge.md).
 
 On `networkMode: tunnel`, `Gateway.status.conditions[Programmed]` may be
 `False` (`AddressNotAssigned`) while listener conditions are `Programmed=True`
@@ -1184,19 +1270,20 @@ needs no pack entry. See [app-profile-guide.md](https://github.com/gentian-org/g
 
 **Two knobs:** `spec.mail.serviceMode` on the **Cluster claim**
 (`clusters/<cluster>/kernel/claims/cluster.yaml` in the deployments
-repository) says whether the cluster runs its own mail servers (`system`) or
-relays through a provider (`external`, the default).
+repository) says whether the cluster runs its own mail servers (`internal`),
+relays through a provider (`relay`, the default), or has its mail on a server
+outside it (`external`).
 **`Tenant.spec.mail.mode`** controls what the **operator** provisions per
 tenant. See [mail.md](../concepts/mail.md) §0.
 
-**Tunnel clusters:** `mail.serviceMode: system` is refused with
+**Tunnel clusters:** `mail.serviceMode: internal` is refused with
 `networkMode: tunnel`, at pre-flight. A tunnel carries HTTP and HTTPS only;
-use `external` there.
+use `relay` or `external` there.
 
-### What runs where under `system`
+### What runs where under `internal`
 
 No installer step deploys mail. The `gentian-mail` ApplicationSet exists only
-while the claim says `system`, and syncs three charts:
+while the claim says `internal`, and syncs three charts:
 
 | Application | Namespace | What it is |
 |---|---|---|
@@ -1220,7 +1307,7 @@ its own connection, with the PROXY protocol switched on at both ends
 spec:
   networkMode: static-ip
   mail:
-    serviceMode: system
+    serviceMode: internal
 ```
 
 Edit the claim in the deployments checkout and run `./install.sh`: step 0
@@ -1243,13 +1330,13 @@ DKIM and DMARC records; it publishes no address record before the load
 balancer has one. The PTR of the address mail leaves from is set at the
 provider ([mail.md §10](../concepts/mail.md#10-dns-for-real-mail)).
 
-### Switch back to external relay mode
+### Switch back to relay mode
 
 ```yaml
 # clusters/<cluster>/kernel/claims/cluster.yaml
 spec:
   mail:
-    serviceMode: external
+    serviceMode: relay
     host: smtp.example.com
     port: 587
     ssl: false

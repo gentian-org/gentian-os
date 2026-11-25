@@ -222,8 +222,6 @@ metadata:
   namespace: kernel-provisioning
 spec:
   kernelDomain: sandbox.example.test
-  platformRoles:
-    admin: gentian:platform:admin
   networkMode: tunnel
 EOF
     printf 'apiVersion: gentianos.io/v1alpha1\nkind: Repository\nmetadata:\n  name: deployments\nspec:\n  type: git\n' > "${CLUSTER_DIR}/kernel/claims/deployments-repository.yaml"

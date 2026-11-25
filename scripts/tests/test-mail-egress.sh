@@ -20,7 +20,10 @@
 #     back to the name, whatever the case and with the trailing dot dig prints;
 #   - step 0 asks for the name on a cluster that runs its own mail, refuses an
 #     address typed there, takes a blank, and does not ask a cluster that
-#     relays.
+#     relays;
+#   - step 0 takes the three mail modes: it asks a cluster whose mail is on a
+#     server outside it for that server's two addresses, does not offer the
+#     cluster's own mail behind a tunnel, and refuses a mode's former name.
 #
 # No cluster and no network.
 # =============================================================================
@@ -69,52 +72,71 @@ run() {
 echo "rc=$?"' 2>&1
 }
 
-out="$(run check_mail_egress MAIL_SERVICE_MODE=external MAIL_EGRESS_HOST=out.example.org)"
+out="$(run check_mail_egress MAIL_SERVICE_MODE=relay MAIL_EGRESS_HOST=out.example.org)"
 check "a cluster that relays its mail is not asked anything" '[[ "${out}" == "rc=0" ]]' "${out}"
 
-out="$(run check_mail_egress MAIL_SERVICE_MODE=system)"
+out="$(run check_mail_egress MAIL_SERVICE_MODE=internal)"
 check "its own mail and no egress host: a warning, and the install goes on" \
     'grep -q "rc=0" <<<"${out}" && grep -q "shared address" <<<"${out}"' "${out}"
 
-out="$(run check_mail_egress MAIL_SERVICE_MODE=system MAIL_EGRESS_HOST=out.example.org)"
+out="$(run check_mail_egress MAIL_SERVICE_MODE=internal MAIL_EGRESS_HOST=out.example.org)"
 check "an egress host and no node with an external address: stopped" \
     'grep -q "rc=1" <<<"${out}" && grep -q "no node reports an external address" <<<"${out}"' "${out}"
 
-out="$(run check_mail_egress MAIL_SERVICE_MODE=system MAIL_EGRESS_HOST=out.example.org "FAKE_NODE_ADDRS=192.0.2.10 192.0.2.11")"
+out="$(run check_mail_egress MAIL_SERVICE_MODE=internal MAIL_EGRESS_HOST=out.example.org "FAKE_NODE_ADDRS=192.0.2.10 192.0.2.11")"
 check "two nodes with different external addresses: stopped, and both are named" \
     'grep -q "rc=1" <<<"${out}" && grep -q "192.0.2.10 192.0.2.11" <<<"${out}"' "${out}"
 
-out="$(run check_mail_egress MAIL_SERVICE_MODE=system MAIL_EGRESS_HOST=out.example.org FAKE_NODE_ADDRS=192.0.2.10)"
+out="$(run check_mail_egress MAIL_SERVICE_MODE=internal MAIL_EGRESS_HOST=out.example.org FAKE_NODE_ADDRS=192.0.2.10)"
 check "the address resolves back to nothing: stopped" \
     'grep -q "rc=1" <<<"${out}" && grep -q "resolves back to nothing" <<<"${out}"' "${out}"
 
-out="$(run check_mail_egress MAIL_SERVICE_MODE=system MAIL_EGRESS_HOST=out.example.org FAKE_NODE_ADDRS=192.0.2.10 FAKE_PTR=ip-10.provider.example.)"
+out="$(run check_mail_egress MAIL_SERVICE_MODE=internal MAIL_EGRESS_HOST=out.example.org FAKE_NODE_ADDRS=192.0.2.10 FAKE_PTR=ip-10.provider.example.)"
 check "the address resolves back to the provider's name: stopped, and the name is said" \
     'grep -q "rc=1" <<<"${out}" && grep -q "resolves back to ip-10.provider.example" <<<"${out}"' "${out}"
 
-out="$(run check_mail_egress MAIL_SERVICE_MODE=system MAIL_EGRESS_HOST=out.example.org FAKE_NODE_ADDRS=192.0.2.10 FAKE_PTR=Out.Example.org.)"
+out="$(run check_mail_egress MAIL_SERVICE_MODE=internal MAIL_EGRESS_HOST=out.example.org FAKE_NODE_ADDRS=192.0.2.10 FAKE_PTR=Out.Example.org.)"
 check "one node, and the address resolves back to the name: passed" \
     'grep -q "rc=0" <<<"${out}" && grep -q "mail leaves from 192.0.2.10" <<<"${out}"' "${out}"
 
-out="$(run check_mail_egress MAIL_SERVICE_MODE=system MAIL_EGRESS_HOST=out.example.org "FAKE_NODE_ADDRS=192.0.2.10 192.0.2.10" FAKE_PTR=out.example.org.)"
+out="$(run check_mail_egress MAIL_SERVICE_MODE=internal MAIL_EGRESS_HOST=out.example.org "FAKE_NODE_ADDRS=192.0.2.10 192.0.2.10" FAKE_PTR=out.example.org.)"
 check "the same address reported twice is one address" 'grep -q "rc=0" <<<"${out}"' "${out}"
 
 # Step 0. NETWORK_MODE=static-ip is what makes the mail mode a question at all.
 ask='prompt_mail_mode; echo "host=${MAIL_EGRESS_HOST:-<unset>}"'
-out="$(printf 'out.example.org\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=system KERNEL_DOMAIN=example.org)"
+out="$(printf 'out.example.org\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=internal KERNEL_DOMAIN=example.org)"
 check "its own mail: step 0 asks for the egress host and keeps the answer" \
     'grep -q "host=out.example.org" <<<"${out}" && grep -q "rc=0" <<<"${out}"' "${out}"
 
-out="$(printf '192.0.2.10\nout.example.org\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=system KERNEL_DOMAIN=example.org)"
+out="$(printf '192.0.2.10\nout.example.org\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=internal KERNEL_DOMAIN=example.org)"
 check "an address typed for the name is refused and the question asked again" \
     'grep -q "That is an address" <<<"${out}" && grep -q "host=out.example.org" <<<"${out}"' "${out}"
 
-out="$(printf '\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=system KERNEL_DOMAIN=example.org)"
+out="$(printf '\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=internal KERNEL_DOMAIN=example.org)"
 check "a blank answer is taken, and what it means is said" \
     'grep -q "host=<unset>" <<<"${out}" && grep -q "shared address" <<<"${out}" && grep -q "rc=0" <<<"${out}"' "${out}"
 
-out="$(printf 'smtp.example.net\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=external KERNEL_DOMAIN=example.org)"
+out="$(printf 'smtp.example.net\n' | run "${ask}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=relay KERNEL_DOMAIN=example.org)"
 check "a cluster that relays is not asked for an egress host" \
     'grep -q "host=<unset>" <<<"${out}" && ! grep -q "egressHost" <<<"${out}"' "${out}"
+
+# The mode itself: three words, and where the mail server is outside the
+# cluster, the two addresses it is reached at.
+ask_mode='prompt_mail_mode; echo "mode=${MAIL_SERVICE_MODE} imap=${MAIL_IMAP_HOST:-<unset>} smtp=${EXTERNAL_SMTP_HOST:-<unset>}"'
+out="$(printf 'external\nimap.example.net\nsmtp.example.net\n' | run "${ask_mode}" NETWORK_MODE=tunnel KERNEL_DOMAIN=example.org)"
+check "a mail server outside the cluster: step 0 asks where it is read and where it is sent through, behind a tunnel too" \
+    'grep -q "mode=external imap=imap.example.net smtp=smtp.example.net" <<<"${out}" && grep -q "rc=0" <<<"${out}"' "${out}"
+
+out="$(printf 'internal\nrelay\nsmtp.example.net\n' | run "${ask_mode}" NETWORK_MODE=tunnel KERNEL_DOMAIN=example.org)"
+check "behind a tunnel the cluster's own mail is not on offer" \
+    'grep -q "Invalid value .internal." <<<"${out}" && grep -q "mode=relay" <<<"${out}"' "${out}"
+
+out="$(run "${ask_mode}" NETWORK_MODE=tunnel MAIL_SERVICE_MODE=external GENTIAN_NONINTERACTIVE=1 KERNEL_DOMAIN=example.org </dev/null)"
+check "external with nowhere to read mail is refused, and the refusal names relay" \
+    'grep -q "mail.imap.host" <<<"${out}" && grep -q "relay" <<<"${out}" && ! grep -q "rc=0" <<<"${out}"' "${out}"
+
+out="$(run "${ask_mode}" NETWORK_MODE=static-ip MAIL_SERVICE_MODE=system GENTIAN_NONINTERACTIVE=1 KERNEL_DOMAIN=example.org </dev/null)"
+check "the name the cluster's own mail had is refused, and the refusal names internal" \
+    'grep -q "now called .internal." <<<"${out}" && ! grep -q "rc=0" <<<"${out}"' "${out}"
 
 finish

@@ -11,6 +11,7 @@ SPDX-License-Identifier: MPL-2.0
 package registrar_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,30 +22,23 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/registrar"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
-// The registrar does not change who holds a platform role, whoever asks.
+// The registrar does not change the account of who holds a cluster role,
+// whoever asks.
 //
 // These run the real Keycloak client behind the real routes, against a realm
 // that answers like Keycloak, so what is shown is the whole path: a caller
 // the store ALLOWS asks for each thing the rule covers, is answered 403, and
-// nothing is written to the realm. And they run once for every role the
-// Cluster claim's schema can name, with the group read off a claim the way
-// the registrar reads it: the rule is the same for all of them.
-//
-// The group here is named in the tenant's own subtree rather than
-// gentian:platform:admin. The routes compose a new group's name under the
-// tenant's prefix and refuse the label "admin" before anything else looks at
-// it, so with the default name "create a group of that name" could not be
-// asked through a route at all; with this one every refusal below is the
-// rule's own. It also shows the name is whatever the Cluster claim says, not
-// a constant. The default name is covered where the rule lives
-// (identity/guard_test.go).
-const chiefs = "gentian:tenant:demo:chiefs"
+// nothing is written to the realm. And they run once for each of several
+// roles, with the holder read off a claim the way the registrar reads it:
+// the rule is the same for all of them, the cluster's administrator
+// included.
 
 // realm is enough of Keycloak for the rule to be asked and for a refused
 // write to be noticed.
@@ -78,13 +72,6 @@ func (k *realm) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	custom := map[string][]string{identity.CustomGroupAttribute: {"true"}}
-	groups := []map[string]any{
-		{"id": "g-chiefs", "name": chiefs, "path": "/" + chiefs, "attributes": custom},
-		{"id": "g-sales", "name": "gentian:tenant:demo:sales", "path": "/gentian:tenant:demo:sales", "attributes": custom},
-		// Every tenant realm has it, and every invitation puts the person in it.
-		{"id": "g-members", "name": "gentian:tenant:demo:members", "path": "/gentian:tenant:demo:members"},
-	}
 	users := map[string]map[string]any{
 		"root1": {"id": "root1", "username": "admin@demo." + dt.KernelDomain, "enabled": true, "emailVerified": true},
 		"u1":    {"id": "u1", "username": "ada@demo." + dt.KernelDomain, "enabled": true, "emailVerified": true},
@@ -92,16 +79,6 @@ func (k *realm) serve(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/admin/realms/demo")
 	answer := func(v any) { _ = json.NewEncoder(w).Encode(v) }
 	switch {
-	case path == "/groups":
-		answer(groups)
-	case strings.HasPrefix(path, "/groups/"):
-		for _, g := range groups {
-			if path == "/groups/"+g["id"].(string) {
-				answer(g)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNotFound)
 	case path == "/users":
 		out := []any{}
 		for _, u := range users {
@@ -110,13 +87,6 @@ func (k *realm) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		answer(out)
-	case strings.HasSuffix(path, "/groups") && strings.HasPrefix(path, "/users/"):
-		// root1 holds the platform role under test; u1 is in sales.
-		if strings.HasPrefix(path, "/users/root1/") {
-			answer(groups[:1])
-			return
-		}
-		answer(groups[1:2])
 	case strings.HasSuffix(path, "/credentials"):
 		answer([]map[string]string{{"id": "otp1", "type": "otp"}})
 	case strings.HasPrefix(path, "/users/"):
@@ -130,9 +100,8 @@ func (k *realm) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// startAgainstARealm runs the routes against a realm whose group chiefs holds
-// the platform role the Cluster claim names it for under role, a field of
-// spec.platformRoles.
+// startAgainstARealm runs the routes against a realm whose account root1 the
+// Cluster claim names a holder of role, as a person of the platform tenant.
 func startAgainstARealm(t *testing.T, role string) (*harness, *realm) {
 	t.Helper()
 	k := &realm{}
@@ -140,13 +109,15 @@ func startAgainstARealm(t *testing.T, role string) (*harness, *realm) {
 	t.Cleanup(kc.Close)
 	reader := fake.NewClientBuilder().WithScheme(scheme(t)).WithObjects(
 		claim("main", layout.Namespace(layout.Provisioning),
-			map[string]any{"platformRoles": map[string]any{role: chiefs}})).Build()
+			map[string]any{"platformAccess": map[string]any{"roleHolders": []any{
+				map[string]any{"role": role, "tenant": "platform", "subject": "root1", "username": "administrator"},
+			}}})).Build()
 	client, err := identity.New(identity.Config{
 		BaseURL: kc.URL,
 		Source:  identity.StaticSource{"demo": {Realm: "demo", ClientID: identity.ClientID, ClientSecret: "s"}},
 		// What the registrar reads off the Cluster claim, read the way it
 		// reads it.
-		PlatformRoleGroups: registrar.ClaimPlatformRoleGroups(reader),
+		PlatformRoleHolders: registrar.ClaimPlatformRoleHolders(reader),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -154,8 +125,8 @@ func startAgainstARealm(t *testing.T, role string) (*harness, *realm) {
 	return startWithIdentity(t, client), k
 }
 
-func TestTheRoutesRefuseToChangeWhoHoldsAPlatformRole(t *testing.T) {
-	for _, role := range platformRoleFields(t) {
+func TestTheRoutesRefuseToChangeWhoHoldsAClusterRole(t *testing.T) {
+	for _, role := range []string{"admin", "breakGlass", "securityOfficer", "auditor"} {
 		t.Run(role, func(t *testing.T) { theRoutesRefuse(t, role) })
 	}
 }
@@ -165,17 +136,6 @@ func theRoutesRefuse(t *testing.T, role string) {
 	for _, c := range []struct {
 		what, path, body string
 	}{
-		{"adding somebody to the group", "set-membership",
-			`{"person":"u1","group":"` + chiefs + `","member":true}`},
-		{"removing somebody from the group", "set-membership",
-			`{"person":"root1","group":"` + chiefs + `","member":false}`},
-		{"inviting somebody into the group", "invite-person",
-			`{"email":"eve@example.com","groups":["` + chiefs + `"]}`},
-		{"renaming the group", "rename-group", `{"group":"` + chiefs + `","name":"former"}`},
-		{"deleting the group", "delete-group", `{"group":"` + chiefs + `"}`},
-		{"creating a group of that name", "create-group", `{"name":"chiefs"}`},
-		{"renaming another group to that name", "rename-group",
-			`{"group":"gentian:tenant:demo:sales","name":"chiefs"}`},
 		{"changing a role holder's address", "update-person",
 			`{"person":"root1","email":"eve@example.com"}`},
 		{"disabling a role holder", "update-person", `{"person":"root1","enabled":false}`},
@@ -197,8 +157,8 @@ func theRoutesRefuse(t *testing.T, role string) {
 		if status != http.StatusForbidden {
 			t.Errorf("%s: answered %d %v, want 403", c.what, status, body)
 		}
-		if msg, _ := body["error"].(string); !strings.Contains(msg, "holds a platform role") || !strings.Contains(msg, chiefs) {
-			t.Errorf("%s: the refusal should say why and name the group: %v", c.what, body)
+		if msg, _ := body["error"].(string); !strings.Contains(msg, "holds a cluster role") {
+			t.Errorf("%s: the refusal should say why: %v", c.what, body)
 		}
 		if w := k.wrote(); len(w) != 0 {
 			t.Errorf("%s: refused, and still wrote %v", c.what, w)
@@ -206,8 +166,8 @@ func theRoutesRefuse(t *testing.T, role string) {
 	}
 }
 
-// The rule is about the holders of platform roles and nobody else: the same
-// acts on another person, and another group, go through.
+// The rule is about the holders of cluster roles and nobody else: the same
+// acts on another person go through.
 func TestEverybodyElseIsManagedAsBefore(t *testing.T) {
 	for _, c := range []struct {
 		what, path, body string
@@ -216,13 +176,7 @@ func TestEverybodyElseIsManagedAsBefore(t *testing.T) {
 		{"removing somebody", "remove-person", `{"person":"u1"}`},
 		{"removing somebody's second factor", "remove-totp", `{"person":"u1"}`},
 		{"mailing somebody a password link", "send-password-reset", `{"person":"u1"}`},
-		{"putting somebody in another group", "set-membership",
-			`{"person":"u1","group":"gentian:tenant:demo:sales","member":true}`},
-		{"putting a role holder in another group", "set-membership",
-			`{"person":"root1","group":"gentian:tenant:demo:sales","member":true}`},
-		{"inviting somebody", "invite-person",
-			`{"email":"eve@example.com","groups":["gentian:tenant:demo:sales"]}`},
-		{"deleting another group", "delete-group", `{"group":"gentian:tenant:demo:sales"}`},
+		{"inviting somebody", "invite-person", `{"email":"eve@example.com"}`},
 	} {
 		h, k := startAgainstARealm(t, "admin")
 		status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/"+c.path,
@@ -233,5 +187,84 @@ func TestEverybodyElseIsManagedAsBefore(t *testing.T) {
 		if len(k.wrote()) == 0 {
 			t.Errorf("%s: nothing was written", c.what)
 		}
+	}
+}
+
+// The group routes are gone: what a person holds is a position or a role in
+// the rights store, and an invitation that names groups is refused whole.
+func TestNothingIsDoneWithGroups(t *testing.T) {
+	h, k := startAgainstARealm(t, "admin")
+	token := h.token(t, "tenant-demo", "tom")
+	for _, c := range []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/tenants/demo/groups", ""},
+		{http.MethodGet, "/v1/tenants/demo/group-members?group=x", ""},
+		{http.MethodPost, "/v1/tenants/demo/actions/set-membership", `{"person":"u1","group":"x","member":true}`},
+		{http.MethodPost, "/v1/tenants/demo/actions/create-group", `{"name":"sales"}`},
+		{http.MethodPost, "/v1/tenants/demo/actions/delete-group", `{"group":"x"}`},
+		{http.MethodPost, "/v1/tenants/demo/actions/rename-group", `{"group":"x","name":"y"}`},
+	} {
+		if status, body := h.do(t, c.method, c.path, token, c.body); status != http.StatusNotFound && status != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s: answered %d %v, want no such route", c.method, c.path, status, body)
+		}
+	}
+	if status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person", token,
+		`{"email":"eve@example.com","groups":["gentian:tenant:demo:sales"]}`); status != http.StatusBadRequest {
+		t.Errorf("an invitation into a group: answered %d %v, want 400", status, body)
+	}
+	if w := k.wrote(); len(w) != 0 {
+		t.Errorf("wrote %v", w)
+	}
+}
+
+// A tenant that shares a realm manages its own people and nobody else's:
+// who they are is the rights store's answer, the holders of its position
+// user. The realm's other accounts are not found, and are not written to.
+func TestATenantThatSharesARealmManagesItsOwnPeopleAlone(t *testing.T) {
+	k := &realm{}
+	kc := httptest.NewServer(http.HandlerFunc(k.serve))
+	t.Cleanup(kc.Close)
+	client, err := identity.New(identity.Config{
+		BaseURL:             kc.URL,
+		Source:              identity.StaticSource{"demo": {Realm: "demo", ClientID: identity.ClientID, ClientSecret: "s"}},
+		PlatformRoleHolders: func(context.Context) ([]string, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := registrar.Tenant{Name: "solo", Realm: "demo", LoginDomain: "solo." + dt.KernelDomain}
+	h := startWithTenants(t, client, nil, fakeTenants{"demo": ownRealm("demo"), "solo": shared}, newFakeMailboxes())
+	if _, err := h.rights.Give(context.Background(), "test", "solo", "u1", authz.Assignment{Position: authz.PositionUser}); err != nil {
+		t.Fatal(err)
+	}
+	tina := h.token(t, "tenant-solo", "tina")
+
+	if status, body := h.do(t, http.MethodGet, "/v1/tenants/solo/people/u1", tina, ""); status != http.StatusOK {
+		t.Errorf("the tenant's own person: %d %v", status, body)
+	}
+	if status, body := h.do(t, http.MethodGet, "/v1/tenants/solo/people/root1", tina, ""); status != http.StatusNotFound {
+		t.Errorf("another tenant's person in the same realm: %d %v, want 404", status, body)
+	}
+	for _, act := range []string{"update-person", "remove-person", "remove-totp", "send-password-reset"} {
+		status, body := h.do(t, http.MethodPost, "/v1/tenants/solo/actions/"+act, tina, `{"person":"root1","enabled":false}`)
+		if status != http.StatusBadRequest && status != http.StatusNotFound {
+			t.Errorf("%s on another tenant's person: %d %v, want it refused as not this tenant's", act, status, body)
+		}
+	}
+	if w := k.wrote(); len(w) != 0 {
+		t.Errorf("another tenant's person was written to: %v", w)
+	}
+	// The tenant with the realm to itself still sees everybody in it.
+	if status, body := h.do(t, http.MethodGet, "/v1/tenants/demo/people/root1", h.token(t, "tenant-demo", "tom"), ""); status != http.StatusOK {
+		t.Errorf("the realm's own tenant: %d %v", status, body)
+	}
+
+	// An invitation makes the account, mails it, and gives it the position
+	// that makes it the tenant's.
+	status, body := h.do(t, http.MethodPost, "/v1/tenants/solo/actions/invite-person", tina, `{"email":"eve@example.com"}`)
+	if status != http.StatusAccepted || body["mailed"] != true {
+		t.Fatalf("an invitation in a shared realm: %d %v", status, body)
+	}
+	if got := h.rights.positionsOf("solo", "new1"); len(got) != 1 || got[0] != authz.PositionUser {
+		t.Errorf("the invited person holds %v in the tenant, want user", got)
 	}
 }

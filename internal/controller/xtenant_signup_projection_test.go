@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -148,7 +149,7 @@ func TestPartnersReachTheXTenantWithinTheClaimsBounds(t *testing.T) {
 // -- a declared group and the members, never one it does not declare or an
 // administrators' group -- and the source gets the client, beside what it
 // declares itself. One side alone composes nothing on either.
-func TestASignInBetweenTenantsTakesBothAndGivesOnlyDeclaredGroups(t *testing.T) {
+func TestASignInBetweenTenantsTakesBothAndGivesThePositionsNamed(t *testing.T) {
 	ctx := context.Background()
 	team := &gentianov1alpha1.Tenant{}
 	team.Name = "team"
@@ -156,9 +157,8 @@ func TestASignInBetweenTenantsTakesBothAndGivesOnlyDeclaredGroups(t *testing.T) 
 	customers := &gentianov1alpha1.Tenant{}
 	customers.Name = "customers"
 	customers.Spec.DisplayName = "Customers"
-	customers.Spec.Groups = []gentianov1alpha1.TenantGroup{{Name: "website-editors"}}
 	customers.Spec.SignInFrom = []gentianov1alpha1.TenantSignInFrom{{
-		Tenant: "team", Groups: []string{"website-editors", "members", "admins", "not-declared"},
+		Tenant: "team", Positions: []string{"website-editor", "user", "tenant-administrator"},
 	}}
 
 	build := func(target *gentianov1alpha1.Tenant, objs ...client.Object) map[string]interface{} {
@@ -194,14 +194,25 @@ func TestASignInBetweenTenantsTakesBothAndGivesOnlyDeclaredGroups(t *testing.T) 
 		entry["displayName"] != "Aluvian" {
 		t.Fatalf("entry = %v", entry)
 	}
-	groups := entry["groups"].([]interface{})
-	if len(groups) != 2 || groups[0] != "/website-editors" || groups[1] != "/gentian:tenant:customers:members" {
-		t.Fatalf("groups = %v: only a declared group and the members", groups)
+	if _, there := entry["groups"]; there {
+		t.Fatalf("entry = %v: the realm puts nobody in a group", entry)
 	}
-	if got := spec["groups"].([]interface{}); len(got) != 1 || got[0] != "website-editors" {
-		t.Fatalf("declared groups = %v", got)
+	// What the people who arrive are given is the operator's, from the same
+	// declaration: the positions named, never an administrator's.
+	positions, fromKernel := arrivalPositions(customers, "tenant-team")
+	if fromKernel || fmt.Sprint(positions) != "[website-editor user]" {
+		t.Fatalf("positions = %v, fromKernel = %v", positions, fromKernel)
 	}
-
+	if positions, _ := arrivalPositions(customers, "tenant-other"); len(positions) != 0 {
+		t.Fatalf("a tenant the sign-in does not name is given %v", positions)
+	}
+	if positions, _ := arrivalPositions(customers, "kernel"); len(positions) != 0 {
+		t.Fatalf("a tenant that does not let the cluster's administrators in gives them %v", positions)
+	}
+	customers.Spec.PlatformAccess = &gentianov1alpha1.TenantPlatformAccess{AdminsEnter: true}
+	if positions, fromKernel := arrivalPositions(customers, "kernel"); !fromKernel || fmt.Sprint(positions) != "[tenant-administrator]" {
+		t.Fatalf("a cluster administrator who comes in is given %v (fromKernel %v)", positions, fromKernel)
+	}
 	source := build(consenting, consenting.DeepCopy(), customers.DeepCopy())
 	clients, _ := source["brokeredTo"].([]interface{})
 	if len(clients) != 1 {

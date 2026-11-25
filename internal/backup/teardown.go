@@ -52,8 +52,8 @@ const (
 	// provisioning seeds for each store below, and the secrets generated for
 	// the app and for its extensions.
 	KindCredentials Kind = "credentials"
-	// KindAccessGroup is the identity provider's group that says who may use
-	// the app, and its memberships.
+	// KindAccessGroup is what the rights store holds on the app: who was
+	// given a role on it. The name is the one the answers carry.
 	KindAccessGroup Kind = "accessGroup"
 	// KindDatabase is the app's relational database and its login role.
 	KindDatabase Kind = "database"
@@ -73,8 +73,8 @@ const (
 	// (requires.services.authorization).
 	KindAuthorization Kind = "authorization"
 	// KindSignInClient is the app's OIDC or SAML client in the tenant's
-	// realm, with what is part of it: its client role, its default-scope
-	// assignments, and the access group's mapping to that role.
+	// realm, with what is part of it: its client role and its default-scope
+	// assignments.
 	KindSignInClient Kind = "signInClient"
 	// KindWorkloads is the app's Helm release: everything its chart renders
 	// except the volume claims.
@@ -335,7 +335,7 @@ var TenantOwned = []TenantRule{
 		Delete: "removed, after the keys of its apps", Destroyed: true,
 	},
 	{
-		What: "the entries in the rights store that follow from the tenant's entry in git: its attachment to the cluster, the groups that hold its roles, its apps and the groups entitled to them", MadeBy: "the operator's projection, from the Tenant",
+		What: "the entries in the rights store that follow from the tenant's entry in git: its attachment to the cluster, its positions, its apps and the roles on them", MadeBy: "the operator's projection, from the Tenant",
 		Export: "not carried: they are derived again from the tenant wherever it is",
 		Retain: "the apps' removed; the tenant's own kept",
 		Delete: "NOT removed: the apps' go, the entries on the tenant itself stay",

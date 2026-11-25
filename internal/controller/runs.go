@@ -36,6 +36,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/dispatcher"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/schemacheck/crdcheck"
 	"github.com/gentian-org/gentian-os/internal/security"
@@ -177,6 +178,12 @@ type installedAction struct {
 	comp     *gentianov1alpha1.Component
 	profile  *gentianov1alpha1.ComponentProfile
 	runnable dispatcher.Runnable
+	// preApproved are its egress requests the cluster's policy answers
+	// (answeredEgress).
+	preApproved map[string]struct{}
+	// outgoing is the way to the hosts outside it was granted: the fleet's
+	// pods on those hosts' listeners (outgoing_hosts.go). Nil with none.
+	outgoing *networkingv1.NetworkPolicyEgressRule
 }
 
 // tenantRuns is everything about runs in one tenant.
@@ -346,7 +353,28 @@ func (r *RunsReconciler) gather(ctx context.Context) (map[string]*tenantRuns, er
 		if !meta.IsStatusConditionTrue(comp.Status.Conditions, "Ready") {
 			continue
 		}
-		of(holder).actions = append(of(holder).actions, installedAction{comp: comp, profile: profile, runnable: runnable})
+		// The hosts outside it was granted, for its runs' host table and
+		// their policy. A Ready action's hosts are all carried: its install
+		// waits until they are (OutgoingGatewayPending).
+		ways, err := readOutgoingWays(ctx, r.Client, comp.Status.OutgoingHosts)
+		if err != nil {
+			return nil, err
+		}
+		for _, a := range ways.aliases {
+			runnable.HostAliases = append(runnable.HostAliases, dispatcher.HostAlias{IP: a.IP, Hostname: a.Hostname})
+		}
+		// The egress the cluster's policy answers itself -- its catalog's,
+		// or hosts in a trusted domain: an action is given it as if it had
+		// been granted.
+		answered, err := answeredEgress(ctx, r.Client, profile, holder)
+		if err != nil {
+			return nil, err
+		}
+		of(holder).actions = append(of(holder).actions, installedAction{
+			comp: comp, profile: profile, runnable: runnable,
+			preApproved: answered,
+			outgoing:    ways.rule,
+		})
 	}
 	for _, runs := range out {
 		sort.Slice(runs.actions, func(i, j int) bool { return runs.actions[i].runnable.Name < runs.actions[j].runnable.Name })
@@ -459,7 +487,18 @@ func (r *RunsReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 		}
 		entry := dispatcher.Tenant{Tenant: tenant.Name, Namespace: namespace}
 		for _, action := range runs.actions {
-			entry.Actions = append(entry.Actions, action.runnable)
+			// What a run takes and returns goes into the table as the
+			// profile states it, once for every tenant that installed it.
+			runnable := action.runnable
+			var inputs, outputs []byte
+			if schema := action.profile.Spec.Action.Inputs; schema != nil {
+				inputs = schema.Raw
+			}
+			if schema := action.profile.Spec.Action.Outputs; schema != nil {
+				outputs = schema.Raw
+			}
+			runnable.Schemas = table.Hold(inputs, outputs)
+			entry.Actions = append(entry.Actions, runnable)
 		}
 		table.Tenants = append(table.Tenants, entry)
 		for _, caller := range runs.callers {
@@ -511,6 +550,8 @@ func (r *RunsReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&gentianov1alpha1.Tenant{}, toTable).
 		Watches(&corev1.Secret{}, toTable, builder.WithPredicates(callers)).
 		Watches(&corev1.Namespace{}, toTable, builder.WithPredicates(runNamespaces)).
+		// The cluster's DNS, which every run may ask.
+		Watches(&corev1.Service{}, toTable, builder.WithPredicates(clusterDNSChanged())).
 		Complete(r.Definitions.Guard(r.Client, &gentianov1alpha1.Component{}, r))
 }
 
@@ -591,7 +632,7 @@ func (r *RunsReconciler) ensureRunNamespace(ctx context.Context, runs *tenantRun
 	}
 
 	// The rules of the namespace itself, and what is no longer one of them.
-	desired := runNamespacePolicies(runs, namespace, tenantNamespace, labels, r.now())
+	desired := runNamespacePolicies(runs, namespace, tenantNamespace, labels, loadClusterDNS(ctx, r.Client), r.now())
 	if err := r.applyPolicies(ctx, namespace, desired, client.MatchingLabels{managedByLabel: managedByValue}); err != nil {
 		return err
 	}
@@ -796,22 +837,23 @@ func runPolicy(name, namespace string, labels map[string]string, pods map[string
 }
 
 // runNamespacePolicies are the rules of a namespace for runs. Nothing is
-// let in. Every pod may ask the cluster's DNS and nothing else; a run of an
+// let in. Every pod may ask the cluster's DNS (netpolicy.DNSEgress) and
+// nothing else; a run of an
 // installed action is given the egress granted to that action; and a run is
 // let through to the component that started it, on the port it calls back
-// to. No rule reaches an adapter, an engine or the kernel.
-func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, labels map[string]string, now time.Time) []*networkingv1.NetworkPolicy {
-	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
-	dns := intstr.FromInt32(53)
+// to. No rule reaches an agent bridge, an engine or the kernel.
+func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, labels map[string]string, dns []corev1.Service, now time.Time) []*networkingv1.NetworkPolicy {
+	tcp := corev1.ProtocolTCP
 	deny := runPolicy(runsDefaultDeny, namespace, labels, nil)
 	deny.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress}
-	deny.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
-		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &udp, Port: &dns}, {Protocol: &tcp, Port: &dns}},
-	}}
+	deny.Spec.Egress = netpolicy.DNSEgress(dns)
 	out := []*networkingv1.NetworkPolicy{deny}
 
 	for _, action := range runs.actions {
-		granted := security.GrantedEgressRules(action.profile, action.comp, now)
+		granted := security.GrantedEgressRulesUnder(action.profile, action.comp, now, action.preApproved)
+		if action.outgoing != nil {
+			granted = append(granted, *action.outgoing)
+		}
 		if len(granted) == 0 {
 			continue
 		}

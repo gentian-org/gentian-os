@@ -311,7 +311,7 @@ func (f *Fetcher) ociTree(ctx context.Context, src Source) (ociTree, error) {
 	f.ociMu.Lock()
 	cached, ok := f.trees[key]
 	f.ociMu.Unlock()
-	if ok && time.Since(cached.at) <= indexTTL {
+	if ok && time.Since(cached.at) <= f.cacheFor() {
 		return cached, nil
 	}
 	tree, err := f.pull(ctx, src.OCI)

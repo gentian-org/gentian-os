@@ -1,0 +1,16 @@
+# Where the edge reaches the porter's pages.
+apiVersion: v1
+kind: Service
+metadata:
+  name: porter
+  labels:
+    app.kubernetes.io/name: porter
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  selector:
+    app.kubernetes.io/name: porter
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http

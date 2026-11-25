@@ -11,7 +11,9 @@ SPDX-License-Identifier: MPL-2.0
 package registrar
 
 import (
+	"errors"
 	"net/http"
+	"sort"
 
 	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
@@ -43,7 +45,8 @@ type roleCandidates struct {
 }
 
 // listRoleCandidates answers, tenant by tenant, who could be named: the
-// platform tenant's people, and each other tenant's admins group's members.
+// platform tenant's people, and each other tenant's administrators, as the
+// rights store names them.
 // A tenant that adopts another realm has no people of its own and is left
 // out.
 func (s *Server) listRoleCandidates(w http.ResponseWriter, r *http.Request, _ call) {
@@ -66,7 +69,7 @@ func (s *Server) listRoleCandidates(w http.ResponseWriter, r *http.Request, _ ca
 			if platform {
 				people, err = s.cfg.Identity.People(identityContext(r), realm, "", 0)
 			} else {
-				people, err = s.cfg.Identity.GroupMembers(identityContext(r), realm, tenantGroupPrefix(t.Name)+"admins")
+				people, err = s.administratorsOf(r, realm, t.Name)
 			}
 			if err == nil {
 				if people == nil {
@@ -84,4 +87,30 @@ func (s *Server) listRoleCandidates(w http.ResponseWriter, r *http.Request, _ ca
 		out = append(out, entry)
 	}
 	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "complete": complete, "tenants": out})
+}
+
+// administratorsOf is the people who administer a tenant as its own: the
+// accounts the rights store names, each as the tenant's realm knows them.
+// An account the realm no longer knows is left out; it could not be named.
+func (s *Server) administratorsOf(r *http.Request, realm identity.Realm, tenant string) ([]identity.Person, error) {
+	if s.cfg.Rights == nil {
+		return nil, errors.New("this registrar has no way to the rights store")
+	}
+	subjects, err := s.cfg.Rights.Administrators(r.Context(), tenant)
+	if err != nil {
+		return nil, err
+	}
+	people := []identity.Person{}
+	for _, sub := range subjects {
+		p, err := s.cfg.Identity.Person(identityContext(r), realm, sub)
+		if errors.Is(err, identity.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		people = append(people, p)
+	}
+	sort.Slice(people, func(i, j int) bool { return people[i].Username < people[j].Username })
+	return people, nil
 }

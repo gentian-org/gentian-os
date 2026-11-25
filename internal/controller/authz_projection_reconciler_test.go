@@ -23,71 +23,34 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
-// The claim spells its roles one way (breakGlass) and the graph another
-// (break_glass). What the projection hands the graph has to be the graph's
-// spelling, or the tuple is never written: the graph refuses the whole map
-// for one key it does not know, and with it the tenants and apps projected in
-// the same pass.
-func TestThePlatformRolesAreProjectedUnderTheGraphsRelationNames(t *testing.T) {
-	claim := clusterClaim("")
-	_ = unstructured.SetNestedStringMap(claim.Object, map[string]string{
-		"admin":      "gentian:platform:admin",
-		"breakGlass": "gentian:platform:break-glass",
-	}, "spec", "platformRoles")
-
-	r := &AuthzProjectionReconciler{
-		Client:  fake.NewClientBuilder().WithScheme(appStoreScheme(t)).WithObjects(claim).Build(),
-		Cluster: "test",
-	}
-	roles, err := r.platformRoles(context.Background())
+// While the Cluster claim names no administrator, the account the install
+// made administers the cluster; once the claim names one, only who it names
+// does. An install account that is not there holds nothing.
+func TestTheInstallsAccountAdministersUntilTheClaimNamesSomebody(t *testing.T) {
+	ctx := context.Background()
+	r := &AuthzProjectionReconciler{BootstrapAdministrator: func(context.Context) (string, string, error) {
+		return "kernel", "boot-1", nil
+	}}
+	officer := authz.RoleHolder{Relation: "security_officer", Realm: "kernel", Subject: "s-1"}
+	got, err := r.withBootstrapAdministrator(ctx, []authz.RoleHolder{officer})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{
-		"admin":       "gentian:platform:admin",
-		"break_glass": "gentian:platform:break-glass",
+	want := []authz.RoleHolder{officer, {Relation: "admin", Realm: "kernel", Subject: "boot-1"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("holders = %+v, want %+v", got, want)
 	}
-	if !reflect.DeepEqual(roles, want) {
-		t.Errorf("platformRoles() = %v, want %v", roles, want)
-	}
-}
 
-// A field the graph has no relation for is a mistake in the claim, and it
-// must stay one role's mistake: the others are projected, and so are the
-// tenants and apps that follow in the same Reconcile.
-func TestAMisspeltPlatformRoleIsSkippedAndTheRestProjected(t *testing.T) {
-	claim := clusterClaim("")
-	_ = unstructured.SetNestedStringMap(claim.Object, map[string]string{
-		"admin":           "gentian:platform:admin",
-		"securityOfficer": "gentian:platform:security",
-		"auditer":         "gentian:platform:auditor",
-	}, "spec", "platformRoles")
+	named := []authz.RoleHolder{{Relation: "admin", Realm: "kernel", Subject: "a-1"}}
+	got, err = r.withBootstrapAdministrator(ctx, named)
+	if err != nil || !reflect.DeepEqual(got, named) {
+		t.Errorf("holders = %+v, err = %v, want the named administrator alone", got, err)
+	}
 
-	r := &AuthzProjectionReconciler{
-		Client:  fake.NewClientBuilder().WithScheme(appStoreScheme(t)).WithObjects(claim).Build(),
-		Cluster: "test",
-	}
-	roles, err := r.platformRoles(context.Background())
-	if err != nil {
-		t.Fatalf("a misspelt role must not fail the projection: %v", err)
-	}
-	// securityOfficer is held by name now, and a group named for it grants
-	// nothing, as a misspelt field does.
-	want := map[string]string{
-		"admin": "gentian:platform:admin",
-	}
-	if !reflect.DeepEqual(roles, want) {
-		t.Errorf("platformRoles() = %v, want %v", roles, want)
-	}
-	if !r.unknownRoleWarned["auditer"] || !r.unknownRoleWarned["securityOfficer"] {
-		t.Error("the misspelt role should have been reported")
-	}
-	// The next pass finds nothing new to say about it.
-	if _, err := r.platformRoles(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if n := len(r.unknownRoleWarned); n != 2 {
-		t.Errorf("warned about %d fields, want 2", n)
+	r.BootstrapAdministrator = func(context.Context) (string, string, error) { return "kernel", "", nil }
+	got, err = r.withBootstrapAdministrator(ctx, nil)
+	if err != nil || len(got) != 0 {
+		t.Errorf("holders = %+v, err = %v, want nobody", got, err)
 	}
 }
 
@@ -189,4 +152,42 @@ func TestRoleHoldersAreProjectedByTheirTenantsRealm(t *testing.T) {
 			t.Errorf("%s's auditors: %v", tr.Name, tr.Auditors)
 		}
 	}
+}
+
+// A role on something still installed is taken from a position's holders;
+// one on an app that is gone is not, and neither is anything of another
+// tenant.
+func TestStillInstalledKnowsTheAppsTheirAddonsAndTheirRoles(t *testing.T) {
+	present := stillInstalled(map[string][]authz.InstalledApp{
+		"acme": {{Profile: "odoo-base-ce", Roles: []authz.DeclaredRole{{Name: "manager"}},
+			Addons: []authz.InstalledApp{{Profile: "crm-ce", Roles: []authz.DeclaredRole{{Name: "salesman"}}}}}},
+	})
+	for object, want := range map[string]bool{
+		authz.App("acme", "odoo-base-ce"):             true,
+		authz.Role("acme", "odoo-base-ce", "manager"): true,
+		authz.App("acme", "crm-ce"):                   true,
+		authz.Role("acme", "crm-ce", "salesman"):      true,
+		authz.App("acme", "xwiki-ce"):                 false,
+		authz.Role("acme", "odoo-base-ce", "auditor"): false,
+		authz.App("other", "odoo-base-ce"):            false,
+	} {
+		if got := present(object); got != want {
+			t.Errorf("%s: %v, want %v", object, got, want)
+		}
+	}
+}
+
+// What a change of positions took is told by tenant, each once; nothing is
+// told where nothing was taken.
+func TestTheProjectionTellsWhomAChangeOfPositionsTookFrom(t *testing.T) {
+	told := map[string][]string{}
+	r := &AuthzProjectionReconciler{RightsTaken: func(_ context.Context, tenant string, subjects []string) error {
+		told[tenant] = append(told[tenant], subjects...)
+		return nil
+	}}
+	r.endSessionsOfTaken(context.Background(), map[string][]string{"acme": {"anna", "ben"}, "shop": {"carl"}})
+	if len(told) != 2 || len(told["acme"]) != 2 || told["shop"][0] != "carl" {
+		t.Fatalf("told %v", told)
+	}
+	(&AuthzProjectionReconciler{}).endSessionsOfTaken(context.Background(), map[string][]string{"acme": {"anna"}})
 }

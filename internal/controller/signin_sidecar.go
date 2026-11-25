@@ -120,6 +120,9 @@ const (
 	// signInHandlerAsset is the asset label of the bundle's ConfigMap that
 	// holds the handler, and what follows the profile's name in its name.
 	signInHandlerAsset = "sign-in-handler"
+	// signInSecretReloadAnnotation asks Reloader (kernel-secrets) to restart
+	// the sidecar when the Secret it is handed changes.
+	signInSecretReloadAnnotation = "secret.reloader.stakater.com/reload"
 	// signInHandlerKey is the key of the handler in that ConfigMap.
 	signInHandlerKey = "handler.js"
 	// signInRouteLabel marks the route that takes no session, so that it can
@@ -619,10 +622,22 @@ func (r *ComponentReconciler) ensureSignInSidecar(
 		return err
 	}
 	if err := ensureObject(ctx, r.Client, deploy, func(existing *appsv1.Deployment) bool {
-		if equality.Semantic.DeepEqual(existing.Spec, deploy.Spec) && ownedBy(existing, comp) {
+		reload := deploy.Annotations[signInSecretReloadAnnotation]
+		if equality.Semantic.DeepEqual(existing.Spec, deploy.Spec) && ownedBy(existing, comp) &&
+			existing.Annotations[signInSecretReloadAnnotation] == reload {
 			return false
 		}
 		existing.Spec, existing.Labels, existing.OwnerReferences = deploy.Spec, deploy.Labels, deploy.OwnerReferences
+		// Only the one key: the Deployment's other annotations are the
+		// Deployment controller's.
+		if reload == "" {
+			delete(existing.Annotations, signInSecretReloadAnnotation)
+		} else {
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			existing.Annotations[signInSecretReloadAnnotation] = reload
+		}
 		return true
 	}); err != nil {
 		return err
@@ -769,8 +784,17 @@ func signInDeployment(comp *gentianov1alpha1.Component, s *signInSidecar, labels
 		pullRefs = append(pullRefs, corev1.LocalObjectReference{Name: name})
 	}
 	selector := map[string]string{signInSidecarLabel: comp.Name}
+	// The Secret is read once, when the process starts, and it fills in after
+	// the pod may already run: ESO syncs the app's own secrets into it from
+	// OpenBao as they come, and rotates them later. A sidecar that kept the
+	// Secret it started with refused every sign-in with what it was missing.
+	// Reloader restarts it whenever the Secret changes.
+	var annotations map[string]string
+	if handed {
+		annotations = map[string]string{signInSecretReloadAnnotation: s.service}
+	}
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: s.service, Namespace: comp.Namespace, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: s.service, Namespace: comp.Namespace, Labels: labels, Annotations: annotations},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},

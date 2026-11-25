@@ -166,7 +166,7 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 	entry := tokenEntryOf(comp, profile)
 	host := exposureHost(zone, comp, entry)
 
-	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, true, false); err != nil {
+	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, nil, true, false); err != nil {
 		t.Fatal(err)
 	}
 	route := &gatewayv1.HTTPRoute{}
@@ -254,17 +254,19 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 	var said struct {
 		Resource string   `json:"resource"`
 		Servers  []string `json:"authorization_servers"`
+		Scopes   []string `json:"scopes_supported"`
 	}
 	if err := json.Unmarshal([]byte(body), &said); err != nil {
 		t.Fatal(err)
 	}
 	if said.Resource != ann[bouncerTokenAudienceAnnotation] || len(said.Servers) != 1 ||
-		said.Servers[0] != "https://id.k.example/auth/realms/"+zone.realm {
+		said.Servers[0] != "https://id.k.example/auth/realms/"+zone.realm ||
+		len(said.Scopes) != 1 || said.Scopes[0] != "openid" {
 		t.Fatalf("metadata = %s", body)
 	}
 
 	// The approval ends.
-	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, false, false); err != nil {
+	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, entry, nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, types.NamespacedName{Namespace: comp.Namespace, Name: doc.Name}, doc); !apierrors.IsNotFound(err) {
@@ -281,7 +283,7 @@ func TestATokenEntrysRouteAndPolicyComeAndGoWithItsApproval(t *testing.T) {
 	}
 	// And a component with no token entry at all is asked the same, and
 	// nothing fails.
-	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, nil, false, false); err != nil {
+	if err := r.ensureTokenEntry(ctx, comp, tenant, profile, zone, nil, nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 }

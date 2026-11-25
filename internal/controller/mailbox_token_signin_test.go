@@ -13,8 +13,10 @@ package controller
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -85,16 +87,18 @@ func TestMailboxTokenSignInIsServedWhereTheTenantHasMailboxes(t *testing.T) {
 		cluster string
 		want    bool
 	}{
-		{"own mail server, tenant does not say", withMode(""), "system", true},
-		{"own mail server, tenant says selfhosted", withMode(gentianov1alpha1.MailModeSelfhosted), "system", true},
-		{"own mail server, tenant sends only", withMode(gentianov1alpha1.MailModeTransportOnly), "system", false},
-		{"own mail server, tenant's mail is elsewhere", withMode(gentianov1alpha1.MailModeExternal), "system", false},
-		{"own mail server, tenant has no mail", withMode(gentianov1alpha1.MailModeDisabled), "system", false},
-		{"mail at a provider", withMode(""), "external", false},
+		{"own mail server, tenant does not say", withMode(""), "internal", true},
+		{"own mail server, tenant says selfhosted", withMode(gentianov1alpha1.MailModeSelfhosted), "internal", true},
+		{"own mail server, tenant sends only", withMode(gentianov1alpha1.MailModeTransportOnly), "internal", false},
+		{"own mail server, tenant's mail is elsewhere", withMode(gentianov1alpha1.MailModeExternal), "internal", false},
+		{"own mail server, tenant has no mail", withMode(gentianov1alpha1.MailModeDisabled), "internal", false},
+		{"mail at a provider", withMode(""), "relay", false},
+		{"mail on a server outside the cluster", withMode(""), "external", false},
 		{"no mail", withMode(""), "none", false},
 		{"a cluster that cannot answer yet", withMode(""), "", false},
-		{"the name the mode had before", withMode(""), "kernel", false},
-		{"the tenant that adopts the kernel realm", platformTenantFixture(), "system", false},
+		{"the name the mode had before, still the own mail server (#1338)", withMode(""), "system", true},
+		{"the name it had before that", withMode(""), "kernel", false},
+		{"the tenant that adopts the kernel realm", platformTenantFixture(), "internal", false},
 	} {
 		if got := tenantHasTokenMailboxes(c.tenant, c.cluster, "kernel"); got != c.want {
 			t.Errorf("%s: served = %v, want %v", c.name, got, c.want)
@@ -141,7 +145,7 @@ func TestTheClaimCarriesMailboxTokenSignIn(t *testing.T) {
 	}
 
 	system := &ComponentReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig("system")).Build(),
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig("internal")).Build(),
 		Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel",
 	}
 	write(system, mailboxProfile(true, true))
@@ -162,7 +166,7 @@ func TestTheClaimCarriesMailboxTokenSignIn(t *testing.T) {
 	// A cluster whose mail is at a provider accepts the declaration and
 	// grants nothing.
 	external := &ComponentReconciler{
-		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig("external")).Build(),
+		Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(clusterConfig("relay")).Build(),
 		Scheme: scheme, KernelDomain: "k.example", KernelRealm: "kernel",
 	}
 	write(external, mailboxProfile(true, true))
@@ -299,6 +303,7 @@ func TestTheMailboxScopeIsGivenToDeclaringAppsOnly(t *testing.T) {
 		want    []interface{}
 	}{
 		{"app-mailbox-token", append(append([]interface{}{}, keycloaksOwn...), mailboxScopeName)},
+		{"app-mailbox-token-bridge", append(append([]interface{}{}, keycloaksOwn...), mailboxScopeName)},
 		{"app-mailbox-token-withdrawn", keycloaksOwn},
 		{"app-mailbox-token-not-served", nil},
 		{"app-mailbox-token-undeclared", nil},
@@ -339,26 +344,117 @@ func TestTheMailboxScopeIsGivenToDeclaringAppsOnly(t *testing.T) {
 	}
 }
 
-// The mail server's check of a realm, whole. The scope line is the one thing
-// added; the user is still the token's email claim, and the answer still has
-// to say active.
-func TestDovecotRequiresTheMailboxScope(t *testing.T) {
-	conf, ext := dovecotRealmAuthFiles("acme", "https://id.k.example/", "s3cret")
-	wantExt := `introspection_mode = post
-introspection_url = https://id.k.example/realms/acme/protocol/openid-connect/token/introspect
-client_id = gentian-dovecot
-client_secret = s3cret
-username_attribute = email
-active_attribute = active
-active_value = true
-scope = mailbox
-`
-	if ext != wantExt {
-		t.Fatalf("the realm's oauth2 settings are\n%s\nwant\n%s", ext, wantExt)
+// An agent bridge reaches a mailbox only by exchange: its client turns the
+// token the chaperone hands it into one with "mailbox", and signs nobody in.
+// An app's client never exchanges.
+func TestABridgesClientOnlyExchanges(t *testing.T) {
+	for _, c := range []struct {
+		fixture  string
+		exchange bool
+	}{
+		{"app-mailbox-token-bridge", true},
+		{"app-mailbox-token", false},
+		{"app-default", false},
+	} {
+		clients := ofKind(renderedObjects(t, c.fixture), "Client")
+		if len(clients) != 1 {
+			t.Fatalf("%s: %d clients rendered, want 1", c.fixture, len(clients))
+		}
+		fp, _, _ := unstructured.NestedMap(clients[0], "spec", "forProvider")
+		exchange, _ := fp["standardTokenExchangeEnabled"].(bool)
+		if exchange != c.exchange {
+			t.Errorf("%s: standardTokenExchangeEnabled %v, want %v", c.fixture, exchange, c.exchange)
+		}
+		if !c.exchange {
+			continue
+		}
+		for _, flow := range []string{"standardFlowEnabled", "directAccessGrantsEnabled", "serviceAccountsEnabled", "fullScopeAllowed"} {
+			if on, _ := fp[flow].(bool); on || fp[flow] == nil {
+				t.Errorf("%s: %s is %v, want false", c.fixture, flow, fp[flow])
+			}
+		}
+		for _, field := range []string{"validRedirectUris", "validPostLogoutRedirectUris", "webOrigins"} {
+			if _, ok := fp[field]; ok {
+				t.Errorf("%s: a bridge's client has %s", c.fixture, field)
+			}
+		}
+		if fp["clientId"] != "demo-app" || fp["accessType"] != "CONFIDENTIAL" {
+			t.Errorf("%s: client %v (%v), want the profile's name, confidential", c.fixture, fp["clientId"], fp["accessType"])
+		}
 	}
-	if !strings.Contains(conf, "driver = oauth2") || !strings.Contains(conf, "mechanisms = xoauth2") ||
-		!strings.Contains(conf, "result_failure = continue") {
-		t.Fatalf("the realm's passdb changed:\n%s", conf)
+}
+
+// The mail server's check of a realm, whole. The user is the token's email
+// claim, the answer has to say active and the scope mailbox, and the
+// introspection is asked as gentian-dovecot: in the address, which is the
+// only credential Dovecot 2.3 sends with one.
+func TestDovecotRequiresTheMailboxScope(t *testing.T) {
+	conf := dovecotOAuth2Conf([]string{"https://id.k.example/realms/b", "https://id.k.example/realms/a"}, "s3cret")
+	for _, want := range []string{
+		"introspection_mode = local\n",
+		"client_id = gentian-dovecot\n",
+		"scope = mailbox\n",
+		"username_attribute = email\n",
+		"issuers = https://id.k.example/realms/a https://id.k.example/realms/b\n",
+		"dict_file_path = /etc/dovecot/realms/validation-keys\n",
+	} {
+		if !strings.Contains(conf, want) {
+			t.Errorf("the oauth2 block lacks %q:\n%s", want, conf)
+		}
+	}
+}
+
+// A realm's keys are filed under every app that may be given "mailbox", as
+// Dovecot looks them up: shared/<azp>/<alg>/<kid>, the key's JSON below.
+func TestARealmsKeysAreFiledUnderEachAppThatOpensMailboxes(t *testing.T) {
+	keys, err := signingKeys([]json.RawMessage{
+		json.RawMessage(`{"kid": "k1", "alg": "RS256", "use": "sig", "kty": "RSA", "n": "abc", "e": "AQAB"}`),
+		json.RawMessage(`{"kid": "k2", "alg": "RSA-OAEP", "use": "enc", "kty": "RSA", "n": "def", "e": "AQAB"}`),
+		json.RawMessage(`{"alg": "RS256", "kty": "RSA", "n": "ghi", "e": "AQAB"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := dovecotRealmKeys([]string{"nextcloud-ce", "mail-agent-bridge-ee", "nextcloud-ce"}, keys)
+	want := `shared/mail-agent-bridge-ee/RS256/k1
+{"kid":"k1","alg":"RS256","use":"sig","kty":"RSA","n":"abc","e":"AQAB"}
+shared/nextcloud-ce/RS256/k1
+{"kid":"k1","alg":"RS256","use":"sig","kty":"RSA","n":"abc","e":"AQAB"}
+`
+	if got != want {
+		t.Fatalf("the realm's keys are\n%s\nwant\n%s", got, want)
+	}
+	if dovecotRealmKeys(nil, keys) != "" {
+		t.Fatal("a realm with no app that opens mailboxes brought keys")
+	}
+}
+
+// Every realm adds its own entries; the two files Dovecot reads are written
+// from all of them, and what Dovecot 2.3 read is gone.
+func TestTheRealmsShareOneOAuth2BlockAndOneKeyDict(t *testing.T) {
+	existing := map[string][]byte{
+		"old.conf":        []byte("passdb { driver = oauth2 }"),
+		"old.oauth2.ext":  []byte("introspection_mode = post"),
+		"a.issuer":        []byte("https://id.k.example/realms/a"),
+		"a.keys":          []byte("shared/x/RS256/ka\n{}\n"),
+		"oauth2.inc":      []byte("stale"),
+		"validation-keys": []byte("stale"),
+	}
+	data := dovecotRealmAuthData(existing, "b", "https://id.k.example/realms/b", "shared/y/RS256/kb\n{}\n", "s3cret")
+	for _, gone := range []string{"old.conf", "old.oauth2.ext"} {
+		if _, ok := data[gone]; ok {
+			t.Errorf("%s was kept", gone)
+		}
+	}
+	if got := string(data["validation-keys"]); got != "shared/x/RS256/ka\n{}\nshared/y/RS256/kb\n{}\n" {
+		t.Errorf("validation-keys:\n%s", got)
+	}
+	if !strings.Contains(string(data["oauth2.inc"]), "issuers = https://id.k.example/realms/a https://id.k.example/realms/b\n") {
+		t.Errorf("oauth2.inc:\n%s", data["oauth2.inc"])
+	}
+	// The same realm again writes the same bytes.
+	if again := dovecotRealmAuthData(data, "b", "https://id.k.example/realms/b", "shared/y/RS256/kb\n{}\n", "s3cret"); !maps.EqualFunc(again, data, bytes.Equal) {
+		t.Error("a second write of the same realm changed the Secret")
 	}
 }
 
@@ -392,7 +488,7 @@ func TestMailboxScopeHasOneName(t *testing.T) {
 func TestNothingSwitchesTheIntrospectionAudienceCheckOff(t *testing.T) {
 	attribute := strings.Join([]string{"allow", "token", "introspection", "without", "audience", "check"}, ".")
 
-	script := buildOIDCPackScript("kernel", dovecotOIDCClientID, oidc.Pack{ServiceClient: true}, nil, nil, false, "")
+	script := buildOIDCPackScript("kernel", dovecotOIDCClientID, oidc.Pack{ServiceClient: true}, nil, nil, false)
 	if strings.Contains(script, attribute) {
 		t.Fatal("the script that makes gentian-dovecot in the kernel realm sets " + attribute)
 	}

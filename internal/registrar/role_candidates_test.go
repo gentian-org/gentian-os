@@ -11,11 +11,14 @@ SPDX-License-Identifier: MPL-2.0
 package registrar_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/registrar"
+	"github.com/gentian-org/gentian-os/internal/registrar/identity"
 )
 
 // Who could be named a role holder: every person of the platform tenant, and
@@ -31,6 +34,16 @@ func TestTheRoleCandidatesAreListedForWhoeverConfiguresTheCluster(t *testing.T) 
 		"adopter":  {Name: "adopter", Realm: "demo"},
 	}
 	h := startWithTenants(t, f, nil, tenants, newFakeMailboxes())
+	// Who administers a tenant is the rights store's to say.
+	for _, tenant := range []string{"demo", "solo"} {
+		if _, err := h.rights.Give(context.Background(), "test", tenant, "a1", authz.Assignment{Position: authz.PositionTenantAdministrator}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One the realm no longer knows, and somebody who holds another position.
+	_, _ = h.rights.Give(context.Background(), "test", "demo", "departed", authz.Assignment{Position: authz.PositionTenantAdministrator})
+	_, _ = h.rights.Give(context.Background(), "test", "demo", "u1", authz.Assignment{Position: authz.PositionUser})
+	f.people = map[string]identity.Person{"a1": {ID: "a1", Username: "admin@demo.example", Email: "admin@demo.example", Enabled: true}}
 	path := "/v1/clusters/" + dt.Cluster + "/role-candidates"
 
 	status, body := h.do(t, http.MethodGet, path, h.token(t, "gentian", "alice"), "")
@@ -57,10 +70,6 @@ func TestTheRoleCandidatesAreListedForWhoeverConfiguresTheCluster(t *testing.T) 
 	}
 	if other := byTenant["other"]; other["unavailable"] != true || other["people"] != nil {
 		t.Fatalf("a realm with no credential: %v", other)
-	}
-	// Read from the admins group of each realm, and nowhere else.
-	if got := f.lastGroup; got != "gentian:tenant:solo:admins" && got != "gentian:tenant:demo:admins" {
-		t.Fatalf("the group read: %q", got)
 	}
 	for _, realm := range f.realmsSeen() {
 		if realm != "demo" && realm != "solo" && realm != "kernel" {

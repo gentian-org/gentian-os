@@ -1,0 +1,52 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff; --fg: #1c1b22; --muted: #6b6a75; --line: #e3e2ea;
+  --hover: #f3f2f8; --pick: #e6e1f7; --accent: #5b4bb7; --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1a21; --fg: #ecebf2; --muted: #a3a1b0; --line: #34323e;
+    --hover: #262430; --pick: #3a3360; --accent: #a99bf0; --on-accent: #16141f;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column;
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+header { padding: 16px 20px 8px; }
+h1 { margin: 0; font-size: 18px; font-weight: 600; }
+#for { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+nav { padding: 4px 20px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
+nav button {
+  border: 0; background: none; color: var(--accent); font: inherit; padding: 2px 4px;
+  cursor: pointer; border-radius: 4px;
+}
+nav button:hover { background: var(--hover); }
+nav span { color: var(--muted); padding: 0 2px; }
+main { flex: 1; overflow: auto; }
+#note { margin: 0; padding: 24px 20px; color: var(--muted); }
+#note:empty { display: none; }
+ul { list-style: none; margin: 0; padding: 4px 0; }
+li {
+  display: flex; align-items: center; gap: 10px; padding: 8px 20px; cursor: default;
+}
+li:hover { background: var(--hover); }
+li[aria-selected="true"] { background: var(--pick); }
+li:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+li .kind { width: 18px; text-align: center; color: var(--muted); }
+li .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+li .size { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+footer {
+  display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+button { font: inherit; }
+footer button {
+  padding: 7px 16px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg); cursor: pointer;
+}
+footer button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+footer button:disabled { opacity: 0.5; cursor: default; }

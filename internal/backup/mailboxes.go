@@ -55,14 +55,14 @@ import (
 // DovecotImage is the mail server's image, the one its chart pins
 // (kernel/services/dovecot). The Jobs run the doveadm of the server they
 // work beside; a test holds the two to the same tag.
-const DovecotImage = "dovecot/dovecot:2.3.21"
+const DovecotImage = "dovecot/dovecot:2.4.5-root"
 
-// MailRoot is where the mail server's volume is mounted, and MailLayout how
-// it keeps a mailbox below it: the server's mail_location. A test holds the
-// chart to both.
+// MailRoot is where the mail server's volume is mounted, and MailPath how
+// it keeps a mailbox below it: the server's maildir, mail_driver = maildir.
+// A test holds the chart to both.
 const (
-	MailRoot   = "/var/mail"
-	MailLayout = "maildir:/var/mail/%d/%n"
+	MailRoot = "/var/mail"
+	MailPath = "/var/mail/%{user | domain}/%{user | username}"
 )
 
 // MailUser is the user and group the mail server keeps mail as (its
@@ -103,6 +103,8 @@ const doveadmPrelude = `set -euo pipefail
 shopt -s inherit_errexit
 CONF=/tmp/doveadm.conf
 cat > "${CONF}" <<'CONF_EOF'
+dovecot_config_version = 2.4.0
+dovecot_storage_version = 2.4.0
 log_path = /dev/stderr
 ssl = no
 mail_uid = 1000
@@ -110,10 +112,20 @@ mail_gid = 1000
 first_valid_uid = 1000
 first_valid_gid = 1000
 CONF_EOF
-# dv DIRECTORY ARGS...: doveadm on the mailbox that directory is.
+# dv DIRECTORY [-f FORMATTER] COMMAND ARGS...: doveadm on the mailbox that
+# directory is. No user is looked up: there is no server to ask, and the
+# mailbox is the directory, its home too, as on the server. Dovecot 2.4 wants
+# that said, as --no-userdb-lookup, after the command's name (one word, or two
+# for "mailbox create" and "flags add"). Without the home, the Sieve plugin
+# doveadm loads cannot place its storage and a copy fails.
 dv() {
   _home="$1"; shift
-  USER="mailbox@${DOMAIN}" HOME="${_home}" doveadm -c "${CONF}" -o "mail_location=maildir:${_home}" "$@"
+  _global=()
+  while [[ "$1" == -* ]]; do _global+=("$1" "$2"); shift 2; done
+  _cmd=("$1"); shift
+  case "${_cmd[0]}" in mailbox|flags) _cmd+=("$1"); shift ;; esac
+  USER="mailbox@${DOMAIN}" HOME="${_home}" doveadm -c "${CONF}" -o mail_driver=maildir -o "mail_path=${_home}" -o "mail_home=${_home}" \
+    "${_global[@]}" "${_cmd[@]}" --no-userdb-lookup "$@"
 }
 # count DIRECTORY: how many messages the mailbox holds, in every folder.
 count() {

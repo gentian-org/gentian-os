@@ -33,6 +33,12 @@ The control model is:
 - **Envoy policy CRDs**: security, traffic, and header policy attached to
   Gateway/HTTPRoute resources
 
+Two more fleets of Envoy Gateway sit in the same namespace, each of a class of
+its own: the `inside` Gateway (`gentian-envoy-inside`, a cluster-internal
+address only) for inside entries (§7), and the `outgoing-<n>` Gateways
+(`gentian-envoy-out`) for a tenant's connections to hosts outside. The whole
+edge, both directions, is mapped in [edge.md](edge.md).
+
 ---
 
 ## 2. Resource Topology
@@ -252,6 +258,7 @@ tenant of a single-tenancy cluster, or a custom domain:
 | `sso` | nothing | a name a sign-in page would have |
 | `account` | nothing | a name a page for one's account and password would have |
 | `accounts` | nothing | a name a page for one's account and password would have |
+| `sync` | nothing | the tenant's door for programs that sync files, calendars and contacts, where its bridges answer |
 <!-- reserved-names:platform:end -->
 
 **The kernel's own hosts**, refused where a tenant's domain is the cluster's
@@ -516,8 +523,14 @@ which comes straight back while the realm still has a session for the person
 and shows the login form otherwise. That happens only for a `GET` the browser
 marks `Sec-Fetch-Mode: navigate`, and once per two minutes per host
 (`gentian-edge-restart` cookie, never passed to a backend). A page that comes
-back still without a session gets a page saying the sign-in has ended. The page
-for a person who lacks the access is shown only for a `403`. The one path of an app that takes no
+back still without a session gets a page saying the session could not be
+renewed, with a link that reloads the page; it never signs out, which would
+end the realm's session too. The page for a person who lacks the access is
+shown only for a `403`. A token whose realm's signing keys the bouncer cannot
+fetch (Keycloak away) is answered `503`, not `401`: the session may well be
+good, and a `503` is retried where a `401` ends it. A bouncer pod is ready only
+once it holds the kernel realm's keys, so in a rollout the pods before it keep
+answering while Keycloak restarts too. The one path of an app that takes no
 session is not an exception written into a policy: it is a route of its own
 that no policy names (below). A client cannot present a bearer of
 its own on these routes: `forwardAccessToken` makes the filter drop the
@@ -616,17 +629,23 @@ The bouncer verifies the token on every request: signature, expiry, that it
 is an access token of the tenant's own realm, that it is made out to the
 entry's address (`aud` holds `https://<host>`) and that it names a session of
 the realm, and then asks the route's relation of the person. A refusal is
-`401` with `WWW-Authenticate: Bearer resource_metadata=...`, never a
-redirect. The `Cookie` header is removed before the backend, the token is
+`401` with `WWW-Authenticate: Bearer scope="openid", resource_metadata=...`,
+never a redirect. The metadata document names the realm and the same scope
+(`scopes_supported: ["openid"]`), so a program asks for that scope alone; a
+program told none may ask for every scope of the realm, which the entry's
+client refuses. The `Cookie` header is removed before the backend, the token is
 left in `Authorization`, and the audit record names the program's client
 beside the person. The session's own token is refused there, and a token
 made out to the entry is refused at the director and at every app.
 
 The realm issues such a token to one public client, `token-entry-<component>`,
 which exists while the entry is served: authorization code with PKCE and the
-person's consent, no other grant, no role of the person in the token, no
-offline token, and a sign-in through it ends after four hours (sooner where
-the profile's `sessionMaxAge` is shorter). A tenant may make it last longer,
+person's consent, no other grant, no role of the person in the token, and a
+sign-in through it ends after four hours (sooner where the profile's
+`sessionMaxAge` is shorter). A program may ask for an offline token
+(`offline_access`): it outlives the sign-in and ends after the realm's offline
+idle timeout without use (30 days), or when the person removes the program's
+access in their account (Applications) or an administrator revokes it. A tenant may make it last longer,
 up to its own sign-in (`spec.tokenEntries.sessionMaxHours` on the Tenant),
 which counts only where the Cluster claim allows tenants the choice
 (`spec.tokenEntries.tenantsMayExtendSessions`, off by default). A program is sent back only to an
@@ -641,7 +660,8 @@ token on to no app. Where the entry names a component that exchanges
 component's client, and it exchanges one at the realm for a token of the one
 app it calls, by that app's scope `app-<profile>`: the realm holds one for
 every app an exposure of which says `exchangeToken`, for every app an
-installed adapter adapts, and for every installed adapter that adapts none. No other client can exchange them, and that component can
+installed bridge from the agents connects, and for every such bridge that
+connects none. No other client can exchange them, and that component can
 exchange no token that did not come in through such an entry.
 
 A token entry is served once the tenant's perimeter approver approved it
@@ -716,8 +736,9 @@ frame policy, set at the edge and not by the component:
 
 - remove upstream `X-Frame-Options`
 - set `Content-Security-Policy: frame-ancestors 'self'` plus, by name, the
-  desktop of the component's own tenant and the component's own other hosts
-  (a file store and the editor it embeds)
+  desktop of the component's own tenant, the desktops of the tenants whose
+  people sign in to it, and the component's own other hosts (a file store and
+  the editor it embeds)
 
 | Component of | May be framed by |
 |---|---|
@@ -725,6 +746,13 @@ frame policy, set at the edge and not by the component:
 | The user tenant, tenancy `single` | `desktop.<kernelDomain>` |
 | The platform tenant (`admin.platform.<kernelDomain>`, …) | `platform.<kernelDomain>` |
 | The kernel's consoles (`argocd.`, `headlamp.`, Keycloak's administration) | `platform.<kernelDomain>` |
+
+A tenant whose people sign in to another tenant
+([identity-brokering.md](../guides/identity-brokering.md)) opens that tenant's
+apps from its own desktop. Where both tenants declare the sign-in (the target
+names the source in `spec.signInFrom`, the source names the target in
+`spec.signInTo`), the source's desktop is a framer of every component of the
+target too. The platform tenant is never such a source.
 
 No wildcard, and the platform's desktop is not a framer of any tenant's
 component: platform administrators do not open tenants' apps.
@@ -1032,9 +1060,10 @@ allowed by policy resources.
 ## 7. App Catalog Contract
 
 A profile declares each entry point under `expose[]` (`ExposureSpec`): a
-name, a `surface` (`gateway`, behind the zone's session, or `perimeter`, with
-none), a mandatory `authMode` (`oidc` on the gateway; `none` or `app` on the
-perimeter), the host label (`subDomain`, else the
+name, a `surface` (`gateway`, behind the zone's session; `perimeter`, with
+none; or `inside`, with none and reachable from the cluster's own pods
+alone), a mandatory `authMode` (`oidc`, or `bearer` for a token entry, on the
+gateway; `none` or `app` on the perimeter; `app` inside), the host label (`subDomain`, else the
 component's name; `apex` for the bare domain, §5), `paths` and `denyPaths`,
 and the backend Service and port. It has no field for a timeout, a body size
 or a rate: those are the platform's.
@@ -1067,13 +1096,15 @@ main-address setting that is not the entry's, is refused (`422`) and nothing
 is committed (§5). The read is from git: it says where an entry will answer,
 not whether it answers yet.
 
-**Four kinds of entry take an approval**, and the registry records which
+**Six kinds of entry take an approval**, and the registry records which
 one was approved (`kind`):
 
 | Kind | Declared as | Once approved |
 | --- | --- | --- |
 | `public` | `surface: perimeter`, `authMode: none` | The declared paths are published for anyone. No credential reaches the app |
 | `publicAppCredential` | `surface: perimeter`, `authMode: app` | The declared paths are published for anyone, and the caller's `Authorization` header is passed to the app as sent. The app alone checks it; the platform does not know who calls |
+| `publicAppSignIn` | `surface: perimeter`, `authMode: app`, `signInCookies` | As `publicAppCredential`, and on the paths of the app's own browser sign-in the cookies it names pass to the app and its `Set-Cookie` back to the browser. The approval records the cookies and paths; the proxy passes those the entry names that were approved, so a profile narrows them on its own and widening them takes a new approval |
+| `insideAppCredential` | `surface: inside`, `authMode: app` | Nothing is published on the internet. The declared paths answer pods of this cluster alone, as on `publicAppCredential` otherwise (below) |
 | `signInAppAuthorization` | `surface: gateway`, `authMode: oidc`, `clientAuthorization: app` | Nothing is published. Behind sign-in, the `Authorization` header is left as the app's own page sent it (§4.1) |
 | `tokenEntry` | `surface: gateway`, `authMode: bearer` | Nothing is published. On a host of its own, a program reaches the component as a person, with a token of the tenant's realm made out to that host (§4.1). The approval covers the addresses a program may be sent back to after sign-in |
 
@@ -1084,7 +1115,7 @@ read lists it as `requested` with the earlier approval beside it, until it
 is approved as what it is now. An approval request may name the kind the
 approver was shown (`"kind"` in the body, which the command line and the
 console send); the director refuses it with `409` if the entry declares
-another. Before the third kind is approved the entry is served like any
+another. Before a `signInAppAuthorization` entry is approved it is served like any
 other behind sign-in, and the Component's `ClientAuthorization` condition
 says that the app's own calls will fail until then.
 
@@ -1092,7 +1123,7 @@ says that the app's own calls will fail until then.
 and nothing else, lets a path through only if it has one reading, removes
 every identity header and `Cookie` on the way in and `Set-Cookie` on the way
 out, removes `Authorization` unless the entry was approved as
-`publicAppCredential`, and limits each client address: 10 MB a body,
+`publicAppCredential` or `publicAppSignIn`, and limits each client address: 10 MB a body,
 20 requests a second with 200 more at once, 100 at a time — and 5 a second,
 50 more at once, 20 at a time on an entry that passes the credential,
 because every request to it may be a guess at a password. The numbers are
@@ -1108,6 +1139,25 @@ itself revokes it. A client that needs the app's cookies on a public address
 does not work: cookies pass in neither direction. `jwt`, `bearer`, `basic`
 and `signature` name a check at the edge that nothing makes; the schema
 refuses them on a perimeter entry.
+
+**An entry inside the cluster.** An inside entry (`surface: inside`,
+`authMode: app`, a `subDomain` of its own) is a perimeter entry the internet
+cannot reach. It is
+declared, approved per install with an expiry, and served by the same
+publishing proxy in the tenant's DMZ, forwarding only the declared paths;
+the app checks the caller's `Authorization` header. Its route attaches to
+the `inside` Gateway in the edge namespace, of a class of its own
+(`gentian-envoy-inside`) whose Envoy Service is `ClusterIP`: it has no
+public address. No public DNS record names its host: the route tells
+external-dns to leave it out, and only the cluster's DNS answers it, with
+that Service's address (§10). A component reaches the host only once it was
+granted the host as egress: its network rule then opens that fleet's pods,
+and the DMZ proxy admits that fleet and not the edge. An inside entry is
+never on a bare name and has no alias. The approval read marks it
+`insideOnly`, with `publicAddress` false. The `inside` Gateway exists while
+at least one inside entry is approved, with one listener per inside host;
+its class is installed by installer step A-05
+([install-steps.md](../reference/install-steps.md)).
 
 **An alias: a second address directly under the cluster's domain.** A
 published entry answers at `<label>.<the tenant's domain>`. The cluster's
@@ -1211,12 +1261,21 @@ reconciles a CoreDNS `hosts` override block (`# BEGIN gentian-hairpin`) so those
 names resolve to the ClusterIP of the edge's Envoy Service, which is found by
 the GatewayClass it serves and not by a namespace's name.
 
+The hosts of inside entries (§7) are in the block too, at the ClusterIP of
+the inside Gateway's Envoy Service (class `gentian-envoy-inside`). Until that
+Service has one they are left out, and nothing resolves them. A host the edge
+serves stays at the edge's address even where an inside entry answers at the
+same name.
+
 A `mail.<kernelDomain>` line already in the block is left as it is. Nothing
 in this repository writes one: the cluster's mail names are published as DNS
 records for the mail edge's load balancer (see [mail.md](mail.md)).
 
 The gateway-platform controller updates the hairpin block when the Envoy
-Service or routing mode changes and rolls CoreDNS. Tenant NetworkPolicies are
+Service, routing mode or set of hosts changes. CoreDNS's `reload` plugin
+picks the change up without a restart; only a Corefile without `reload` gets
+CoreDNS rolled, since a cluster with one CoreDNS replica resolves nothing
+during a roll. Tenant NetworkPolicies are
 refreshed when the edge Service changes so egress to the edge stays allowed.
 
 The block holds `<kernelDomain>` itself, and a CoreDNS `hosts` entry answers
@@ -1263,6 +1322,8 @@ fleet has no limit per client address and would open a path from the edge
 namespace to those servers. Tunnel mode changes nothing above for HTTP:
 cloudflared publishes hostnames to the same Envoy Service. It carries no TCP
 and no UDP, so a cluster behind a tunnel has no inbound mail and no TURN.
+The `inside` Gateway of inside entries (§7) is on neither: it is of a class
+and a fleet of its own, with a cluster-internal address only.
 
 ### 11.1 Route classes
 

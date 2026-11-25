@@ -50,6 +50,8 @@ const (
 // inside its blast radius the way its App claims do. What gets captured is
 // derived from the tenant and its profiles, never listed here: an export that
 // could be told which stores to read would drift from the stores that exist.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.tenantCore) || self.tenantCore || (has(self.apps) && size(self.apps) > 0)",message="tenantCore: false needs spec.apps"
 type TenantExportSpec struct {
 	// Apps limits the export to these installed profile names. Empty — the
 	// normal case — captures every app the tenant has installed, plus the
@@ -57,6 +59,14 @@ type TenantExportSpec struct {
 	// no single app.
 	// +optional
 	Apps []string `json:"apps,omitempty"`
+
+	// TenantCore says whether the tenant's own is captured beside the apps:
+	// its realm, its desktop's database and its mailboxes. Unset or true, it
+	// is. False captures the apps in spec.apps and nothing else, and holds
+	// only those apps: it runs beside another export that also captures
+	// only apps, other ones. False needs spec.apps.
+	// +optional
+	TenantCore *bool `json:"tenantCore,omitempty"`
 
 	// TTLSeconds is how long the bundle should be kept before it may be
 	// collected. Zero or unset means keep it until something else removes it;
@@ -730,6 +740,30 @@ type TenantExportList struct {
 // it to decide whether a tenant is free for another export or a restore.
 func (e *TenantExport) IsTerminal() bool {
 	return e.Status.Phase == TenantExportPhaseReady || e.Status.Phase == TenantExportPhaseFailed
+}
+
+// CapturesTenantCore reports whether the export captures the tenant's own
+// (realm, desktop database, mailboxes) beside its apps: unless
+// spec.tenantCore is false and it names the apps it captures.
+func (e *TenantExport) CapturesTenantCore() bool {
+	return e.Spec.TenantCore == nil || *e.Spec.TenantCore || len(e.Spec.Apps) == 0
+}
+
+// OverlapsWith reports whether two exports would hold something in common: a
+// capture of the tenant's own holds the whole tenant, and one of apps alone
+// holds those apps.
+func (e *TenantExport) OverlapsWith(other *TenantExport) bool {
+	if e.CapturesTenantCore() || other.CapturesTenantCore() {
+		return true
+	}
+	for _, app := range e.Spec.Apps {
+		for _, theirs := range other.Spec.Apps {
+			if app == theirs {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func init() {

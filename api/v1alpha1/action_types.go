@@ -69,16 +69,16 @@ type ActionSpec struct {
 	// +optional
 	Outputs *apiextensionsv1.JSON `json:"outputs,omitempty"`
 
-	// Adapters names the adapters whose tools the calling component may call
-	// on a run's behalf, by their ComponentProfile. A run reaches no adapter
-	// itself. It is a statement for the administrator who installs the
+	// AgentBridges names the agent bridges whose tools the calling component may
+	// call on a run's behalf, by their ComponentProfile. A run reaches no
+	// bridge itself. It is a statement for the administrator who installs the
 	// action; the caller enforces it.
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=32
 	// +kubebuilder:validation:items:MaxLength=63
 	// +kubebuilder:validation:items:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	Adapters []string `json:"adapters,omitempty"`
+	AgentBridges []string `json:"agentBridges,omitempty"`
 
 	// DeadlineSeconds is the longest one attempt of a run may take. A caller
 	// may ask for less and never for more.

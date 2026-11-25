@@ -1,0 +1,185 @@
+{{- /*
+  The confidant: what keeps secrets that belong to one person each, for the
+  components that act for that person (docs/security/secrets.md).
+
+  A Deployment of its own, with a ServiceAccount of its own, as the custodian
+  is. The custodian holds the vault role that writes a credential and cannot
+  read one; the confidant holds the one that reads and writes people's
+  secrets and reaches nothing else in the vault. No component of a tenant
+  holds a vault role at all.
+
+  It is granted nothing in the cluster and its API-server token is not
+  mounted. The components it serves are in a list the operator writes
+  (confidant-keys), by the hashes of their keys; the one token it holds is
+  projected for the vault's Kubernetes auth.
+
+  ClusterIP only, and one port that a tenant's component reaches only where
+  its profile declares requires.services.personSecrets.
+*/ -}}
+{{- if .Values.confidant.enabled }}
+{{- $name := printf "%s-confidant" (include "gentian-os.fullname" .) }}
+{{- $keycloak := .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: confidant
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: confidant
+spec:
+  selector:
+    {{- include "gentian-os.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: confidant
+  ports:
+    - name: confidant
+      port: {{ .Values.confidant.port }}
+      targetPort: confidant
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: confidant
+spec:
+  replicas: {{ .Values.confidant.replicas | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "gentian-os.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: confidant
+  template:
+    metadata:
+      labels:
+        {{- include "gentian-os.labels" . | nindent 8 }}
+        app.kubernetes.io/component: confidant
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: confidant
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/confidant"]
+          ports:
+            - name: confidant
+              containerPort: {{ .Values.confidant.port }}
+              protocol: TCP
+          env:
+            - name: CONFIDANT_ADDR
+              value: ":{{ .Values.confidant.port }}"
+            # How a person's token is verified: the issuer it names, and
+            # where that issuer's keys are read inside the cluster. The
+            # audience is the component's that presents the token, asked per
+            # request.
+            - name: CONFIDANT_ISSUER_BASE_URL
+              value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
+            - name: CONFIDANT_JWKS_BASE_URL
+              value: {{ $keycloak | quote }}
+            # The components that keep secrets of people, each with the hash
+            # of the key the operator gave it, its profile and its tenant's
+            # realm. The keys themselves are in the components' Secrets and
+            # never here.
+            - name: CONFIDANT_KEYS
+              value: /etc/gentian/confidant/keys.json
+            # The vault, and the confidant's own role at it: people's
+            # secrets and nothing else (cluster-default, confidant-people).
+            - name: BAO_ADDR
+              value: {{ .Values.openbao.address | quote }}
+            - name: CONFIDANT_BAO_ROLE
+              value: {{ .Values.confidant.vaultRole | default "gentian-os-confidant" | quote }}
+            {{- if .Values.openbao.caSecret }}
+            - name: BAO_CACERT
+              value: /etc/gentian/openbao-ca/ca.crt
+            {{- else if not .Values.trustAnchorSecret }}
+            # Development only: no CA to verify the vault against.
+            - name: VAULT_SKIP_VERIFY
+              value: "true"
+            {{- end }}
+            {{- with .Values.trustAnchorSecret }}
+            - name: SSL_CERT_FILE
+              value: /opt/gentian-trust-anchor/ca.crt
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: confidant
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: confidant
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            {{- toYaml (.Values.confidant.resources | default (dict "requests" (dict "cpu" "10m" "memory" "32Mi") "limits" (dict "memory" "128Mi"))) | nindent 12 }}
+          volumeMounts:
+            - name: keys
+              mountPath: /etc/gentian/confidant
+              readOnly: true
+            # The token the vault's Kubernetes auth takes, where the vault
+            # client reads it.
+            - name: vault-token
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            {{- if .Values.openbao.caSecret }}
+            - name: openbao-ca
+              mountPath: /etc/gentian/openbao-ca
+              readOnly: true
+            {{- end }}
+            {{- with .Values.trustAnchorSecret }}
+            - name: kernel-trust-anchor
+              mountPath: /opt/gentian-trust-anchor
+              readOnly: true
+            {{- end }}
+      volumes:
+        # Optional, and re-read rather than read once: the operator writes
+        # the list when a component that keeps secrets of people is
+        # installed, and on a cluster with none no key is recognized.
+        - name: keys
+          configMap:
+            name: confidant-keys
+            optional: true
+        - name: vault-token
+          projected:
+            sources:
+              # For the vault alone: the API server does not accept it.
+              - serviceAccountToken:
+                  path: token
+                  audience: vault://gentian-os-confidant
+                  expirationSeconds: 600
+        {{- with .Values.openbao.caSecret }}
+        - name: openbao-ca
+          secret:
+            secretName: {{ . | quote }}
+            optional: true
+        {{- end }}
+        {{- with .Values.trustAnchorSecret }}
+        - name: kernel-trust-anchor
+          secret:
+            secretName: {{ . }}
+        {{- end }}
+{{- end }}

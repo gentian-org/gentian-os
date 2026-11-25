@@ -451,7 +451,7 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 			if !ValidName(name) {
 				return nil, fmt.Errorf("%w: placed profile %q", ErrInvalidName, name)
 			}
-			if text, _, _, err = placeEntry(text, name, "", "", false, meta); err != nil {
+			if text, _, _, err = placeEntry(text, name, "", "", meta); err != nil {
 				return nil, err
 			}
 		}
@@ -816,7 +816,6 @@ spec:
     cpu: "16"
     memory: 32Gi
     storage: 50Gi
-    maxApps: 20
   # Apps are installed through the director, which appends to this list.
   apps: []
 `, name, name, display, requireMFA, signUpBlock, name, strings.ReplaceAll(name, "-", "_"), name)

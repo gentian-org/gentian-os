@@ -75,15 +75,22 @@ func (m *liveMail) asTheServer(address, commands string) string {
 	script := `set -euo pipefail
 CONF=/tmp/doveadm.conf
 cat > "${CONF}" <<'CONF_EOF'
+dovecot_config_version = 2.4.0
+dovecot_storage_version = 2.4.0
 log_path = /dev/stderr
 ssl = no
 mail_uid = 1000
 mail_gid = 1000
 first_valid_uid = 1000
 first_valid_gid = 1000
-mail_location = ` + MailLayout + `
+mail_driver = maildir
+mail_path = ` + MailPath + `
 CONF_EOF
-srv() { USER="${ADDRESS}" HOME=/tmp doveadm -c "${CONF}" "$@"; }
+srv() {
+  _cmd=("$1"); shift
+  case "${_cmd[0]}" in mailbox|flags) _cmd+=("$1"); shift ;; esac
+  USER="${ADDRESS}" HOME=/tmp doveadm -c "${CONF}" "${_cmd[@]}" --no-userdb-lookup "$@"
+}
 ` + commands
 	return m.mustRun(DovecotImage, "1000:1000", "/bin/bash", script, "ADDRESS="+address)
 }

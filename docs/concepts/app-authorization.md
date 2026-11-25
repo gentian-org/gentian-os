@@ -17,11 +17,11 @@ server.
 
 | | Kernel authorization | App authorization |
 |---|---|---|
-| Holds | the platform's model: clusters, tenants, apps, groups ([authorization.md](authorization.md)) | one store per tenant and component, each with the component's own model |
+| Holds | the platform's model: clusters, tenants, apps, positions and roles ([authorization.md](authorization.md)) | one store per tenant and component, each with the component's own model |
 | Runs in | `kernel-authorization` | `system-authorization` |
 | Asked by | the enforcement points: bouncer, director, usher, custodian, registrar, the operator | the arbiter, and nothing else |
-| Written by | the operator's projection and the membership listener | the arbiter, for the component that holds the store |
-| Its data | structure rebuilt from git and the Cluster claim; memberships return from Keycloak as each person's groups next change | tenant data: exported, restored and purged with the tenant |
+| Written by | the operator, and nothing else | the arbiter, for the component that holds the store |
+| Its data | structure rebuilt from git and the Cluster claim; who holds which position and role is in the store alone and travels with a tenant's backup | tenant data: exported, restored and purged with the tenant |
 | Database | `kernel-postgres` | the tenants' data plane, `system-postgresql` |
 
 OpenFGA's credential opens every store on its server, so a key that reached
@@ -47,7 +47,7 @@ gone is replaced by a new one.
 ### 2.1 What a profile declares
 
 `requires.services.authorization`: the model in the OpenFGA DSL, and
-optionally `groups: mirror` (§2.5) and `tuples` (§2.6). The field, the Secret
+optionally `tuples` (§2.7) and `roles: handOver` (§2.6). The field, the Secret
 `authorization-<component>` the app receives (`AUTHORIZATION_URL`,
 `AUTHORIZATION_KEY`) and the network path to the arbiter's port alone are in
 [app-customization.md §1.1](../guides/app-customization.md).
@@ -55,8 +55,9 @@ optionally `groups: mirror` (§2.5) and `tuples` (§2.6). The field, the Secret
 The operator compiles the model when the profile is admitted and refuses a
 profile whose model does not compile, so a broken model is a failed install
 and never a store without one. Every trust tier may declare it: a store
-holds only the declaring component's own relations, and nothing in it is
-read by the platform.
+holds the declaring component's own relations and, when it asks, its
+people's roles on the app; nothing in it decides anything for the
+platform.
 
 ### 2.2 The store
 
@@ -67,8 +68,7 @@ new profile build is written as a new model of the same store, and the
 tuples stay: OpenFGA models are immutable and versioned, and the arbiter
 always decides against the latest one the operator handed it.
 
-People are named as the platform names them, `user:<realm>/<subject>`, and
-groups `group:<realm>/<group name>`, through the one mapping every identifier
+People are named as the platform names them, `user:<realm>/<subject>`, through the one mapping every identifier
 crosses into OpenFGA by (`internal/arbiter/naming.go`), so a customer of one
 realm and a person of another can never be one user, and an app's tuples and
 the platform's agree on who someone is. The arbiter does not enforce the
@@ -89,10 +89,9 @@ Every call carries `Authorization: Bearer <AUTHORIZATION_KEY>`. A key the
 table does not name is `401`; nothing a caller sends can name another store,
 and a field the API does not have is `400`. Each key has a rate limit (100
 calls a second, burst 200), so no app can slow another's decisions. A key may
-not write or delete a tuple whose object is of type `group` (`403`): who is
-in a group is the realm's to say (§2.5). What a group's members hold of the
-component's own objects is the component's: a tuple whose user is
-`group:<realm>/<name>#member` is written like any other. A refusal is
+not write or delete a tuple whose object is of type `group` (`403`): the
+type is the platform's (§2.5); in a store handed roles, nor one whose object
+is of type `role` (§2.6). A refusal is
 `{code, message}`.
 
 The arbiter runs from the operator's image with its own command, and the
@@ -107,7 +106,7 @@ no other workload is handed the key
 ### 2.4 The platform's path
 
 What the platform writes into stores and reads out of them, no app's key
-can: the realm's memberships (§2.5), a store's export and restore, a purge.
+can: the people's roles (§2.6), a store's export and restore, a purge.
 The operator calls `/v1/platform/...` on the arbiter with a token of its
 ServiceAccount projected for the audience `gentian-arbiter`, and the arbiter
 asks the API server whose it is (TokenReview), as the operator's own listener
@@ -115,38 +114,43 @@ admits the director. Only the operator's ServiceAccount is admitted: a
 component's key is no token the API server vouches for, and a component's
 own token for that audience names the component's account.
 
-### 2.5 The realm's groups
+### 2.5 The type `group`
 
-`groups: mirror` has the platform keep the tenant realm's group memberships
-in the store: every top-level group of the realm, not only the platform's
-vocabulary, as `group:<realm>/<group name>#member` of
-`user:<realm>/<subject>`, `:` in a name written as `/`. The tenant's own
-members group, `gentian:tenant:<t>:members`, is
-`group:<realm>/gentian/tenant/<t>/members`. The model must define a type
-`group` whose relation `member` users are written with.
+The type `group` is the platform's in every app's store: no component's key
+writes or deletes a tuple whose object is one, and the platform writes none.
+A store knows people by `user:<realm>/<subject>` and what the component
+itself wrote about them.
 
-The memberships come from the signed state events the membership listener
-receives for the kernel's store, after the kernel's projection, which is
-unchanged (`internal/membership/events.go`): a person's whole set of groups,
-compared with the store and written; a deleted group loses its members. A
-realm reaches the stores of the components of its one tenant and no other; a
-realm no tenant has, or several share, reaches none. A nested group is not
-mirrored, as the kernel's store holds none. An event the stores did not take
-is refused, and the listener sends it again.
+### 2.6 Roles handed over
 
-Keycloak sends memberships as they change and the kernel's projection keeps
-no list of them, so a store made after a membership was holds it from that
-person's next change on.
+A profile that declares `roles: handOver` is handed, in its store, the roles
+each person holds on the app: one tuple `user:<realm>/<subject> holder
+role:<name>` per role, for `user`, `admin` and every role the profile
+declares (`spec.roles.declared`). They are what the rights store answers --
+through positions and what they include, included roles, a base's
+administrators, and the app's administrator holding every role -- so the
+app's model builds on its own roles and never on the tenant's positions.
+The model declares `type role` with `define holder: [user]` and gives its
+objects to `role:<name>#holder`; a starting tuple names no role as its
+object.
 
-### 2.6 Starting tuples
+The operator hands each such store the full set after every projection
+pass (`internal/controller/role_handover.go`), and the arbiter writes and
+takes tuples until the store holds exactly that set. Giving or taking a role
+or a position patches the tenant, which brings the pass back, so a change
+reaches the store within seconds. A store whose profile stops declaring
+`roles: handOver` loses the roles it was handed.
+
+### 2.7 Starting tuples
 
 `tuples` are written by the platform when the store is first resolved and
 whenever the profile's list changes; one the profile no longer names is
 taken out again. The arbiter records which tuples it wrote, so a tuple the
 app wrote itself is never touched. They are held to the compiled model at
-admission; a store that mirrors groups names no group as an object here.
+admission, and name no group as an object, nor a role in a store handed
+roles.
 
-### 2.7 Lifecycle
+### 2.8 Lifecycle
 
 | Event | The store |
 |---|---|
@@ -177,6 +181,6 @@ purges an engine and which engines are on every cluster is in
 |---|---|
 | that a component has a store | its profile |
 | the model of the store | its profile, compiled by the operator |
-| the tuples | the component, through the arbiter; group memberships the realm, starting tuples the profile |
+| the tuples | the component, through the arbiter; starting tuples the profile; the roles handed over the rights store |
 | which engines run | the profiles installed, and the claim |
 | that an engine is removed | a person, by purge |

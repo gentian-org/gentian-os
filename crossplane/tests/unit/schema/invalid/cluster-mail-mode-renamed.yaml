@@ -1,0 +1,15 @@
+# Invalid Cluster claim — the name the cluster's own mail stack had.
+#
+# 'system' is 'internal' now, and there is no alias: a claim that still says
+# it is refused rather than read as something it may not mean.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-mail-mode-renamed
+  namespace: default
+spec:
+  kernelDomain: example.org
+  networkMode: static-ip
+  nodeIp: 198.51.100.10
+  mail:
+    serviceMode: system

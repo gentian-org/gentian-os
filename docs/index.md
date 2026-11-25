@@ -34,6 +34,7 @@ How to do one thing, for operators, tenant administrators and app authors.
 | [deployment.md](guides/deployment.md) | Deployment environments, promotion and release numbering |
 | [app-customization.md](guides/app-customization.md) | Customizing an installed app along the customization ladder |
 | [custom-catalogs.md](guides/custom-catalogs.md) | Publishing a catalog of your own |
+| [edge.md](guides/edge.md) | Using the edge: each way in and out, what to declare, approve and check |
 | [identity-brokering.md](guides/identity-brokering.md) | People of another realm signing in to a tenant |
 | [tenant-backup.md](guides/tenant-backup.md) | Backing up and recovering a workspace, as a tenant administrator |
 | [recovery.md](guides/recovery.md) | Recovering after a loss of a cluster, a tenant or a key |
@@ -67,12 +68,14 @@ How each part is designed and why, for architects, operators and app authors.
 | [control-plane.md](concepts/control-plane.md) | The programs of the control plane: what each holds and refuses |
 | [multi-tenancy.md](concepts/multi-tenancy.md) | Tenants, isolation, domains, tenancy modes |
 | [routing.md](concepts/routing.md) | The edge, routes, sign-in sessions, embedding |
+| [edge.md](concepts/edge.md) | Where traffic crosses the boundary, in and out, and who decides each crossing |
 | [networking.md](concepts/networking.md) | Network layers, policies, exposure, certificates, TURN |
 | [iam.md](concepts/iam.md) | Identity and access management, realms, roles, sign-in |
 | [authorization.md](concepts/authorization.md) | The authorization model: relations, roles, projections |
 | [app-authorization.md](concepts/app-authorization.md) | Authorization stores for apps and the arbiter |
 | [partners.md](concepts/partners.md) | Identity across clusters |
 | [app-catalog.md](concepts/app-catalog.md) | Profiles, classes, integrations, tiers, the component model |
+| [bridges.md](concepts/bridges.md) | Bridges and their ways: syncing devices, agents and outside services with a tenant's apps |
 | [store-contract.md](concepts/store-contract.md) | What a cluster accepts from an App Store |
 | [versioning.md](concepts/versioning.md) | Versions, floors, update modes, the guarded move |
 | [admin-console.md](concepts/admin-console.md) | The administration console and the desktop |
@@ -96,6 +99,7 @@ The architectural decisions, numbered AD-1 onward, each with its reason:
 |---|---|
 | [principles.md](security/principles.md) | The normative rules every change is held to |
 | [design.md](security/design.md) | Identity, authorization, isolation, secrets, TLS: the security design |
+| [secrets.md](security/secrets.md) | Where every secret and key is kept, who writes and reads it, and the rules that decide |
 | [audit-events.md](security/audit-events.md) | Audit events, log forwarding and monitoring |
 | [controls.md](security/controls.md) | The controls, as an auditor reads them |
 

@@ -36,17 +36,18 @@ import (
 // (kernel/services/llm/manifests/templates/llm-services.yaml).
 //
 // The gateway's chart writes every other policy of that namespace. This one is
-// written here because its instances reach the Kubernetes API, and the
-// addresses the API answers on are the cluster's: the operator reads them from
-// the kubernetes Service's EndpointSlice, as it does for a tenant's namespace
+// written here because its instances reach the Kubernetes API and the
+// cluster's DNS, and where those answer is the cluster's: the operator reads
+// them from their Services, as it does for a tenant's namespace
 // (netpolicy.BaselineEgress), and rewrites the policy when they change.
 //
 // An instance may reach:
 //
-//   - DNS, on 53;
-//   - the API server: KUBE_APISERVER_CIDR on 443, and each address and port of
-//     the kubernetes EndpointSlice. The instance manager watches its Cluster
-//     and writes its status there;
+//   - the cluster's DNS, on 53 (netpolicy.DNSEgress);
+//   - the API server: each address and port of the kubernetes EndpointSlice
+//     and the kubernetes Service's cluster address, or KUBE_APISERVER_CIDR on
+//     443 when no address of it is read (netpolicy.APIServerEgress). The
+//     instance manager watches its Cluster and writes its status there;
 //   - the cluster's own pods on the data port: a replica streams from the
 //     primary, and a former primary is rewound from the new one (pg_rewind),
 //     both through the litellm-db-rw Service.
@@ -87,7 +88,7 @@ type ModelGatewayDatabaseEgressReconciler struct {
 	// NetworkPolicies is the switch (StoreNetworkPoliciesEnabled).
 	NetworkPolicies bool
 	// KubeAPIServerCIDR is the range the API server is admitted in on 443
-	// (KubeAPIServerCIDR).
+	// when none of its addresses is read (KubeAPIServerCIDR).
 	KubeAPIServerCIDR string
 }
 
@@ -107,7 +108,7 @@ func (r *ModelGatewayDatabaseEgressReconciler) Reconcile(ctx context.Context, _ 
 		}}
 		return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, policy))
 	}
-	desired := modelGatewayDatabaseEgressPolicy(r.KubeAPIServerCIDR, loadKubeAPIEndpointSlice(ctx, r.Client))
+	desired := modelGatewayDatabaseEgressPolicy(r.KubeAPIServerCIDR, loadClusterServices(ctx, r.Client))
 	return ctrl.Result{}, ensureObject(ctx, r.Client, desired, func(existing *networkingv1.NetworkPolicy) bool {
 		if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) &&
 			equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
@@ -118,12 +119,12 @@ func (r *ModelGatewayDatabaseEgressReconciler) Reconcile(ctx context.Context, _ 
 	})
 }
 
-// modelGatewayDatabaseEgressPolicy is the policy, for the API server's range
-// and the kubernetes Service's EndpointSlice (nil when there is none).
-func modelGatewayDatabaseEgressPolicy(apiServerCIDR string, kubeAPIEndpts *discoveryv1.EndpointSlice) *networkingv1.NetworkPolicy {
+// modelGatewayDatabaseEgressPolicy is the policy, for the API server's
+// fallback range and the cluster's DNS and API server as read.
+func modelGatewayDatabaseEgressPolicy(apiServerCIDR string, cluster netpolicy.ClusterServices) *networkingv1.NetworkPolicy {
 	tcp := corev1.ProtocolTCP
 	port := intstr.FromInt32(modelGatewayDatabasePort)
-	egress := netpolicy.BaselineEgress(netpolicy.Config{KubeAPIServerCIDR: apiServerCIDR}, kubeAPIEndpts)
+	egress := netpolicy.BaselineEgress(netpolicy.Config{KubeAPIServerCIDR: apiServerCIDR}, cluster)
 	egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 		To: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{
 			MatchLabels: map[string]string{cnpgClusterLabel: modelGatewayDatabaseCluster},
@@ -169,10 +170,9 @@ func (r *ModelGatewayDatabaseEgressReconciler) SetupWithManager(mgr ctrl.Manager
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("model-gateway-database-egress").
-		// The API server's addresses.
-		Watches(&discoveryv1.EndpointSlice{}, toPolicy, builder.WithPredicates(predicate.NewPredicateFuncs(func(o client.Object) bool {
-			return o.GetLabels()[kubeAPIServiceNameLabel] == kubeAPIServiceName && o.GetNamespace() == metav1.NamespaceDefault
-		}))).
+		// The cluster's DNS and the API server.
+		Watches(&discoveryv1.EndpointSlice{}, toPolicy, builder.WithPredicates(clusterServiceChanged())).
+		Watches(&corev1.Service{}, toPolicy, builder.WithPredicates(clusterServiceChanged())).
 		// Whether the cluster serves models.
 		Watches(&corev1.ConfigMap{}, toPolicy, builder.WithPredicates(named(clusterConfigNamespace, clusterConfigName))).
 		Watches(&corev1.Namespace{}, toPolicy, builder.WithPredicates(named("", llmNamespace))).

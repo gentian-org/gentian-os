@@ -65,9 +65,11 @@ type Notification struct {
 
 // NotificationAudience is who a notice is for.
 type NotificationAudience struct {
-	Scope  string   `json:"scope"`
-	Tenant *string  `json:"tenant,omitempty"`
-	Groups []string `json:"groups"`
+	Scope  string  `json:"scope"`
+	Tenant *string `json:"tenant,omitempty"`
+	// Positions are the tenant's positions the notice is for, by name;
+	// none, and no person named, is every person of the tenant.
+	Positions []string `json:"positions"`
 }
 
 // PublishNotificationRequest is one notice, as the caller asks for it.
@@ -115,12 +117,12 @@ func (s *Service) Notifications(ctx context.Context, tenantName string) ([]Notif
 			&n.Publisher, &audience, &n.LinkURL, &n.LinkLabel, &n.ExpiresAt); err != nil {
 			return nil, err
 		}
-		n.Audience = NotificationAudience{Groups: []string{}}
+		n.Audience = NotificationAudience{Positions: []string{}}
 		if len(audience) > 0 {
 			_ = json.Unmarshal(audience, &n.Audience)
 		}
-		if n.Audience.Groups == nil {
-			n.Audience.Groups = []string{}
+		if n.Audience.Positions == nil {
+			n.Audience.Positions = []string{}
 		}
 		out = append(out, n)
 	}
@@ -153,12 +155,12 @@ func (s *Service) PublishNotification(ctx context.Context, req PublishNotificati
 		Body:        req.Body,
 		Severity:    severity,
 		Publisher:   req.Actor,
-		Audience:    NotificationAudience{Scope: "tenant", Tenant: &req.Tenant, Groups: []string{}},
+		Audience:    NotificationAudience{Scope: "tenant", Tenant: &req.Tenant, Positions: []string{}},
 	}
 	if req.Audience != nil {
 		notice.Audience = *req.Audience
-		if notice.Audience.Groups == nil {
-			notice.Audience.Groups = []string{}
+		if notice.Audience.Positions == nil {
+			notice.Audience.Positions = []string{}
 		}
 	}
 	if req.LinkURL != "" {

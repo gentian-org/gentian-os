@@ -11,7 +11,7 @@
 
 # Postfix and Dovecot present it too, for smtp.<kernelDomain> and
 # imap.<kernelDomain>, and read it from their own namespace. That namespace
-# exists only where mail.serviceMode is system; the copy skips a namespace the
+# exists only where mail.serviceMode is internal; the copy skips a namespace the
 # cluster does not have, and apply() refuses to go on without one it should.
 _v5_wildcard_targets() { echo "$(ns_kernel edge) $(ns_kernel gitops) $(ns_system mail)"; }
 
@@ -41,9 +41,9 @@ apply() {
     # Composed from the Cluster claim, and delivered by C-02 before this runs.
     # Missing here, the copy would be skipped and check() satisfied, with
     # Postfix and Dovecot held on a Secret nothing is going to write.
-    if [[ "$(gentian_mail_service_mode)" == "system" ]] &&
+    if [[ "$(gentian_mail_service_mode)" == "internal" ]] &&
         ! kubectl get namespace "$(ns_system mail)" >/dev/null 2>&1; then
-        error "mail.serviceMode is system and the namespace $(ns_system mail) does not exist."
+        error "mail.serviceMode is internal and the namespace $(ns_system mail) does not exist."
         error "  The Cluster claim composes it; C-02 waits for it. Re-run once it is there."
         return 1
     fi

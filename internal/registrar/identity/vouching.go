@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 )
 
 // A component that vouches for people (requires.services.vouching) is entered
@@ -163,4 +164,35 @@ func (c *Client) UnlinkVouching(ctx context.Context, r Realm, userID, profile st
 		return err
 	}
 	return nil
+}
+
+// VouchingPeople are the people linked to a profile's entry, by their id in
+// the realm, in the order Keycloak lists them. A component asks it to know
+// for whom it may act; it learns no more of them than their ids.
+func (c *Client) VouchingPeople(ctx context.Context, r Realm, profile string) ([]string, error) {
+	if !profileName.MatchString(profile) {
+		return nil, nil
+	}
+	const page = 100
+	var out []string
+	for first := 0; ; first += page {
+		var users []struct {
+			ID string `json:"id"`
+		}
+		q := url.Values{
+			"idpAlias":            {VouchingAlias(profile)},
+			"briefRepresentation": {"true"},
+			"first":               {strconv.Itoa(first)},
+			"max":                 {strconv.Itoa(page)},
+		}
+		if err := c.call(ctx, r, http.MethodGet, "/users", q, nil, &users); err != nil {
+			return nil, err
+		}
+		for _, u := range users {
+			out = append(out, u.ID)
+		}
+		if len(users) < page {
+			return out, nil
+		}
+	}
 }

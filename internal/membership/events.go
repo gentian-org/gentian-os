@@ -27,36 +27,42 @@ import (
 	"time"
 )
 
-// Event is what the listener inside Keycloak sends.
+// Event is what the listener inside Keycloak sends: what only the realm sees
+// happen to a person.
 type Event struct {
 	// ID is unique per event; a second delivery of the same id is dropped.
 	ID string `json:"id"`
-	// Time is when Keycloak made the change, in milliseconds since the epoch.
+	// Time is when Keycloak saw it, in milliseconds since the epoch.
 	Time int64 `json:"time"`
-	// Realm is the realm the change happened in.
+	// Realm is the realm it happened in.
 	Realm string `json:"realm"`
 	// Type is one of the Type* constants.
 	Type string `json:"type"`
-	// User is the Keycloak user id — the sub of that user's tokens.
+	// User is the Keycloak user id -- the sub of that user's tokens.
 	User string `json:"user,omitempty"`
-	// Groups is the user's complete set of group names after the change.
-	Groups []string `json:"groups,omitempty"`
-	// Group is the name of a deleted group.
-	Group string `json:"group,omitempty"`
+	// Provider is the identity provider a person came in through.
+	Provider string `json:"provider,omitempty"`
+	// ProviderUser is who the person is at that provider: the id of their
+	// account there, as the realm's link to it holds it. For a tenant's
+	// provider tenant-<source>, the sub of their account in the source
+	// tenant's realm. Absent when the realm did not say.
+	ProviderUser string `json:"providerUser,omitempty"`
 }
 
 const (
-	// TypeUserMemberships states a user's complete group set.
-	TypeUserMemberships = "user.memberships"
+	// TypeUserEntered states that a person signed in to the realm through an
+	// identity provider: an account of another realm, let in here.
+	TypeUserEntered = "user.entered"
 	// TypeUserDeleted states that a user no longer exists.
 	TypeUserDeleted = "user.deleted"
-	// TypeGroupDeleted states that a group no longer exists.
-	TypeGroupDeleted = "group.deleted"
+	// TypeUserRegistered states that a person made an account in the realm
+	// themself, on its registration page.
+	TypeUserRegistered = "user.registered"
 )
 
 // SignatureHeader carries "keyid=<id>,t=<unix seconds>,sig=<base64>", where
 // sig is an Ed25519 signature over "<t>.<body>". The listener holds the private
-// key and the director only the public one, so nothing the director stores or
+// key and the platform only the public one, so nothing the platform stores or
 // leaks lets anyone speak as Keycloak.
 const SignatureHeader = "X-Gentian-Signature"
 
@@ -65,58 +71,70 @@ const (
 	// long a captured event stays replayable, and so how much the seen-id set
 	// must remember.
 	window = 5 * time.Minute
-	// maxEventBytes caps an event body. A user in a thousand groups fits.
-	maxEventBytes = 256 << 10
+	// maxEventBytes caps an event body.
+	maxEventBytes = 16 << 10
 )
 
 var (
-	eventID   = regexp.MustCompile(`^[A-Za-z0-9._-]{8,80}$`)
-	realmName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`)
+	eventID      = regexp.MustCompile(`^[A-Za-z0-9._-]{8,80}$`)
+	realmName    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`)
+	providerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	// providerUser is what an account id at a provider may be: printable,
+	// without spaces, and bounded.
+	providerUser = regexp.MustCompile(`^[\x21-\x7e]{1,255}$`)
 )
+
+// Arrivals is told of a person who came into a realm through an identity
+// provider, so that what the platform gives such a person is theirs when
+// they arrive. providerUser is who they are at the provider, or "" when the realm did
+// not say.
+type Arrivals interface {
+	PersonEntered(ctx context.Context, realm, sub, provider, providerUser string) error
+}
+
+// Registrations is told of a person who made an account in a realm
+// themself, so that what the platform gives such an account is theirs from
+// the start. An Arrivals that is also a Registrations is told both.
+type Registrations interface {
+	PersonRegistered(ctx context.Context, realm, sub string) error
+}
+
+// Departures is told of a person who no longer exists in a realm, so that
+// what they held, and what is kept for that person alone, ends with them.
+type Departures interface {
+	PersonRemoved(ctx context.Context, realm, sub string) error
+}
 
 // Receiver is the HTTP endpoint events arrive at.
 type Receiver struct {
-	keys map[string]ed25519.PublicKey
-	proj *Projector
-	// mirror carries the same statements on to the app stores that mirror
-	// the realm's groups; nil when there is nothing to carry them to.
-	mirror Mirror
-	log    *slog.Logger
-	now    func() time.Time
+	keys          map[string]ed25519.PublicKey
+	arrivals      Arrivals
+	registrations Registrations
+	departures    []Departures
+	log           *slog.Logger
+	now           func() time.Time
 
 	mu   sync.Mutex
 	seen map[string]time.Time // event id → when it may be forgotten
-	last map[string]int64     // realm/user → time of the newest event applied
 }
 
 // NewReceiver returns a Receiver that accepts events signed by any of keys,
 // which maps a key id to a public key. More than one key is how a key is
-// rotated without losing events.
-func NewReceiver(keys map[string]ed25519.PublicKey, proj *Projector, log *slog.Logger) (*Receiver, error) {
-	if len(keys) == 0 || proj == nil {
-		return nil, errors.New("membership: at least one listener key and a projector are required")
+// rotated without losing events. arrivals may be nil, and departures empty:
+// such an event is then accepted and nothing follows from it. When arrivals
+// is also a Registrations, it is told of the accounts people make
+// themselves; otherwise nothing follows from those either.
+func NewReceiver(keys map[string]ed25519.PublicKey, arrivals Arrivals, log *slog.Logger, departures ...Departures) (*Receiver, error) {
+	if len(keys) == 0 {
+		return nil, errors.New("membership: at least one listener key is required")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Receiver{keys: keys, proj: proj, log: log, now: time.Now,
-		seen: map[string]time.Time{}, last: map[string]int64{}}, nil
+	registrations, _ := arrivals.(Registrations)
+	return &Receiver{keys: keys, arrivals: arrivals, registrations: registrations, departures: departures, log: log,
+		now: time.Now, seen: map[string]time.Time{}}, nil
 }
-
-// Mirror carries a realm's memberships on to the stores of the apps that
-// mirror them (app-authorization.md §2.5). It is given every statement the
-// projection applied, after the projection: the kernel's store is never
-// held back by an app's.
-type Mirror interface {
-	// SetUserGroups states a person's complete set of groups in a realm:
-	// every group, not only the platform's vocabulary.
-	SetUserGroups(ctx context.Context, realm, sub string, groups []string) error
-	// RemoveGroup says a group of a realm is gone.
-	RemoveGroup(ctx context.Context, realm, group string) error
-}
-
-// SetMirror has the receiver carry what it applies on to m as well.
-func (rc *Receiver) SetMirror(m Mirror) { rc.mirror = m }
 
 // ParseKeys reads "id=base64key,id=base64key".
 func ParseKeys(s string) (map[string]ed25519.PublicKey, error) {
@@ -147,7 +165,7 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := rc.verify(r.Header.Get(SignatureHeader), body); err != nil {
-		rc.log.WarnContext(ctx, "membership event refused", "reason", err.Error())
+		rc.log.WarnContext(ctx, "realm event refused", "reason", err.Error())
 		http.Error(w, "unauthenticated", http.StatusUnauthorized)
 		return
 	}
@@ -160,58 +178,69 @@ func (rc *Receiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent) // delivered before; the sender may stop retrying
 		return
 	}
-
-	var change Change
 	switch ev.Type {
-	case TypeUserMemberships, TypeUserDeleted:
+	case TypeUserEntered:
+		if ev.User == "" || !providerName.MatchString(ev.Provider) ||
+			(ev.ProviderUser != "" && !providerUser.MatchString(ev.ProviderUser)) {
+			http.Error(w, "malformed event", http.StatusBadRequest)
+			return
+		}
+		if rc.arrivals != nil {
+			err = rc.arrivals.PersonEntered(ctx, ev.Realm, ev.User, ev.Provider, ev.ProviderUser)
+		}
+	case TypeUserRegistered:
 		if ev.User == "" {
 			http.Error(w, "malformed event", http.StatusBadRequest)
 			return
 		}
-		if !rc.newest(ev.Realm+"/"+ev.User, ev.Time) {
-			// State, not deltas: an older statement about a user we already
-			// hold a newer one for is simply out of date.
-			w.WriteHeader(http.StatusNoContent)
+		if rc.registrations != nil {
+			err = rc.registrations.PersonRegistered(ctx, ev.Realm, ev.User)
+		}
+	case TypeUserDeleted:
+		if ev.User == "" {
+			http.Error(w, "malformed event", http.StatusBadRequest)
 			return
 		}
-		groups := ev.Groups
-		if ev.Type == TypeUserDeleted {
-			groups = nil
-		}
-		change, err = rc.proj.SetUserGroups(ctx, ev.Realm, ev.User, groups)
-		if err == nil && rc.mirror != nil {
-			err = rc.mirror.SetUserGroups(ctx, ev.Realm, ev.User, groups)
-		}
-	case TypeGroupDeleted:
-		change, err = rc.proj.RemoveGroup(ctx, ev.Realm, ev.Group)
-		if err == nil && rc.mirror != nil {
-			err = rc.mirror.RemoveGroup(ctx, ev.Realm, ev.Group)
+		for _, d := range rc.departures {
+			if d == nil {
+				continue
+			}
+			if derr := d.PersonRemoved(ctx, ev.Realm, ev.User); derr != nil && err == nil {
+				err = derr
+			}
 		}
 	default:
-		// A listener newer than this director may send types it does not know.
+		// A listener newer than this operator may send types it does not know.
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if err != nil {
 		// Forget the id so the listener's retry is not mistaken for a replay.
-		rc.forget(ev.ID, ev.Realm+"/"+ev.User)
-		rc.log.ErrorContext(ctx, "membership event not applied", "event", ev.ID, "realm", ev.Realm, "error", err.Error())
+		rc.forget(ev.ID)
+		rc.log.ErrorContext(ctx, "realm event not applied", "event", ev.ID, "realm", ev.Realm, "error", err.Error())
 		http.Error(w, "not applied", http.StatusServiceUnavailable)
 		return
 	}
-	rc.log.InfoContext(ctx, "membership event applied", "event", ev.ID, "realm", ev.Realm, "type", ev.Type,
-		"user", ev.User, "group", ev.Group, "added", change.Added, "removed", change.Removed, "refused", change.Refused)
+	rc.log.InfoContext(ctx, "realm event applied", "event", ev.ID, "realm", ev.Realm, "type", ev.Type,
+		"user", ev.User, "provider", ev.Provider, "provider_user", ev.ProviderUser)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (rc *Receiver) verify(header string, body []byte) error {
+	return VerifySignature(rc.keys, header, body, rc.now())
+}
+
+// VerifySignature checks a SignatureHeader over body against keys at now:
+// a listed key, a timestamp inside the window, and a signature that
+// verifies. It is how anything in the cluster knows a request is Keycloak's.
+func VerifySignature(keys map[string]ed25519.PublicKey, header string, body []byte, now time.Time) error {
 	fields := map[string]string{}
 	for _, part := range strings.Split(header, ",") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(part), "="); ok {
 			fields[k] = v
 		}
 	}
-	key, ok := rc.keys[fields["keyid"]]
+	key, ok := keys[fields["keyid"]]
 	if !ok {
 		return errors.New("unknown key id")
 	}
@@ -219,7 +248,7 @@ func (rc *Receiver) verify(header string, body []byte) error {
 	if err != nil {
 		return errors.New("no timestamp")
 	}
-	if d := rc.now().Sub(time.Unix(ts, 0)); d > window || d < -window {
+	if d := now.Sub(time.Unix(ts, 0)); d > window || d < -window {
 		return errors.New("timestamp outside the window")
 	}
 	sig, err := base64.StdEncoding.DecodeString(fields["sig"])
@@ -252,29 +281,8 @@ func (rc *Receiver) first(id string) bool {
 	return true
 }
 
-func (rc *Receiver) newest(key string, t int64) bool {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-	if t < rc.last[key] {
-		return false
-	}
-	// Nothing older than the signature window can arrive, so entries that old
-	// no longer decide anything.
-	if len(rc.last) > 4096 {
-		floor := rc.now().Add(-2 * window).UnixMilli()
-		for k, v := range rc.last {
-			if v < floor {
-				delete(rc.last, k)
-			}
-		}
-	}
-	rc.last[key] = t
-	return true
-}
-
-func (rc *Receiver) forget(id, key string) {
+func (rc *Receiver) forget(id string) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	delete(rc.seen, id)
-	delete(rc.last, key)
 }

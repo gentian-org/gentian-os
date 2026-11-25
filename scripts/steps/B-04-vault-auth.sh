@@ -2,21 +2,16 @@
 # step: B-04-vault-auth
 # phase: secrets
 # requires: B-03-vault-init
-# provides: the vault's KV mount, the crossplane-write policy, and the openbao-crossplane-token Secret in the provisioning namespace
-# mutates: vault secrets engines, policies and tokens; Secret openbao-crossplane-token in the provisioning namespace
+# provides: the vault's KV mount, the crossplane-write policy, the ServiceAccount crossplane-provider-vault in the provisioning namespace, and the vault's Kubernetes auth with the role that account signs in as
+# mutates: vault secrets engines, auth backends, policies and roles; ServiceAccount crossplane-provider-vault in the provisioning namespace
 
 # Crossplane's provider-vault
-# is what configures the vault's Kubernetes auth and every role from the
-# Cluster claim, so this step gives it a token that may do that and no more.
+# is what configures every other role and policy from the Cluster claim, so
+# this step lets its account sign in for that and no more. It leaves no token
+# behind: the provider gets a short-lived one each time it signs in.
 
 check() {
-    local ns token addr
-    ns="$(ns_kernel provisioning)"
-    # provider-vault reads the token as JSON under the key "credentials".
-    token="$(kubectl get secret openbao-crossplane-token -n "${ns}" -o jsonpath='{.data.credentials}' 2>/dev/null | base64 -d 2>/dev/null | jq -r '.token // empty' 2>/dev/null)" || return 1
-    [[ -n "${token}" ]] || return 1
-    addr="$(gentian_service_addr openbao "$(ns_kernel secrets)" 8200 https 2>/dev/null)" || return 1
-    [[ "$(bao_curl -s -o /dev/null -w '%{http_code}' --max-time 5 -H @<(printf 'X-Vault-Token: %s\n' "${token}") "${addr}/v1/auth/token/lookup-self")" == "200" ]]
+    vault_provider_in_sync
 }
 
 apply() {
@@ -30,5 +25,5 @@ apply() {
 }
 
 destroy() {
-    kubectl delete secret openbao-crossplane-token -n "$(ns_kernel provisioning)" --ignore-not-found >/dev/null 2>&1 || true
+    kubectl delete serviceaccount crossplane-provider-vault -n "$(ns_kernel provisioning)" --ignore-not-found >/dev/null 2>&1 || true
 }

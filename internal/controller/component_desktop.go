@@ -44,6 +44,7 @@ import (
 	gentianmeta "github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/placement"
 	"github.com/gentian-org/gentian-os/internal/profilebundle"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 // The desktop is the one component the OS ships itself (admin-console.md
@@ -687,6 +688,15 @@ func (r *TenantReconciler) Placements(ctx context.Context) (placement.Answer, er
 // those: the label says which ones are installs. Uninstalling is a commit
 // that removes the entry, and this is where the cluster follows it.
 func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	return r.ensureAppComponentsHolding(ctx, tenant, nil)
+}
+
+// ensureAppComponentsHolding is ensureAppComponents holding back the apps in
+// waits: one whose kernel resources are not there yet gets no Component, and
+// one that has its Component keeps it as it is -- not moved to another build,
+// not given other add-ons -- until they are. It stays wanted, so it is not
+// removed. Every other app is made and changed as usual.
+func (r *TenantReconciler) ensureAppComponentsHolding(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) error {
 	wanted := map[string]struct{}{}
 	for _, app := range tenant.Spec.Apps {
 		profileName, err := catalogue.ResolveTenantComponentProfile(ctx, r.Client, app)
@@ -694,15 +704,22 @@ func (r *TenantReconciler) ensureAppComponents(ctx context.Context, tenant *gent
 			return err
 		}
 		wanted[profileName] = struct{}{}
+		for _, addon := range app.Addons {
+			if addon != "" {
+				wanted[addon] = struct{}{}
+			}
+		}
+		if waits.holds(profileName) {
+			continue
+		}
 		if err := r.ensureComponent(ctx, tenant, profileName, componentOriginInstall, app.Digest, app.Addons, activePins(app), app.Config,
 			moveRecord{at: app.MovedAt, by: app.MovedBy}); err != nil {
 			return err
 		}
 		for _, addon := range app.Addons {
-			if addon == "" {
+			if addon == "" || waits.holds(addon) {
 				continue
 			}
-			wanted[addon] = struct{}{}
 			if err := r.ensureComponent(ctx, tenant, addon, componentOriginInstall, app.PinOf(addon), nil, nil, nil, moveRecord{}); err != nil {
 				return err
 			}
@@ -745,7 +762,7 @@ func activePins(app gentianov1alpha1.TenantApp) []gentianov1alpha1.AddonPin {
 // when the profile says otherwise is replaced (ensureComponent).
 const componentClassAssumedAnnotation = "gentianos.io/class-assumed"
 
-// installClass is the class a tenant's install runs under: adapter or action
+// installClass is the class a tenant's install runs under: action or bridge
 // for a profile certified as one, app otherwise -- including while the profile is
 // not on the cluster yet, which is how an install usually begins.
 func (r *TenantReconciler) installClass(ctx context.Context, profileName string) (gentianov1alpha1.ComponentClass, bool, error) {
@@ -757,7 +774,7 @@ func (r *TenantReconciler) installClass(ctx context.Context, profileName string)
 		return "", false, err
 	}
 	for _, exclusive := range []gentianov1alpha1.ComponentClass{
-		gentianov1alpha1.ComponentClassAdapter, gentianov1alpha1.ComponentClassAction,
+		gentianov1alpha1.ComponentClassAction, gentianov1alpha1.ComponentClassBridge,
 	} {
 		if classIncludes(profile, exclusive) {
 			return exclusive, true, nil
@@ -949,9 +966,10 @@ func tenantPrivilegeGrants(tenant *gentianov1alpha1.Tenant, install string) []ge
 
 // replacedGrants are the privileges the Component carries an approval for
 // that the Tenant has approved again for other terms: another digest (the
-// definitions changed and were approved as they are now) or another expiry
-// (a renewal). Pressing the button again for the same terms is not one; that
-// approval stays as stored.
+// definitions changed and were approved as they are now), another expiry
+// (a renewal), or another record of what an egress grant answered (other
+// hosts, another rule's digest). Pressing the button again for the same
+// terms is not one; that approval stays as stored.
 func replacedGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []string {
 	have := make(map[string]gentianov1alpha1.PrivilegeGrant, len(stored))
 	for _, g := range stored {
@@ -960,14 +978,23 @@ func replacedGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []string 
 	var out []string
 	for _, g := range desired {
 		kept, ok := have[g.Privilege]
-		if !ok {
+		if !ok || sameApproval(&kept, &g) {
+			// The same approval with its record or expiry filled in or
+			// changed is written in place (keepStoredGrants): the Component's
+			// API refuses only a change of approver or approvedAt.
 			continue
 		}
-		if kept.Digest != g.Digest || !equalOptionalTime(kept.ExpiresAt, g.ExpiresAt) {
+		if !security.SameRecord(&kept, &g) || !equalOptionalTime(kept.ExpiresAt, g.ExpiresAt) {
 			out = append(out, g.Privilege)
 		}
 	}
 	return out
+}
+
+// sameApproval reports whether two grants are one approval: the same
+// approver at the same time.
+func sameApproval(a, b *gentianov1alpha1.PrivilegeGrant) bool {
+	return a.Approver == b.Approver && a.ApprovedAt.Equal(&b.ApprovedAt)
 }
 
 func equalOptionalTime(a, b *metav1.Time) bool {
@@ -998,6 +1025,12 @@ func keepStoredGrants(stored, desired []gentianov1alpha1.PrivilegeGrant) []genti
 	out := make([]gentianov1alpha1.PrivilegeGrant, 0, len(desired))
 	for _, g := range desired {
 		if kept, ok := have[g.Privilege]; ok {
+			if sameApproval(&kept, &g) {
+				// The same approval: what the Tenant now records for it --
+				// what it answered, until when -- is taken over in place.
+				out = append(out, g)
+				continue
+			}
 			out = append(out, kept)
 			continue
 		}

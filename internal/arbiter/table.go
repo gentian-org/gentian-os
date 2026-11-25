@@ -63,12 +63,17 @@ type Entry struct {
 	KeyHash string `json:"keyHash"`
 	// Model is the compiled model (Compile), as OpenFGA's API takes it.
 	Model json.RawMessage `json:"model"`
-	// Realm is the tenant's realm: the only realm whose memberships reach
-	// this store, and only when MirrorGroups says so.
+	// Realm is the tenant's realm: the only realm whose people's
+	// memberships or roles reach this store, and only when MirrorGroups or
+	// HandRoles says so.
 	Realm string `json:"realm,omitempty"`
 	// MirrorGroups says the store holds the realm's group memberships,
 	// kept by the platform (requires.services.authorization.groups: mirror).
 	MirrorGroups bool `json:"mirrorGroups,omitempty"`
+	// HandRoles says the store holds its people's roles on the app, kept
+	// by the platform (requires.services.authorization.roles: handOver),
+	// as user:<Realm>/<subject> holder role:<name>.
+	HandRoles bool `json:"handRoles,omitempty"`
 	// Tuples are the store's starting tuples, which the platform writes and
 	// takes away again when the profile no longer names them
 	// (requires.services.authorization.tuples).
@@ -112,6 +117,9 @@ func ParseTable(raw []byte) (*Table, error) {
 		seen[e.KeyHash], seen[e.recordKey()] = true, true
 		if e.MirrorGroups && e.Realm == "" {
 			return nil, fmt.Errorf("the arbiter's table mirrors groups into %s and names no realm", e.StoreName())
+		}
+		if e.HandRoles && e.Realm == "" {
+			return nil, fmt.Errorf("the arbiter's table hands roles to %s and names no realm", e.StoreName())
 		}
 		if len(e.Tuples) > MaxStartingTuples {
 			return nil, fmt.Errorf("the arbiter's table gives %s more than %d starting tuples", e.StoreName(), MaxStartingTuples)

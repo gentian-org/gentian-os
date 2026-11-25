@@ -60,7 +60,7 @@ type CameWith struct {
 // when a push fails, and the request is not as many pushes long as it has
 // apps.
 func (g *GitOps) InstallWith(
-	ctx context.Context, tenant, with string, apps []CameWith, defaultGrant *bool, meta Meta,
+	ctx context.Context, tenant, with string, apps []CameWith, meta Meta,
 ) (res Result, installed []string, err error) {
 	if !ValidName(with) {
 		return Result{}, nil, fmt.Errorf("%w: profile %q", ErrInvalidName, with)
@@ -78,11 +78,7 @@ func (g *GitOps) InstallWith(
 		}
 		names = append(names, a.Profile)
 	}
-	forEveryone := defaultGrant != nil && *defaultGrant
 	msg := fmt.Sprintf("feat(%s): install %s with %s (via %s)", tenant, strings.Join(names, ", "), with, meta.actor())
-	if forEveryone {
-		msg = strings.Replace(msg, " (via ", " for everyone (via ", 1)
-	}
 	res, err = g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
 		installed = nil
 		if adoptsAnotherRealm(text, tenant) {
@@ -93,7 +89,7 @@ func (g *GitOps) InstallWith(
 			if _, _, _, present := appEntryExtent(strings.Split(out, "\n"), a.Profile); present {
 				continue
 			}
-			next, ok := insertComponentProfile(out, a.Profile, a.Digest, a.Catalogue, forEveryone)
+			next, ok := insertComponentProfile(out, a.Profile, a.Digest, a.Catalogue)
 			if !ok {
 				return "", "", false, errors.New("failed to update apps list")
 			}
@@ -146,6 +142,49 @@ func (g *GitOps) UninstallWith(
 		}
 		if out == text {
 			return text, "not_installed", false, nil
+		}
+		return out, "uninstalled", true, nil
+	})
+	return res, removed, err
+}
+
+// LetGo removes, in one commit, apps that came with an app whose build no
+// longer names them: each entry of gone still marked as having come with
+// with. heirs names, for one that another installed app comes with too, that
+// other app: such an entry stays and is marked with it instead. Removed
+// lists what went. The app itself is left as it is.
+func (g *GitOps) LetGo(
+	ctx context.Context, tenant, with string, gone []string, heirs map[string]string, meta Meta,
+) (res Result, removed []string, err error) {
+	if !ValidName(with) {
+		return Result{}, nil, fmt.Errorf("%w: profile %q", ErrInvalidName, with)
+	}
+	for _, name := range gone {
+		if !ValidName(name) {
+			return Result{}, nil, fmt.Errorf("%w: profile %q", ErrInvalidName, name)
+		}
+	}
+	msg := fmt.Sprintf("feat(%s): uninstall %s, which %s no longer comes with (via %s)",
+		tenant, strings.Join(gone, ", "), with, meta.actor())
+	res, err = g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
+		removed = nil
+		out := text
+		for _, name := range gone {
+			if appEntryValue(strings.Split(out, "\n"), name, appCameWithKey) != with {
+				continue
+			}
+			if heir := heirs[name]; heir != "" && heir != with {
+				marked, _ := setAppEntryKey(strings.Split(out, "\n"), name, appCameWithKey, heir, "")
+				out = strings.Join(marked, "\n")
+				continue
+			}
+			if next, ok := removeAppEntry(out, name); ok && next != out {
+				out = next
+				removed = append(removed, name)
+			}
+		}
+		if out == text {
+			return text, "unchanged", false, nil
 		}
 		return out, "uninstalled", true, nil
 	})

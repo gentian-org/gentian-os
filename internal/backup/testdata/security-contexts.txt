@@ -4,9 +4,9 @@ hardened, already set: 6b4d1a5c1f7e484f
   [0].securityContext {"allowPrivilegeEscalation":false,"privileged":false,"seccompProfile":{"type":"RuntimeDefault"}}
 hardened, empty: 1289abc8b585a9e7
   [0].securityContext {"allowPrivilegeEscalation":false,"seccompProfile":{"type":"RuntimeDefault"}}
-mail: 8450931431974b12
+mail: 8b7b5e586ca06dcf
   .securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":1000,"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}
-mailbox destroy: 7a06b0d88658d582
+mailbox destroy: 94d930e714ac7c67
   .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsGroup":1000,"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}
 object storage destroy: aee3d66b14b8a46f
   .spec.template.spec.containers[0].securityContext {"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"runAsNonRoot":true,"runAsUser":1000,"seccompProfile":{"type":"RuntimeDefault"}}

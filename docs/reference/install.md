@@ -241,7 +241,7 @@ first. The installer warns (`… is set in install.env — it overrides
 claims/cluster.yaml`) rather than reversing the precedence, because an operator
 who wrote it there meant something, but the claim is where it belongs. The
 template lists them at its end: `TENANCY_MODE`, `SECRET_MODE`, `NETWORK_MODE`,
-`NODE_IP`, `STORAGE_CLASS`, `PLATFORM`, `MAIL_SERVICE_MODE`, `MAIL_EGRESS_HOST`,
+`NODE_IP`, `STORAGE_CLASS`, `PLATFORM`, `MAIL_SERVICE_MODE`, `MAIL_EGRESS_HOST`, `MAIL_IMAP_HOST`, `MAIL_IMAP_PORT`,
 `DNS_PROVIDER`, `DNS_ZONES`, `DNS_RECORDS`,
 `ACME_ENV`, `CERT_ISSUER_MODE`, `LETSENCRYPT_EMAIL`, `LLM_SUPPORT`,
 `GPU_ACCELERATION`. An
@@ -337,7 +337,7 @@ The template carries one line per setting; the reasoning is here.
 | `GENTIAN_USER_TENANT_WAIT_SECS` | How long `E-04` waits for the user tenant of a single-tenancy cluster to be Ready. 900 by default. |
 | `GENTIAN_OPERATOR_OBJECTS_WAIT_SECS` | How long `E-05` waits for the catalog and every tenant declared in git to be synced -- their Argo CD Applications are asked again when a sync failed, as on a fresh install, where they first run before the operator's CRDs exist -- before it fails naming each with Argo CD's message. 600 by default. |
 | `GENTIAN_REQUIRE_SECRET_ENCRYPTION` | `true` makes pre-flight refuse a cluster whose Secrets are not encrypted at rest; unset or `false`, it warns. See *Secrets at rest* below. |
-| `KERNEL_NETWORK_POLICIES` | **On by default.** Step `A-01` first checks that the CNI enforces NetworkPolicy and stops if it does not, then gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, egress is not restricted ([security/design.md §2.13](../security/design.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything but `true` removes them: §9. |
+| `KERNEL_NETWORK_POLICIES` | **On by default.** Step `A-01` first checks that the CNI enforces NetworkPolicy and stops if it does not, then gives every kernel namespace the NetworkPolicies of `kernel/security/network-policies` -- ingress is refused unless listed, and the namespaces whose pods need no internet reach only the cluster, DNS and the API server, whose endpoints the step reads from the `kubernetes` EndpointSlice in `default` and writes into that rule, failing when it can read none ([security/design.md §2.13](../security/design.md)) -- and `B-01` tells the operator, which then narrows what tenants and publishing proxies admit from the edge namespace. Anything but `true` removes them: §9. |
 | `STORE_NETWORK_POLICIES` | `true` (default) or `false`. The policies on the shared stores, the kernel's PostgreSQL, the mail servers and the model gateway ([security/design.md §2.7](../security/design.md)). |
 | `GENTIAN_NO_EXTRA_SERVICES` | `1` leaves the extra services out of the default profiles, and the store's vendor out of the tenants' partners, as `--no-extra-services` does, takes away the ones an earlier run placed, and records `spec.catalogue.extraServices: false` on the Cluster claim so a later run keeps them out; `0` brings them back and removes the record. Unset keeps what the claim says. The operator removes the Components it placed of them once their profiles leave the catalog. |
 | `GENTIAN_USAGE_STATISTICS_URL` | Where the usage statistics report goes, instead of the default address in `kernel/bootstrap/chart/values.yaml`. `https` only. |
@@ -704,6 +704,21 @@ are commits it makes, signed with its own key. Its push credential is the
 composition of `claims/deployments-repository.yaml`; without that claim every
 write answers 503. Argo CD accepts commits from the director's key and the
 break-glass key only, as listed in `clusters/<cluster>/kernel/signing/keys.env`.
+
+### Checking the repository against a release
+
+A release that takes a field or an enum value out of a `gentianos.io` kind
+leaves a deployments repository that still names it unable to apply: Argo
+CD's diff refuses the object, and every later change to it waits. The image
+names what of a repository its schema no longer takes, file by file:
+
+```bash
+docker run --rm --entrypoint /schema-check -v "$PWD:/repo:ro" ghcr.io/gentian-org/gentian-os:<tag> /repo
+```
+
+It judges every object of the group, kustomize patches included, and exits
+1 when it names anything. Run it in the repository's CI against the image
+the cluster is about to be installed with, before the install.
 
 ### Which credentials the installer handles
 
@@ -1096,4 +1111,18 @@ look first, by symptom:
 | A tenant's apps answer 503 from the Gateway while their pods are Ready | the Envoy proxies into the tenant's namespace: the operator's `tenant-isolation` policy then admits pods labeled `app.kubernetes.io/name=envoy` in `kernel-edge` only. It follows the switch through `B-01`, not through the `kubectl delete` above |
 | A published page (the bare domain's sign-in form) answers 503 | the Envoy proxies to the publishing proxy in the tenant's DMZ: its `<name>-ingress` policy, which follows the switch the same way |
 | "failed calling webhook" on any apply | not these rules: every webhook port admits any source. Check the webhook's pod |
+| A pod in `kernel-secrets`, `kernel-seal`, `kernel-data` or `kernel-authorization` times out reaching the API server or an outside address | that namespace's `kernel-egress` policy: the API server's endpoints it was applied with (`kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes`), or a flow outside the cluster the inventory's `egress: cluster` does not allow |
 
+
+**A tenant's app cannot reach a host outside, or an inside entry.** These
+connections pass fleets that step `A-05` installs the classes for:
+`gentian-envoy-out` for the outgoing gateway and `gentian-envoy-inside` for
+inside entries ([edge.md](../concepts/edge.md)). Where a class is
+missing, `./install.sh --only A-05` installs it.
+
+| Symptom | What to check |
+|---|---|
+| The Component waits with reason `OutgoingGatewayPending` | `kubectl get gatewayclass gentian-envoy-out` and `kubectl get gateway -n kernel-edge`: the listener for the granted host is not programmed yet |
+| A granted host times out | `status.outgoingHosts` on the Component, and the fleet's record: `kubectl -n kernel-edge logs <outgoing Envoy pod> -c envoy`, one JSON line per connection |
+| A host the Component did not get a grant for times out | the grant: `kubectl gentian apps approve <app> --tenant <t>` lists what waits |
+| An inside entry's host does not resolve from a pod | the entry's approval (`kubectl gentian exposures requests --tenant <t>`), the `inside` Gateway in `kernel-edge`, and the `# BEGIN gentian-hairpin` block of CoreDNS ([routing.md §10](../concepts/routing.md#10-in-cluster-dns-hairpin)) |

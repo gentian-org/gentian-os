@@ -14,12 +14,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 )
 
 // PlatformTokenFile is where the operator's token for the platform path is
@@ -84,16 +87,19 @@ func (c *PlatformClient) call(ctx context.Context, method, path string, body, ou
 	return resp.StatusCode, nil
 }
 
-// SetMemberships states one person's groups in a realm, for the mirroring
-// stores of that realm's tenant.
-func (c *PlatformClient) SetMemberships(ctx context.Context, req MembershipsRequest) error {
-	_, err := c.call(ctx, http.MethodPut, "/v1/platform/memberships", req, nil)
-	return err
-}
+// ErrNotHanded is a store the arbiter's table does not (yet) hand roles to.
+var ErrNotHanded = errors.New("the store is not handed roles")
 
-// GroupDeleted says a group of a realm is gone.
-func (c *PlatformClient) GroupDeleted(ctx context.Context, req GroupDeletedRequest) error {
-	_, err := c.call(ctx, http.MethodPost, "/v1/platform/group-deleted", req, nil)
+// SetRoles states every person's roles on a tenant's app to its store;
+// ErrNotHanded when the arbiter's table does not hand that store roles.
+func (c *PlatformClient) SetRoles(ctx context.Context, tenant, component string, holdings []authz.RoleHolding) error {
+	if holdings == nil {
+		holdings = []authz.RoleHolding{}
+	}
+	code, err := c.call(ctx, http.MethodPut, "/v1/platform/roles/"+tenant+"/"+component, RolesRequest{Holdings: holdings}, nil)
+	if code == http.StatusNotFound {
+		return ErrNotHanded
+	}
 	return err
 }
 

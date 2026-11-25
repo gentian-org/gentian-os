@@ -40,7 +40,11 @@ const (
 	// public internet with no session in front of it, so it wants a stream of
 	// upstream security fixes more than it wants a small attack surface we
 	// maintain ourselves.
-	DefaultPerimeterProxyImage = "nginx:1.27-alpine"
+	//
+	// The stable branch, named to the patch release and to the digest: a
+	// tag that floats names whatever a node pulled last, and a fix reaches
+	// the proxy only when this line is bumped.
+	DefaultPerimeterProxyImage = "nginx:1.30.7-alpine@sha256:bef154735288bc38d99fac41ae63730684bcc661503673a04a0f9bc526ba8598"
 	// DefaultSignInSidecarImage is the platform's sign-in sidecar: the
 	// program that signs people in to an app that can do neither OIDC nor
 	// SAML (internal/controller/signin_sidecar.go).

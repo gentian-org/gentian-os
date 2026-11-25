@@ -111,6 +111,7 @@ spec:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: envoy
+              gateway.envoyproxy.io/owning-gatewayclass: gentian-envoy
         {{- end }}
       ports:
         - protocol: TCP

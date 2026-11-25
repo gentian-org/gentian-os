@@ -111,7 +111,7 @@ func startPerimeterRig(t *testing.T, e *gentianov1alpha1.ExposureSpec, website b
 		return path
 	}
 	echoConf := write("echo.conf", perimeterEcho(seenHeaders()))
-	proxyConf := write("proxy.conf", perimeterProxyConfig(e, echo, 8080, website, e.AuthMode == gentianov1alpha1.AuthModeApp, limits))
+	proxyConf := write("proxy.conf", perimeterProxyConfig(e, echo, 8080, website, e.AuthMode == gentianov1alpha1.AuthModeApp, e.SignInCookies, limits))
 
 	docker := func(args ...string) string {
 		t.Helper()
@@ -149,7 +149,7 @@ func startPerimeterRig(t *testing.T, e *gentianov1alpha1.ExposureSpec, website b
 		}
 		if time.Now().After(deadline) {
 			logs, _ := exec.Command("docker", "logs", proxy).CombinedOutput()
-			t.Fatalf("the proxy did not start with the rendered configuration:\n%s\n--- configuration ---\n%s", logs, perimeterProxyConfig(e, echo, 8080, website, e.AuthMode == gentianov1alpha1.AuthModeApp, limits))
+			t.Fatalf("the proxy did not start with the rendered configuration:\n%s\n--- configuration ---\n%s", logs, perimeterProxyConfig(e, echo, 8080, website, e.AuthMode == gentianov1alpha1.AuthModeApp, e.SignInCookies, limits))
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -419,6 +419,112 @@ func TestTheProxyItselfPassesTheCallersCredentialAndNothingElse(t *testing.T) {
 		if reached(body) || status == 200 || status == 0 {
 			t.Errorf("a credential reached the application outside the declared paths: %q -> %d", path, status)
 		}
+	}
+}
+
+// matrixEntry is an app whose callers present its own token, and whose
+// browser sign-in keeps the state of the redirect in cookies of its own.
+func matrixEntry() *gentianov1alpha1.ExposureSpec {
+	return &gentianov1alpha1.ExposureSpec{
+		Name: "matrix", Surface: gentianov1alpha1.SurfacePerimeter, AuthMode: gentianov1alpha1.AuthModeApp,
+		Paths:   []string{"/_matrix", "/_synapse/client"},
+		Backend: gentianov1alpha1.BackendRef{Service: "synapse-web", Port: 8008},
+		SignInCookies: &gentianov1alpha1.SignInCookies{
+			Names: []string{"oidc_session", "oidc_session_no_samesite"},
+			Paths: []string{"/_matrix/client/v3/login/sso", "/_synapse/client/oidc"},
+		},
+	}
+}
+
+// An entry approved with the cookies of the app's own sign-in: on the
+// sign-in paths the named cookies reach the application, one by one and
+// nothing else the browser sent with them, and the application's cookie
+// comes back out. Everywhere else on the entry nothing changes: no cookie in,
+// none out.
+func TestTheProxyItselfPassesOnlyTheAppsSignInCookies(t *testing.T) {
+	limits := generousLimits()
+	limits.CredentialRatePerSecond, limits.CredentialBurst, limits.CredentialConcurrent = 10000, 10000, 1000
+	rig := startPerimeterRig(t, matrixEntry(), false, limits)
+
+	browser := "Cookie: zone=stolen; oidc_session=abc; other=stolen; oidc_session_no_samesite=def; _oauth2_proxy=stolen"
+	for _, path := range []string{
+		"/_synapse/client/oidc/callback?code=x&state=y",
+		"/_matrix/client/v3/login/sso/redirect?redirectUrl=https%3A%2F%2Felement.example.org%2F",
+		"/_matrix/client/v3/login/sso",
+	} {
+		status, head, body := rig.get(path, browser, "Authorization: Bearer syt_token")
+		if status != 200 || !reached(body) {
+			t.Fatalf("%s did not reach the application: %d\n%s", path, status, body)
+		}
+		if !strings.Contains(body, "cookie=[oidc_session=abc; oidc_session_no_samesite=def;]\n") {
+			t.Errorf("%s: the sign-in cookies did not reach the application, or not alone:\n%s", path, body)
+		}
+		if strings.Contains(body, "stolen") {
+			t.Errorf("%s: a cookie the entry does not name reached the application:\n%s", path, body)
+		}
+		if !strings.Contains(body, "authorization=[Bearer syt_token]\n") {
+			t.Errorf("%s: the caller's credential did not reach the application:\n%s", path, body)
+		}
+		if !strings.Contains(strings.ToLower(head), "set-cookie: app=1") {
+			t.Errorf("%s: the application's sign-in cookie did not come back out:\n%s", path, head)
+		}
+		if strings.Contains(strings.ToLower(head), "x-powered-by") {
+			t.Errorf("%s: the answer names what the application runs on:\n%s", path, head)
+		}
+	}
+
+	// One of them alone is passed alone; none, and the header is not sent.
+	if _, _, body := rig.get("/_synapse/client/oidc/callback", "Cookie: zone=stolen; oidc_session_no_samesite=def"); !strings.Contains(body, "cookie=[oidc_session_no_samesite=def;]\n") {
+		t.Errorf("one sign-in cookie was not passed alone:\n%s", body)
+	}
+	if _, _, body := rig.get("/_synapse/client/oidc/callback", "Cookie: zone=stolen"); !strings.Contains(body, "cookie=[]\n") {
+		t.Errorf("a cookie the entry does not name reached the sign-in:\n%s", body)
+	}
+
+	// Elsewhere on the entry, and on a path that only starts like a sign-in
+	// path, nothing changes: no cookie in, none out.
+	for _, path := range []string{
+		"/_matrix/client/v3/sync", "/_synapse/client/oidcx", "/_matrix/client/v3/login", "/_synapse/client/pick_username",
+		"/_matrix/client/v3/login/ssox",
+	} {
+		status, head, body := rig.get(path, browser)
+		if status != 200 || !reached(body) {
+			t.Fatalf("%s did not reach the application: %d\n%s", path, status, body)
+		}
+		if !strings.Contains(body, "cookie=[]\n") {
+			t.Errorf("%s: a cookie reached the application off the sign-in paths:\n%s", path, body)
+		}
+		if strings.Contains(strings.ToLower(head), "set-cookie") {
+			t.Errorf("%s: the application's cookie came back out off the sign-in paths:\n%s", path, head)
+		}
+	}
+
+	// A path that reads one way to the proxy and another to the application
+	// does not get there through the sign-in paths either.
+	for _, path := range []string{
+		"/_synapse/client/oidc/../../../_matrix/client/v3/sync", "/_synapse/client/oidc/..%2f..%2f..%2f_matrix",
+		"/_synapse/client/oidc//callback", "/_synapse/client/oidc;x/callback",
+	} {
+		if status, _, body := rig.get(path, browser); reached(body) || status != 400 {
+			t.Errorf("an ambiguous path through the sign-in was not refused: %q -> %d", path, status)
+		}
+	}
+	// Off the entry's own paths a sign-in path publishes nothing.
+	if status, _, body := rig.get("/_SYNAPSE/client/oidc/callback", browser); reached(body) {
+		t.Errorf("a path the entry does not declare reached the application: %d", status)
+	}
+}
+
+// Without an approval of its cookies the same entry passes none, on any path.
+func TestTheProxyItselfPassesNoSignInCookieWithoutTheApproval(t *testing.T) {
+	limits := generousLimits()
+	limits.CredentialRatePerSecond, limits.CredentialBurst, limits.CredentialConcurrent = 10000, 10000, 1000
+	e := matrixEntry()
+	e.SignInCookies = nil
+	rig := startPerimeterRig(t, e, false, limits)
+	status, head, body := rig.get("/_synapse/client/oidc/callback", "Cookie: oidc_session=abc")
+	if status != 200 || !strings.Contains(body, "cookie=[]\n") || strings.Contains(strings.ToLower(head), "set-cookie") {
+		t.Errorf("an entry approved without its sign-in cookies passed one: %d\n%s\n%s", status, head, body)
 	}
 }
 

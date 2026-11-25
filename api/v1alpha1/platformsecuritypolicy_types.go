@@ -50,6 +50,20 @@ type PlatformSecurityPolicySpec struct {
 	// only where it is also granted on the install.
 	// +optional
 	AllowedClusterRoles []AllowedClusterRole `json:"allowedClusterRoles,omitempty"`
+
+	// TrustedDomains are the domains outside the cluster this cluster
+	// trusts, whatever travels. An egress request that names hosts is
+	// granted without an approver when every one of its hosts is in a domain
+	// listed here, or under one, for as long as the domain is listed.
+	// Removing a domain makes the requests it answered pending again. Trust
+	// is in the destination: where a profile came from grants nothing, and a
+	// profile cannot add to this list.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=256
+	// +kubebuilder:validation:items:MaxLength=253
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?$`
+	TrustedDomains []string `json:"trustedDomains,omitempty"`
 }
 
 // PlatformSecurityPolicyStatus reports observed policy state.

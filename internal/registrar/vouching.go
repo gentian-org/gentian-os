@@ -11,11 +11,13 @@ SPDX-License-Identifier: MPL-2.0
 package registrar
 
 import (
+	"crypto/subtle"
 	"errors"
 	"net/http"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 
+	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/guard"
 	"github.com/gentian-org/gentian-os/internal/registrar/identity"
@@ -36,6 +38,17 @@ import (
 // person's own token, of the tenant's own realm, and the person linked is
 // the token's subject: there is no field to name somebody else in. Not an
 // administrator and not the component links anybody.
+//
+// The person's own token is the one they signed in to the platform with, or
+// the one a consent page holds. A component that vouches may leave the
+// asking to another component, at an address of its own, and its profile
+// then names that component (requires.services.vouching.consent). The front
+// door hands such a page a token of the person made out to that component
+// alone (exposure exchangeToken), and the page presents it here. It is
+// accepted for linking to the component that named the page, and for
+// nothing else: no other route takes it, so a page that asks for a person's
+// consent is never handed a token that is good for anything but giving it
+// (linking).
 //
 // TAKING a link away gives nobody anything, so three callers may: the person
 // themself, whoever manages the tenant's people, and the component, which
@@ -58,7 +71,45 @@ import (
 // and a key is not a token, so everywhere else it is a caller nobody could
 // identify.
 func (s *Server) linkHolders(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
-	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc(pattern, s.holders(pattern, h, false))
+}
+
+// linkReaders registers the route that says whether one person is linked:
+// for the three callers of linkHolders, and for the component's consent
+// page, by its own key. The page asks so that it can tell a person to link
+// before the component needs it, and learns nothing else: no other route
+// takes its key, and a link it could make or take away it can only ask
+// about.
+func (s *Server) linkReaders(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
+	s.mux.HandleFunc(pattern, s.holders(pattern, h, true))
+}
+
+// consentReader is the entry whose consent page's key the request carries,
+// for the tenant and the component in its path, or nil.
+func (s *Server) consentReader(r *http.Request) *VouchingKey {
+	bearer := guard.Bearer(r)
+	if bearer == "" {
+		return nil
+	}
+	hash := []byte(componentkeys.Hash(bearer))
+	tenant, profile := r.PathValue("t"), r.PathValue("profile")
+	return s.cfg.VouchingKeys.Where(func(v VouchingKey) bool {
+		return v.ConsentKeyHash != "" && v.Tenant == tenant && v.Component == profile &&
+			subtle.ConstantTimeCompare(hash, []byte(v.ConsentKeyHash)) == 1
+	})
+}
+
+func (s *Server) holders(pattern string, h func(http.ResponseWriter, *http.Request, call), pageReads bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if pageReads {
+			if reader := s.consentReader(r); reader != nil {
+				h(w, r, call{
+					component: "component:" + reader.Tenant + "/" + reader.Consent,
+					decision:  "consent_page_key vouching:" + reader.Tenant + "/" + reader.Component,
+				})
+				return
+			}
+		}
 		if holder := s.cfg.VouchingKeys.Find(guard.Bearer(r)); holder != nil {
 			if c, ok := s.admitComponent(w, r, pattern, holder); ok {
 				h(w, r, c)
@@ -74,8 +125,81 @@ func (s *Server) linkHolders(pattern string, h func(http.ResponseWriter, *http.R
 		if c, ok := s.authorizeAs(w, r, pattern, relation, tenantObject); ok {
 			h(w, r, c)
 		}
+	}
+}
+
+// consentIssuedTo is the client the front door exchanges a session's token
+// with, in every tenant's realm (internal/bouncer.ExchangeClientID: the two
+// must agree). A consent page's token was issued to it and to no other.
+const consentIssuedTo = "gentian-edge-exchange"
+
+// linking registers the route that links the caller. It is opened by the
+// person's token for this API, as every other route is, and by the token of
+// the consent page the component's profile names.
+//
+// Which page that is, is the operator's to say: it lists it beside the
+// component's key, and only while the page's component is installed in the
+// tenant at the platform's trust. A token made out to that component is then
+// read here; one that is not such a token goes the way of every other
+// caller, and is answered there.
+//
+// A page's token must have been issued to the front door's exchange client.
+// A component that exchanges tokens of its own accord (vouching.exchange)
+// can obtain one with the same audience, for a person who connected a
+// program to it, and that person did not see the page.
+//
+// Whoever presents it, the store is asked the same question, whether the
+// person may enter the tenant, and the person linked is the token's subject.
+func (s *Server) linking(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
+	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		if ident := s.consentToken(r); ident != nil {
+			if ident.Client != consentIssuedTo {
+				s.cfg.Log.WarnContext(r.Context(), "refused: a consent page's token that the front door did not issue",
+					"request_id", guard.ID(r.Context()), "route", pattern, "client", ident.Client,
+					"tenant", r.PathValue("t"), "profile", r.PathValue("profile"))
+				s.fail(w, r, http.StatusForbidden,
+					"forbidden: a person is linked from a consent page with the token the front door handed that page, and no other")
+				return
+			}
+			g := s.gate()
+			g.Authn = verified{ident}
+			if c, ok := s.authorizeWith(g, w, r, pattern, guard.One("can_enter"), tenantObject); ok {
+				h(w, r, c)
+			}
+			return
+		}
+		if c, ok := s.authorize(w, r, pattern, "can_enter", tenantObject); ok {
+			h(w, r, c)
+		}
 	})
 }
+
+// consentToken reads the bearer as the token of the consent page that the
+// component in the request path names, and returns nil when it is not one:
+// the component names no page, or the token is not made out to it.
+func (s *Server) consentToken(r *http.Request) *authn.Identity {
+	if s.cfg.Consent == nil {
+		return nil
+	}
+	tenant, profile := r.PathValue("t"), r.PathValue("profile")
+	entry := s.cfg.VouchingKeys.Where(func(k VouchingKey) bool {
+		return k.Tenant == tenant && k.Component == profile && k.Consent != ""
+	})
+	raw := guard.Bearer(r)
+	if entry == nil || raw == "" {
+		return nil
+	}
+	ident, err := s.cfg.Consent.VerifyFor(r.Context(), raw, entry.Consent)
+	if err != nil {
+		return nil
+	}
+	return ident
+}
+
+// verified is an Authenticator for a request whose token was read already.
+type verified struct{ ident *authn.Identity }
+
+func (v verified) FromRequest(*http.Request) (*authn.Identity, error) { return v.ident, nil }
 
 // admitComponent holds a component's key to what it is for: the tenant the
 // component runs in and the profile it runs, both as the operator wrote them
@@ -181,6 +305,28 @@ func (s *Server) vouchingLinked(w http.ResponseWriter, r *http.Request, c call) 
 		return
 	}
 	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "profile": profile, "person": id, "linked": linked})
+}
+
+// vouchingPeople lists who is linked to a component: for the component itself,
+// which acts for exactly them, and for whoever manages the tenant's people.
+func (s *Server) vouchingPeople(w http.ResponseWriter, r *http.Request, c call) {
+	profile, ok := s.vouchingProfile(w, r)
+	if !ok {
+		return
+	}
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	people, err := s.cfg.Identity.VouchingPeople(identityContext(r), realm, profile)
+	if err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	if people == nil {
+		people = []string{}
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "profile": profile, "people": people})
 }
 
 // unlinkVouching takes a person's link to a component away. Somebody who is

@@ -24,9 +24,8 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"golang.org/x/crypto/argon2"
 
-	"github.com/gentian-org/gentian-os/internal/keycloak"
-
 	"github.com/gentian-org/gentian-os/internal/authz"
+	dauthz "github.com/gentian-org/gentian-os/internal/director/authz"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -132,20 +131,28 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 	return names, nil
 }
 
-// keycloakTenantMembers is the enabled members of the tenant's members group,
-// by username: what keycloakRealmUsers answers, for a realm that also holds
-// accounts people made themselves.
+// keycloakTenantMembers is the tenant's people who are enabled accounts of
+// its realm, by username: what keycloakRealmUsers answers, for a realm that
+// also holds accounts people made themselves. The people are the holders of
+// the tenant's position user, as the rights store names them.
 func (r *TenantReconciler) keycloakTenantMembers(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
+	if r.Rights == nil {
+		return nil, errNoRightsStore
+	}
 	kc, err := authz.LoadKeycloakAdminClient(ctx, r.Client)
 	if err != nil {
 		return nil, fmt.Errorf("load keycloak-admin: %w", err)
 	}
-	members, err := kc.ListGroupMembers(ctx, keycloakRealmName(tenant), keycloak.TenantMembersGroup(tenant.Name))
+	people, err := dauthz.PositionHolders(ctx, r.Rights, tenant.Name, dauthz.PositionUser)
+	if err != nil {
+		return nil, err
+	}
+	accounts, err := kc.ListRealmUsers(ctx, keycloakRealmName(tenant))
 	if err != nil {
 		return nil, err
 	}
 	var names []string
-	for _, m := range members {
+	for _, m := range accountsOf(accounts, people) {
 		if m.Username != "" {
 			names = append(names, m.Username)
 		}
@@ -332,8 +339,9 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	// glob and the passdbs chain with result_failure = continue, so a file per
 	// tenant needs no configuration change and cannot overwrite another's.
 	if err := r.upsertSecret(ctx, dovecotAppPasswordsSecret, dovecotNamespace, map[string][]byte{
-		mailAppPasswordFile(mailAppPasswordApp, name) + ".users": []byte(lines.String()),
-		mailAppPasswordFile(mailAppPasswordApp, name) + ".conf":  passdbInclude(mailAppPasswordFile(mailAppPasswordApp, name)),
+		mailAppPasswordFile(mailAppPasswordApp, name) + ".users":                []byte(lines.String()),
+		mailAppPasswordFile(mailAppPasswordApp, name) + dovecotPassdbIncludeExt: passdbInclude(mailAppPasswordFile(mailAppPasswordApp, name)),
+		mailAppPasswordFile(mailAppPasswordApp, name) + dovecotLegacyPassdbConf: nil,
 	}); err != nil {
 		return err
 	}
@@ -350,7 +358,8 @@ func mailPasswdFileKeys(tenant string) []string {
 	for _, app := range []string{mailAppPasswordApp, mailSubmissionApp, mailAppSubmissionApp} {
 		keys = append(keys,
 			mailAppPasswordFile(app, tenant)+".users",
-			mailAppPasswordFile(app, tenant)+".conf")
+			mailAppPasswordFile(app, tenant)+dovecotPassdbIncludeExt,
+			mailAppPasswordFile(app, tenant)+dovecotLegacyPassdbConf)
 	}
 	return keys
 }
@@ -360,14 +369,24 @@ func mailAppPasswordFile(app, tenant string) string {
 	return app + "-" + tenant
 }
 
-// passdbInclude renders the Dovecot passdb block that reads one such file.
+// The extension of a passdb block Dovecot includes, and the one Dovecot 2.3
+// included. A 2.3 still running while the operator is already new includes
+// every *.conf, and must not read a 2.4 block; the operator removes the .conf
+// it wrote before.
+const (
+	dovecotPassdbIncludeExt = ".inc"
+	dovecotLegacyPassdbConf = ".conf"
+)
+
+// passdbInclude renders the Dovecot passdb block that reads one such file,
+// named after it: in Dovecot 2.4 every passdb has a name of its own.
 //
 // result_failure = continue so a user present in one app's file and absent from
 // another's is not rejected by the first file that lacks them; the empty
 // passwd-file Dovecot includes last is still the final deny.
 func passdbInclude(file string) []byte {
 	return []byte(fmt.Sprintf(
-		"passdb {\n  driver = passwd-file\n  args = /etc/dovecot/apppw/%s.users\n"+
+		"passdb %[1]s {\n  driver = passwd-file\n  passwd_file_path = /etc/dovecot/apppw/%[1]s.users\n"+
 			"  result_failure = continue\n  result_internalfail = continue\n}\n",
 		file))
 }
@@ -691,18 +710,30 @@ func (r *TenantReconciler) keycloakRealmHolders(ctx context.Context, realm strin
 }
 
 func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {
+	created := map[string][]byte{}
+	for k, v := range data {
+		if v != nil {
+			created[k] = v
+		}
+	}
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: ns,
 			Labels: map[string]string{managedByLabel: managedByValue},
 		},
-		Data: data,
+		Data: created,
 	}
 	return ensureObject(ctx, r.Client, desired, func(sec *corev1.Secret) bool {
 		if sec.Data == nil {
 			sec.Data = map[string][]byte{}
 		}
+		// A nil value removes the key: what an older operator wrote
+		// under another name.
 		for k, v := range data {
+			if v == nil {
+				delete(sec.Data, k)
+				continue
+			}
 			sec.Data[k] = v
 		}
 		return true

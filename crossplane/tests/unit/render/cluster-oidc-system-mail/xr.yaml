@@ -1,7 +1,7 @@
 # The same cluster as cluster-oidc-policies, running its own mail.
 #
 # What this asserts is the kernel realm's gentian-dovecot client: with
-# spec.oidc supplied and mail.serviceMode `system`, cluster-default composes it,
+# spec.oidc supplied and mail.serviceMode `internal`, cluster-default composes it,
 # labeled gentianos.io/purpose: dovecot-oidc for the operator to wait on, with
 # its secret read from dovecot-admin in the mail namespace. The sibling fixture,
 # with mail relayed, must compose none: a client nothing authenticates as would
@@ -37,6 +37,6 @@ spec:
   certManager:
     letsencryptEmail: admin@platform.example.test
   mail:
-    serviceMode: system
+    serviceMode: internal
   compositeDeletePolicy: Background
   resourceRefs: []

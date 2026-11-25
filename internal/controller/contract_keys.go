@@ -88,7 +88,7 @@ func (r *TenantReconciler) ensureContractKeys(
 		if consumer == "" || provider == "" || consumer == provider {
 			continue
 		}
-		if len(netpolicy.EffectiveContractCapabilities(binding, grants[consumer])) == 0 {
+		if len(netpolicy.ReachCapabilities(binding, grants[consumer])) == 0 {
 			continue
 		}
 		name := contractKeySecretName(consumer, contract)

@@ -188,6 +188,11 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 	if wantsRightsCheck(profile) {
 		outside = append(outside, rightsCheckEgress())
 	}
+	// The confidant, for a component that keeps secrets of people: its one
+	// port in the control namespace.
+	if wantsPersonSecrets(profile) {
+		outside = append(outside, confidantEgress())
+	}
 	// The arbiter, for a component that declared an authorization store:
 	// its pods on its one port.
 	if wantsAuthorization(profile) {
@@ -211,7 +216,38 @@ func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gen
 		}
 		outside = append(outside, keys...)
 	}
-	rules := append(outside, security.GrantedEgressRules(profile, comp, time.Now())...)
+	preApproved, err := r.preApprovedEgress(ctx, profile, tenant)
+	if err != nil {
+		return err
+	}
+	rules := append(outside, security.GrantedEgressRulesUnder(profile, comp, time.Now(), preApproved)...)
+	// The hosts outside it was granted: the pods of the gateway for outgoing
+	// connections, on the listeners of those hosts (outgoing_hosts.go). A
+	// host the gateway does not carry yet opens nothing.
+	signIn, err := bridgeHosts(ctx, r.Client, profile, comp, tenant)
+	if err != nil {
+		return err
+	}
+	granted, _ := grantedOutgoingHosts(profile, comp, preApproved, signIn)
+	served, err := ownServedHosts(ctx, r.Client, granted)
+	if err != nil {
+		return fmt.Errorf("read the hosts the cluster serves itself: %w", err)
+	}
+	hosts, inside := splitOwnHosts(granted, served)
+	ways, err := readOutgoingWays(ctx, r.Client, hosts)
+	if err != nil {
+		return fmt.Errorf("read where the granted hosts are carried: %w", err)
+	}
+	if ways.rule != nil {
+		rules = append(rules, *ways.rule)
+	}
+	// The granted hosts the cluster serves itself: the pods of its edge or
+	// of its inside Gateway (own_served_hosts.go).
+	ownRules, err := r.ownHostsRules(ctx, inside, served)
+	if err != nil {
+		return fmt.Errorf("read the edge for the hosts the cluster serves itself: %w", err)
+	}
+	rules = append(rules, ownRules...)
 	// The cluster's own public address, where a rule to public addresses
 	// admits it -- the store's way out, or a granted one: from inside it is
 	// the edge's pods, which those rules do not name (own_public_address.go).

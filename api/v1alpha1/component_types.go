@@ -174,6 +174,11 @@ type ExposureEnablement struct {
 	// +optional
 	Kind ExposureKind `json:"kind,omitempty"`
 
+	// SignInCookies are the cookies and paths of the app's own sign-in that
+	// were approved with the entry, copied from the Tenant's entry.
+	// +optional
+	SignInCookies *SignInCookies `json:"signInCookies,omitempty"`
+
 	// Owner is the Keycloak subject that enabled the surface, set by the
 	// director from the caller's token.
 	// +kubebuilder:validation:MinLength=1
@@ -226,23 +231,38 @@ type PrivilegeGrant struct {
 
 	ApprovedAt metav1.Time `json:"approvedAt"`
 
-	// Reason in the approver's words, not the profile's.
-	// +kubebuilder:validation:MinLength=10
+	// Reason is a comment the approver may leave, in their own words.
+	// +optional
 	// +kubebuilder:validation:MaxLength=2000
-	Reason string `json:"reason"`
+	Reason string `json:"reason,omitempty"`
 
 	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
 	// reviews.
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 
-	// Digest pins an apiExtensions grant to the definitions it approved:
-	// sha256 of the request as the approver read it
-	// (security.APIExtensionDigest). A request whose definitions changed is
-	// not answered by it, and the install waits for a new approval.
+	// Digest pins a grant to what it approved: for apiExtensions, sha256 of
+	// the request as the approver read it (security.APIExtensionDigest); for
+	// an egress request by address, sha256 of its rule
+	// (security.EgressRuleDigest). A request whose definitions or rule
+	// changed is not answered by it, and the install waits for a new
+	// approval.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^sha256:[0-9a-f]{64}$`
 	Digest string `json:"digest,omitempty"`
+
+	// Hosts are the hosts an egress grant answered, each one name, lower
+	// case, with a port where it is not 443: for a request by host, its
+	// hosts as the approver read them; for a request whose hosts are named
+	// at approval (hostsAtApproval), the hosts the approver named. The grant
+	// opens those the request still names; a host the request adds waits
+	// for a new approval.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=259
+	// +kubebuilder:validation:items:Pattern=`^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?\.)+[a-z]([-a-z0-9]{0,61}[a-z0-9])?(:[1-9][0-9]{0,4})?$`
+	Hosts []string `json:"hosts,omitempty"`
 }
 
 // ComponentStatus is the observed state of a Component.
@@ -267,6 +287,16 @@ type ComponentStatus struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=80
 	PendingPrivileges []string `json:"pendingPrivileges,omitempty"`
+
+	// OutgoingHosts are the hosts outside the cluster this component was
+	// granted, each a name with its port where it is not 443. The gateway
+	// for outgoing connections carries them: a listener for each, which this
+	// component's pods and no others reach.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=259
+	OutgoingHosts []string `json:"outgoingHosts,omitempty"`
 
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`

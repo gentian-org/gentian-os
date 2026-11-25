@@ -12,16 +12,22 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"os"
 
+	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
@@ -37,9 +43,10 @@ func (r *TenantReconciler) tenantNetPolicyConfig() netpolicy.Config {
 	}
 }
 
-// KubeAPIServerCIDR is the range the API server is admitted in on 443, as the
-// operator is told it (KUBE_APISERVER_CIDR), beside the addresses of the
-// kubernetes Service's EndpointSlice (loadKubeAPIEndpointSlice).
+// KubeAPIServerCIDR is the range the API server is admitted in on 443 when
+// none of its addresses can be read, as the operator is told it
+// (KUBE_APISERVER_CIDR). With an address read it is not admitted at all
+// (netpolicy.APIServerEgress).
 func KubeAPIServerCIDR() string {
 	if cidr := os.Getenv("KUBE_APISERVER_CIDR"); cidr != "" {
 		return cidr
@@ -58,40 +65,138 @@ func kernelNetworkPoliciesEnabled() bool {
 	return os.Getenv("KERNEL_NETWORK_POLICIES") == "true"
 }
 
-// loadKubeAPIEndpointSlice returns the EndpointSlice backing the "kubernetes"
-// service so a NetworkPolicy can allow egress to the real apiserver addresses
-// (netpolicy.BaselineEgress). Returning nil is only safe when the apiserver
-// happens to sit inside KUBE_APISERVER_CIDR; on clusters reached through a
-// public IP it leaves the selected pods unable to talk to the API. An error is
-// logged rather than swallowed, so an RBAC gap on endpointslices is told apart
-// from "no slices exist"; nil is still returned so a genuinely absent slice
-// degrades rather than blocking the reconcile.
-func loadKubeAPIEndpointSlice(ctx context.Context, c client.Reader) *discoveryv1.EndpointSlice {
+// errDNSNotNarrowed and errAPIServerNotNarrowed are what the log says when
+// a policy cannot be narrowed to the cluster's own services.
+var (
+	errDNSNotNarrowed = stderrors.New("no DNS Service found in " + netpolicy.DNSNamespace +
+		": port 53 stays open to every address")
+	errAPIServerNotNarrowed = stderrors.New("no address of the API server read: " +
+		"KUBE_APISERVER_CIDR is admitted on 443")
+)
+
+// loadClusterServices reads the cluster's DNS and API server for the
+// policies that admit them (netpolicy.BaselineEgress, netpolicy.DNSEgress).
+//
+// The DNS is every Service in kube-system that serves port 53 and selects
+// its pods. When none is found the rules leave port 53 open to every
+// address, and the refusal to narrow is logged: closing DNS would stop every
+// tenant. The API server is the kubernetes Service in default and its
+// EndpointSlices; when no address of it is read the rules admit
+// KUBE_APISERVER_CIDR on 443 instead, and that is logged too.
+//
+// A read that fails is logged and taken as nothing found, so an RBAC gap is
+// told apart from a cluster that has no such Service, and the reconcile goes
+// on.
+func loadClusterServices(ctx context.Context, c client.Reader) netpolicy.ClusterServices {
 	logger := log.FromContext(ctx)
+	out := netpolicy.ClusterServices{DNS: loadClusterDNS(ctx, c)}
+
+	api := &corev1.Service{}
+	key := types.NamespacedName{Name: netpolicy.APIServerServiceName, Namespace: metav1.NamespaceDefault}
+	if err := c.Get(ctx, key, api); err != nil {
+		logger.Error(err, "get the kubernetes Service for the API server's cluster address")
+	} else {
+		out.APIService = api
+	}
 	slices := &discoveryv1.EndpointSliceList{}
-	if err := c.List(ctx, slices, client.MatchingLabels{
+	if err := c.List(ctx, slices, client.InNamespace(metav1.NamespaceDefault), client.MatchingLabels{
 		kubeAPIServiceNameLabel: kubeAPIServiceName,
 	}); err != nil {
-		logger.Error(err, "list kube-apiserver EndpointSlices; NetworkPolicies "+
-			"will only allow egress to KUBE_APISERVER_CIDR and may block the apiserver",
-			"cidr", KubeAPIServerCIDR())
-		return nil
+		logger.Error(err, "list the kubernetes Service's EndpointSlices for the API server's addresses")
+	} else {
+		out.APIEndpoints = slices.Items
 	}
-	if len(slices.Items) == 0 {
-		logger.Info("no EndpointSlice found for the kubernetes service; "+
-			"NetworkPolicies will only allow egress to KUBE_APISERVER_CIDR",
+	if !out.HasAPIEndpoints() {
+		logger.Error(errAPIServerNotNarrowed, "network policies fall back to a range for the API server",
 			"cidr", KubeAPIServerCIDR())
-		return nil
 	}
-	return &slices.Items[0]
+	return out
+}
+
+// loadClusterDNS is the DNS half of loadClusterServices, for a policy that
+// admits the cluster's DNS and not the API server.
+func loadClusterDNS(ctx context.Context, c client.Reader) []corev1.Service {
+	logger := log.FromContext(ctx)
+	var dns []corev1.Service
+	services := &corev1.ServiceList{}
+	if err := c.List(ctx, services, client.InNamespace(netpolicy.DNSNamespace)); err != nil {
+		logger.Error(err, "list the Services in "+netpolicy.DNSNamespace+" for the cluster's DNS")
+	} else {
+		for i := range services.Items {
+			if netpolicy.ServesDNS(&services.Items[i]) {
+				dns = append(dns, services.Items[i])
+			}
+		}
+	}
+	if len(dns) == 0 {
+		logger.Error(errDNSNotNarrowed, "network policies refuse to narrow DNS")
+	}
+	return dns
 }
 
 // The label an EndpointSlice names its Service by, and the API server's
 // Service.
 const (
 	kubeAPIServiceNameLabel = discoveryv1.LabelServiceName
-	kubeAPIServiceName      = "kubernetes"
+	kubeAPIServiceName      = netpolicy.APIServerServiceName
 )
+
+// clusterServiceChanged passes what loadClusterServices reads, when what it
+// reads of it changes: a DNS Service in kube-system (whether it serves DNS,
+// its selector, ports and cluster addresses), the kubernetes Service, and
+// the kubernetes Service's EndpointSlices (addresses and ports). A cluster
+// that gains its DNS Service after the operator starts is told by the
+// Service's creation.
+func clusterServiceChanged() predicate.Predicate {
+	return clusterFactsChanged(func(o client.Object) bool {
+		switch obj := o.(type) {
+		case *corev1.Service:
+			return netpolicy.ServesDNS(obj) ||
+				(obj.Namespace == metav1.NamespaceDefault && obj.Name == netpolicy.APIServerServiceName)
+		case *discoveryv1.EndpointSlice:
+			return obj.Namespace == metav1.NamespaceDefault && obj.Labels[kubeAPIServiceNameLabel] == kubeAPIServiceName
+		}
+		return false
+	})
+}
+
+// clusterDNSChanged is clusterServiceChanged for the DNS Services alone
+// (loadClusterDNS).
+func clusterDNSChanged() predicate.Predicate {
+	return clusterFactsChanged(func(o client.Object) bool {
+		svc, ok := o.(*corev1.Service)
+		return ok && netpolicy.ServesDNS(svc)
+	})
+}
+
+func clusterFactsChanged(relevant func(client.Object) bool) predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return relevant(e.Object) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return relevant(e.Object) },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// A Service that stops serving DNS is a change as much as one
+			// that starts.
+			if !relevant(e.ObjectOld) && !relevant(e.ObjectNew) {
+				return false
+			}
+			switch n := e.ObjectNew.(type) {
+			case *corev1.Service:
+				o, ok := e.ObjectOld.(*corev1.Service)
+				return !ok || netpolicy.ServesDNS(o) != netpolicy.ServesDNS(n) ||
+					!equality.Semantic.DeepEqual(o.Spec.Selector, n.Spec.Selector) ||
+					!equality.Semantic.DeepEqual(o.Spec.Ports, n.Spec.Ports) ||
+					!equality.Semantic.DeepEqual(o.Spec.ClusterIPs, n.Spec.ClusterIPs) ||
+					o.Spec.ClusterIP != n.Spec.ClusterIP
+			case *discoveryv1.EndpointSlice:
+				o, ok := e.ObjectOld.(*discoveryv1.EndpointSlice)
+				return !ok || !equality.Semantic.DeepEqual(o.Endpoints, n.Endpoints) ||
+					!equality.Semantic.DeepEqual(o.Ports, n.Ports)
+			}
+			return true
+		},
+	}
+}
 
 func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	nsName := tenantNamespaceName(tenant)
@@ -139,7 +244,7 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	}
 
 	// The per-app policies (kernel access, in-app traffic, granted egress,
-	// adapters, the cache) are the installed apps'. A component the
+	// agent bridges, the cache) are the installed apps'. A component the
 	// platform places has its own written by its Component
 	// (component_network_policy.go), and is left out here.
 	installed, err := placement.Installed(ctx, r.Client, tenant.Spec.Apps)
@@ -147,24 +252,51 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		return err
 	}
 
+	// An app whose optional model gateway requirement is not met has no path
+	// to the gateway, as its release has no address and no key.
+	withheld := map[string]bool{}
+	for _, app := range installed {
+		profile := profiles[app.Profile]
+		if profile == nil {
+			continue
+		}
+		without, err := modelAccessWithheld(ctx, r.Client, nsName, app.Profile, profile, tenant)
+		if err != nil {
+			return fmt.Errorf("read whether %s holds a key at the model gateway: %w", app.Profile, err)
+		}
+		if without {
+			withheld[app.Profile] = true
+		}
+	}
+
 	in := netpolicy.BuildInput{
-		TenantName:    tenant.Name,
-		Namespace:     nsName,
-		Apps:          installed,
-		Placed:        placed,
-		Profiles:      profiles,
-		Bindings:      bindings,
-		Grants:        grants,
-		PodSelectors:  selectors,
-		Config:        r.tenantNetPolicyConfig(),
-		KubeAPIEndpts: loadKubeAPIEndpointSlice(ctx, r.Client),
+		TenantName:          tenant.Name,
+		Namespace:           nsName,
+		Apps:                installed,
+		Placed:              placed,
+		Profiles:            profiles,
+		Bindings:            bindings,
+		BridgeGrants:        tenant.Spec.Privileges,
+		Grants:              grants,
+		PodSelectors:        selectors,
+		ModelAccessWithheld: withheld,
+		Config:              r.tenantNetPolicyConfig(),
+		Cluster:             loadClusterServices(ctx, r.Client),
 	}
 	desired := netpolicy.BuildDesired(in)
 	desiredNames := netpolicy.ManagedPolicyNames(in)
 
-	// Who may call the tenant's adapters is decided above; the same
-	// components are told which adapters there are.
-	if err := r.ensureAdapterLists(ctx, tenant, in); err != nil {
+	// Who may call the tenant's agent bridges is decided above; the same
+	// components are told which bridges there are.
+	if err := r.ensureAgentBridgeLists(ctx, tenant, in); err != nil {
+		return err
+	}
+	// What the tenant's home sync keeps equal follows the same installs.
+	if err := r.ensureHomeSyncPlan(ctx, tenant, in); err != nil {
+		return err
+	}
+	// And what the tenant's file dialog serves, and to which apps.
+	if err := r.ensurePorterPlan(ctx, tenant, in); err != nil {
 		return err
 	}
 

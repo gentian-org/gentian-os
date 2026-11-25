@@ -305,7 +305,7 @@ func TestADigestWithoutACoordinateIsRefused(t *testing.T) {
 
 // A request with neither coordinate nor digest is not a pin and keeps working:
 // it installs a profile the cluster already holds, and on an installed app it
-// states who the app is for and nothing else.
+// states the positions the app is given to and nothing else.
 func TestAnInstallWithNeitherCoordinateNorDigestStillWorks(t *testing.T) {
 	src := catalogueSource(t, elementProfile)
 	h := startWithCatalogue(t, src, map[string]string{"main": src.URL})
@@ -319,12 +319,12 @@ func TestAnInstallWithNeitherCoordinateNorDigestStillWorks(t *testing.T) {
 		fmt.Sprintf(`{"coordinate":"main/element","digest":%q}`, digest)); code != http.StatusAccepted {
 		t.Fatalf("a pinned install = %d %v", code, out)
 	}
-	// The access switch: defaultGrant alone, on a pinned app. The pin stays.
-	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, `{"defaultGrant":true}`); code != http.StatusAccepted || out["status"] != "updated" {
+	// The access switch: positions alone, on a pinned app. The pin stays.
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, `{"positions":["all-apps"]}`); code != http.StatusAccepted || out["status"] != "updated" {
 		t.Fatalf("stating who the app is for = %d %v", code, out)
 	}
 	tenant := dt.RemoteFile(t, h.remote, dt.TenantPath("demo"))
-	if !strings.Contains(tenant, "    digest: "+digest+"\n    catalogue: main\n    defaultGrant: true\n") {
+	if !strings.Contains(tenant, "    digest: "+digest+"\n    catalogue: main\n    positions: [all-apps]\n") {
 		t.Fatalf("the pin did not survive the access switch:\n%s", tenant)
 	}
 }

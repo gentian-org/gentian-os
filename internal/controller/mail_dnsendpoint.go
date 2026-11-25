@@ -65,7 +65,7 @@ func dnsEndpointRecord(name, recordType string, targets ...string) map[string]in
 // That sentence was the contract long before anything enforced it. The records
 // were published for any tenant whose own spec.mail.mode said selfhosted, which
 // is a statement about what the TENANT wants and not about what exists: on a
-// cluster with mail.serviceMode external there is no Dovecot, no mailbox, and
+// cluster whose mail.serviceMode is relay or external there is no Dovecot, no mailbox, and
 // no mail.<kernelDomain> to point an MX at. Every tenant on such a cluster
 // published `MX 0 mail.<kernelDomain>` naming a host with no address, and
 // `v=spf1 mx ~all` authorizing that same absent MX. Inbound mail was

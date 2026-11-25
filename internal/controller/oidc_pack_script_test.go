@@ -31,10 +31,9 @@ func TestBuildOIDCPackScript(t *testing.T) {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
 	script := buildOIDCPackScript("demo", "catalogue-test-client", pack, templates,
-		[]string{"https://app.demo.platform.example.test/*"}, false, "gentian:tenant:demo:app:catalogue-test-client")
+		[]string{"https://app.demo.platform.example.test/*"}, false)
 	for _, want := range []string{
 		"catalogue-test-client-scope",
-		"gentian:tenant:demo:app:catalogue-test-client",
 		"PUBLIC_CLIENT=true",
 		"https://app.demo.platform.example.test/*",
 	} {
@@ -151,7 +150,7 @@ func TestTheOIDCPackScriptCompletesWhenTheClientRoleIsNotThereYet(t *testing.T) 
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
 	script := buildOIDCPackScript("demo", "catalogue-test-client", pack, templates,
-		[]string{"https://app.demo.platform.example.test/*"}, false, "gentian:tenant:demo:app:catalogue-test-client")
+		[]string{"https://app.demo.platform.example.test/*"}, false)
 
 	dir := t.TempDir()
 	if err := os.WriteFile(dir+"/curl", []byte(fakeKeycloakCurl), 0o700); err != nil {

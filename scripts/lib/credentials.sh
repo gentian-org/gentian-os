@@ -508,9 +508,10 @@ _requirement_applies() {
             [[ "$(_repo_credential_mode "$1")" != "none" ]]
             ;;
         smtp-relay)
-            # A relay account only where mail leaves through a relay. Under
-            # system mail the cluster runs its own MTA and derives its password.
-            [[ "$(gentian_mail_service_mode)" == "external" ]]
+            # A login only where mail leaves through a server outside the
+            # cluster: a relay, or an external mail server. Under internal
+            # mail the cluster runs its own MTA and derives its password.
+            mail_mode_sends_through_login
             ;;
         argocd-github-webhook)
             # Nothing configures Argo CD's webhook from this credential yet, so
@@ -580,6 +581,13 @@ _validate_requirement() {
             # Its own token, checked on its own. The account id comes from the
             # DNS validator, which resolved it from the zone it had to read.
             run_validator cloudflare-tunnel "${CF_TUNNEL_TOKEN}"
+            ;;
+        tsig-secret)
+            # The field's own variable, whichever requirement declares it.
+            local tsig_var
+            tsig_var="$(_env_var_for "${name}" tsig-secret)"
+            [[ -n "${tsig_var}" && -n "${!tsig_var:-}" ]] || return 0
+            run_validator tsig-secret "${!tsig_var}"
             ;;
         *)
             error "Requirement '${name}' declares validator '${vtype}', which the installer does not implement."

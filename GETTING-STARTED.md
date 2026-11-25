@@ -181,7 +181,8 @@ until it is done.
     tunnel's routes itself and publishes every hostname as a record pointing at
     the tunnel, through external-dns, which is installed on a tunnel cluster
     too.
-    A tunnel carries HTTP and HTTPS only, so mail goes out through a relay.
+    A tunnel carries HTTP and HTTPS only, so mail goes out through a relay
+    or a mail server outside the cluster.
   - `static-ip` needs a fixed address that DNS points at and something that
     answers a `LoadBalancer` Service with it: MetalLB on your own machines
     (on MicroK8s the add-on `metallb`, given that address), or the cloud's
@@ -322,7 +323,7 @@ stops before touching the cluster if any fail.
 | `deployments-repository` | yes | Write access to the repository from step 1 |
 | `master-password` | yes | At least 16 characters |
 | `gentian-os-repository`, `gentian-ui-repository` | no | Only when the matching `GENTIAN_*_AUTH` in `install.env` is not `none` |
-| DNS provider credential | under `acme-dns01` | For the provider named in step 4. Cloudflare, the default: an API token with Zone → Zone → Read and Zone → DNS → Edit on the domain's zone — needed by the default issuer, see below |
+| DNS provider credential | under `acme-dns01` | For the provider named in step 4. Cloudflare, the default: an API token with Zone → Zone → Read and Zone → DNS → Edit on the domain's zone — needed by the default issuer, see below. `rfc2136`: the TSIG key, base64 as the nameserver prints it; the installer checks its form, and the nameserver is first asked when the wildcard is ordered |
 | Cloudflare Tunnel API token | under `networkMode: tunnel` | Account → Cloudflare One Connector: cloudflared → Edit. Not the tunnel's own token (that one is in the Secret `cloudflared` runs with). It is checked and stored in OpenBao at `gentian-os/kernel/edge/cf-tunnel`. **As installed, the operator writes the tunnel's routes with the DNS token, not with this one** — so on a tunnel cluster give the DNS token this permission too (one token with all three permissions, entered at both questions, is the simple case). To have the operator use this token instead, see below. Not asked on a `static-ip` cluster |
 
 To give the operator the tunnel token as a credential of its own, with the DNS
@@ -375,9 +376,11 @@ one. Every question shows its default; Enter takes it.
 | `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
 | `certificates.acmeEnv` | `production` | Never needed for rebuilds — a purge keeps the issued wildcard in `~/.gentian/certs` and the next install reuses it (only `--purge --cluster-infra` deletes it). `staging` breaks the kernel sign-in, which does not trust its chain |
 | `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
-| `mail.serviceMode` | `external` | You want the platform's own mail, in-cluster Postfix and Dovecot (`system`; refused with `networkMode: tunnel`, so it needs `static-ip`). Not asked on a tunnel cluster, which is always `external`. A cluster with its own mail needs things arranged at your provider before the install, and a second load-balancer address: [mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do) lists them. With a relay, none of it applies |
-| `mail.egressHost` | unset | `system` mode: the name outbound mail leaves from, for example `mail-egress.<domain>`. Asked after the mail mode. It needs a floating IP of your own on one node, with its reverse DNS set to this name; the pre-flight stops the install when that is not so. Blank sends from the provider's shared address, which most receivers treat as spam ([mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)) |
-| `mail.host` | unset | `external` mode: the relay's hostname, for example `smtp.example.com`. Its user name and password are a credential, supplied in step 5 — not asked here |
+| `certificates.dnsParams` | unset | The provider needs more than its credential, and the installer then asks for each value. A zone on a nameserver of your own (`rfc2136`: BIND, Knot, PowerDNS) needs `nameserver` (its address as `IP` or `IP:port`, not a name), `zone` (the zone itself, which the kernel domain may sit below) and `tsigKeyName`; `tsigAlgorithm` is `HMACSHA512` unless set. The nameserver must accept dynamic updates and zone transfers (AXFR) signed with that key — on PowerDNS `dnsupdate=yes`, and on the zone the metadata `TSIG-ALLOW-DNSUPDATE`, `ALLOW-DNSUPDATE-FROM` and `TSIG-ALLOW-AXFR`, with the cluster's egress address in `allow-axfr-ips` |
+| `mail.serviceMode` | `relay` | Mail is on a mail server outside the cluster that holds the mailboxes (`external`; then `mail.imap.host` and `mail.host` are asked, [mail.md §8a](docs/concepts/mail.md#8a-mail-on-a-server-outside-the-cluster)), or you want the platform's own mail, in-cluster Postfix and Dovecot (`internal`; refused with `networkMode: tunnel`, so it needs `static-ip`, and not offered on a tunnel cluster). A cluster with its own mail needs things arranged at your provider before the install, and a second load-balancer address: [mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do) lists them. With a relay, none of it applies |
+| `mail.egressHost` | unset | `internal` mode: the name outbound mail leaves from, for example `mail-egress.<domain>`. Asked after the mail mode. It needs a floating IP of your own on one node, with its reverse DNS set to this name; the pre-flight stops the install when that is not so. Blank sends from the provider's shared address, which most receivers treat as spam ([mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)) |
+| `mail.host` | unset | `relay` and `external` mode: where mail is submitted, the relay's or the mail server's hostname, for example `smtp.example.com`. Its user name and password are a credential, supplied in step 5 — not asked here |
+| `mail.imap.host` | — | `external` mode: where mail is read, the mail server's IMAP hostname, for example `imap.example.com`. Always asked in that mode; there is no default. Mailboxes and their logins are made on that server |
 | `platform` | detected from the nodes | Detection is wrong for your provider |
 | `storageClass` | the cluster default | The cluster has more than one StorageClass |
 | `tenancyMode` | `multi` | Who the cluster is for. `multi`: the platform tenant plus any number of user tenants, each at `desktop.<tenant>.<kernel-domain>`; the install creates none. `single`: the platform tenant plus exactly one user tenant, named `user`, on the cluster's own addresses (`desktop.<kernel-domain>`); the install creates it after the handover. The platform admin signs in at `platform.<kernel-domain>` either way. See step 7. |
@@ -397,7 +400,7 @@ default:
 | Kernel domain | a domain in your Cloudflare zone | the organization's domain |
 | `networkMode` | `tunnel` | `static-ip`, then `nodeIp` |
 | `certificates.issuerMode`, `dnsProvider` | `acme-dns01`, `cloudflare` | `acme-dns01`, and the provider that hosts the zone |
-| `mail.serviceMode` | not asked: `external`. Then `mail.host`, the relay | `system`, then `mail.egressHost` |
+| `mail.serviceMode` | `relay`, then `mail.host`, the relay | `internal`, then `mail.egressHost` |
 | `tenancyMode` | `multi` | `single` |
 | Credentials asked after step 0 | the deployments token, the master password, the DNS token, the tunnel token | the deployments token, the master password, the DNS provider's credential |
 | Supplied in step 5 | the relay's user name and password | nothing for mail |
@@ -518,19 +521,19 @@ The install pauses here and waits for you. Three things finish it:
    tab. Opening it is what the installer waits for: it shows that someone
    other than the installer reaches the credential store. Then fill in what
    the cluster is still missing, if anything — the SMTP relay's user name and
-   password on a cluster with `mail.serviceMode: external`, any extra app
-   repository and its pull secret. A cluster with its own mail (`system`) has
+   password on a cluster with `mail.serviceMode: relay` or `external`, any extra app
+   repository and its pull secret. A cluster with its own mail (`internal`) has
    no relay to supply, and often nothing at all.
 
 Signing in and opening that tab is what the installer is waiting for: it proves
 someone other than the installer can write credentials. The moment it sees that, it revokes its own
 credential, deletes the temporary secret files, and prints **`Install Complete`**.
 
-**With a relay, do the SMTP relay first.** It is not only about sending mail. Any app whose
+**With a relay or an external mail server, do the SMTP relay first.** It is not only about sending mail. Any app whose
 profile asks for SMTP reads those credentials from OpenBao, and they are written
 there only once the relay exists — so until you supply it, those apps do not
 install at all: the tenant stays in `Provisioning` and the app's secret never
-syncs. On a cluster with `mail.serviceMode: external` this is the most common
+syncs. On a cluster with `mail.serviceMode: relay` or `external` this is the most common
 reason a tenant appears to hang.
 
 The wait is bounded — 30 minutes, `GENTIAN_HANDOVER_WAIT_SECS` to change it —
@@ -661,8 +664,8 @@ is the sign-in form unless the claim names a tenant for it
 sign-in, so name a tenant only where you control the site's scripts).
 Install an app that offers a public website for it, then approve that surface
 for the main address (`kubectl gentian exposures approve`, by whoever
-approves public addresses in the tenant — the user admin, the members of the
-tenant's `perimeter` group and the platform admin, step 8; it prints the rule
+approves public addresses in the tenant — a tenant administrator the Cluster
+claim names `perimeterApprover`, and the platform admin, step 8; it prints the rule
 for a website there and needs `--acknowledge-main-address-rule`).
 `https://<kernel-domain>/` and `www.` then show the website. Sign-in is at
 `https://desktop.<kernel-domain>/`, and `https://<kernel-domain>/sign-in`
@@ -737,6 +740,12 @@ that shows what a store elsewhere offers: its own server asks the store named
 on the Cluster claim (`spec.catalogue.storeUrl`,
 set from `GENTIAN_STORE_URL`) for the list, with no account,
 and installs through the director as the person signed in.
+
+**A new install is opened only to the positions it is given.** The install
+names them (`kubectl gentian apps install … --positions a,b`), and the position All apps reaches every
+installed app; nobody else sees it, the tenant's administrator included,
+until a position they hold is given the app in the administration console
+([docs/concepts/iam.md](docs/concepts/iam.md) §1.2).
 
 The App Store app comes from the store's catalog,
 with the Aluvian Center beside it and the Operations Console in the
@@ -949,6 +958,13 @@ differs is listed here, in the order you meet it.
    kubectl gentian apps list --tenant <tenant>
    kubectl get component -A | grep <profile>        # Ready when it runs
    ```
+
+   A service whose profile asks to reach hosts outside the cluster
+   (`requires.privileges.egress`) waits until the tenant's perimeter
+   approver answers: `apps install` lists those requests, `--approve-egress`
+   answers them with the install where you hold that right, and
+   `kubectl gentian apps approve <profile> egress/<name> --tenant <tenant>`
+   answers one afterwards ([docs/concepts/edge.md](docs/concepts/edge.md) §3).
 7. **Its public address.** An entry a profile exposes answers at
    `<subDomain>.<the tenant's domain>`. An entry that the public reaches
    (`surface: perimeter` in the profile) is not reachable until the tenant's
@@ -1018,7 +1034,10 @@ differs is listed here, in the order you meet it.
    An entry the list does not show cannot be approved: the director refuses
    an app that is not installed in the tenant and an entry its profile does
    not declare for the internet. The admin console shows the same entries,
-   read-only, under **Apps → Details → Public addresses**. What the tenant
+   with Approve and Withdraw for whoever may, under **Perimeter** and per app
+   under **Apps → Details**. An entry the profile declares as
+   `surface: inside` is approved the same way and is reachable from the
+   cluster's own pods only. What the tenant
    has published, and taking an entry down again:
 
    ```bash
@@ -1191,7 +1210,7 @@ what is already done, so convergence and update are the same operation.
   are in [docs/reference/commands.md](docs/reference/commands.md).
 - **Configure mail** — [docs/concepts/mail.md](docs/concepts/mail.md). Mail between
   users of this cluster works once the cluster's own mail stack is deployed
-  (`mail.serviceMode: system`). Mail to and from the internet arrives on the
+  (`mail.serviceMode: internal`). Mail to and from the internet arrives on the
   load balancer of the mail edge in `system-mail-dmz` — a proxy that passes
   ports 25, 587 and 993 on to Postfix and Dovecot with TLS untouched,
   [§9b](docs/concepts/mail.md#9b-the-mail-edge) — and additionally needs the MX,
@@ -1298,7 +1317,8 @@ link; earlier ones still expire on their own.
 
 The platform admin's own account is not handed over that way. The CLI
 and the console ask the registrar, and the registrar changes nothing about a
-member of the platform administrators' group, whoever asks: it answers 403.
+person of the platform tenant the Cluster claim names a role holder, whoever
+asks: it answers 403.
 That account's link comes from the install host:
 
 ```bash

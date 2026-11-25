@@ -16,67 +16,20 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func tenantPrefix(tenant string) string {
-	return "gentian:tenant:" + tenant + ":"
-}
-
-// TenantMembersGroup is the Keycloak group for all tenant members.
-func TenantMembersGroup(tenant string) string {
-	return tenantPrefix(tenant) + "members"
-}
-
-// TenantAdminsGroup is the Keycloak group for tenant administrators.
-func TenantAdminsGroup(tenant string) string {
-	return tenantPrefix(tenant) + "admins"
-}
-
-// TenantPlatformAdminsGroup is the Keycloak group the platform's
-// administrators are in while they are in a tenant's realm through the
-// identity provider "kernel" (Tenant spec.platformAccess.adminsEnter), put
-// there and taken out again at every sign-in like the admins group. It
-// grants nothing: no role in the kernel store, nothing on the desktop or in
-// an app. It exists so that a partner assertion can say that the person is
-// a cluster administrator (PartnerRoleClusterAdmin), and for nothing else.
-func TenantPlatformAdminsGroup(tenant string) string {
-	return tenantPrefix(tenant) + "platform-admins"
-}
-
-// PartnerRoleAttribute is the group attribute that names the role a partner
-// assertion carries for the group's members, under the claim
-// PartnerRolesClaim of the scope partner-<name> and nowhere else: the
-// mapper on that scope aggregates it over the person's groups, and no other
-// mapper reads it (groupAttributeNames in the operator leaves it out). The
-// admins group carries PartnerRoleTenantAdmin, the platform-admins group
-// PartnerRoleClusterAdmin; a person in neither has no claim.
-//
-// The attribute is the groups' alone: the realm's user profile declares no
-// such attribute, and Keycloak admits no unmanaged attribute on an account,
-// so the claim can only ever follow from group membership.
+// PartnerRolesClaim is the claim of the scope partner-<name> that names a
+// person's role on the tenant in a partner assertion, and nowhere else:
+// PartnerRoleTenantAdmin for an administrator of the tenant,
+// PartnerRoleClusterAdmin for an administrator of the cluster, as the
+// platform's mapper (gentian-partner-roles) asks the rights store; a person
+// who is neither has no claim.
 const (
-	PartnerRoleAttribute    = "gentianPartnerRole"
 	PartnerRolesClaim       = "gentian_roles"
 	PartnerRoleTenantAdmin  = "tenant-admin"
 	PartnerRoleClusterAdmin = "cluster-admin"
 )
 
-// TenantAppGroup is the Keycloak group for users entitled to an app profile.
-func TenantAppGroup(tenant, profile string) string {
-	return tenantPrefix(tenant) + "app:" + profile
-}
-
-// DefaultGrantAttribute marks an app entitlement group that the tenant chose to
-// provision rather than merely install. It is what makes the App Store's two
-// verbs outlive the click: the admin console pre-selects a group carrying it
-// when adding a user, so a provisioned app is opt-out for new people and an
-// installed one is opt-in.
-const DefaultGrantAttribute = "gentianDefaultGrant"
-
-// TenantAppAdminsGroup is the Keycloak group for app administrators.
-func TenantAppAdminsGroup(tenant string) string {
-	return tenantPrefix(tenant) + "app-admins"
-}
-
-// GroupsJobName is the Crossplane identity Job that creates Gentian groups.
+// GroupsJobName is the tenant's identity Job that settles the realm's email
+// claim. It keeps the name it had when it also made the tenant's groups.
 func GroupsJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-gentian-groups-%s", tenantName)
 }

@@ -598,7 +598,7 @@ func (s *Server) readPage(ctx context.Context, storeID string, body map[string]a
 	return resp, nil
 }
 
-func (s *Server) write(ctx context.Context, ids StoreIDs, _ Entry, r *http.Request) (any, error) {
+func (s *Server) write(ctx context.Context, ids StoreIDs, e Entry, r *http.Request) (any, error) {
 	var req WriteRequest
 	if err := decode(r, &req); err != nil {
 		return nil, err
@@ -626,6 +626,13 @@ func (s *Server) write(ctx context.Context, ids StoreIDs, _ Entry, r *http.Reque
 			if isAboutGroup(t) {
 				return nil, &refusal{status: http.StatusForbidden, code: "forbidden",
 					message: fmt.Sprintf("%s[%d]: %v", name, i, errForbiddenGroupTuple)}
+			}
+			// Who holds a role, in a store handed roles, is the rights
+			// store's to say: a component that could write it could give
+			// anybody what its model gives the role.
+			if e.HandRoles && isAboutRole(t) {
+				return nil, &refusal{status: http.StatusForbidden, code: "forbidden",
+					message: fmt.Sprintf("%s[%d]: %v", name, i, errForbiddenRoleTuple)}
 			}
 			keys = append(keys, toFGA(t))
 		}

@@ -4,8 +4,8 @@
   The operator's listener (appLifecycle.port) takes commands that delete
   backups and purge an app's data. It admits a caller by its ServiceAccount
   (deployment.yaml, APP_LIFECYCLE_*), and this policy is the second control in
-  front of it: only the director's and the usher's pods, in this namespace,
-  can open a connection to that port at all.
+  front of it: only the director's, the usher's and the registrar's pods, in
+  this namespace, can open a connection to that port at all.
 
   A NetworkPolicy that selects a pod denies every ingress it does not list,
   so every other port the operator serves is listed too, each as open as it
@@ -54,8 +54,8 @@ spec:
   ingress:
     {{- /* Rendered only with a caller to name: a rule with an empty `from`
            admits everybody, which is the opposite of what is meant. With
-           neither deployed the port is listed nowhere and so is closed. */}}
-    {{- if or .Values.director.enabled .Values.usher.enabled }}
+           none deployed the port is listed nowhere and so is closed. */}}
+    {{- if or .Values.director.enabled .Values.usher.enabled .Values.registrar.enabled }}
     - from:
         {{- if .Values.director.enabled }}
         - podSelector:
@@ -68,6 +68,12 @@ spec:
             matchLabels:
               {{- include "gentian-os.selectorLabels" . | nindent 14 }}
               app.kubernetes.io/component: usher
+        {{- end }}
+        {{- if .Values.registrar.enabled }}
+        - podSelector:
+            matchLabels:
+              {{- include "gentian-os.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: registrar
         {{- end }}
       ports:
         - protocol: TCP

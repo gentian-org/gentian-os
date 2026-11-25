@@ -72,6 +72,15 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+    {{- if .Values.membershipListener.keysSecretRef.name }}
+    # The sign-in question: which roles a person holds on an app, asked by
+    # the identity provider when it issues the app's token. Its own port, so
+    # that the kernel's network policy admits the identity provider to it
+    # alone.
+    - name: sign-in-roles
+      port: {{ .Values.usher.signInRolesPort }}
+      targetPort: sign-in-roles
+    {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -118,6 +127,10 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            {{- if .Values.membershipListener.keysSecretRef.name }}
+            - name: sign-in-roles
+              containerPort: {{ .Values.usher.signInRolesPort }}
+            {{- end }}
           env:
             - name: USHER_LISTEN
               value: ":8080"
@@ -153,6 +166,19 @@ spec:
               value: {{ .Values.usher.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
             - name: USHER_LIFECYCLE_TOKEN_FILE
               value: /var/run/secrets/gentian/operator/token
+            {{- if .Values.membershipListener.keysSecretRef.name }}
+            # The public keys of the identity provider's listener: the
+            # sign-in question is answered to a request one of them signed.
+            # The same list the operator reads; public halves only.
+            - name: GENTIAN_LISTENER_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.membershipListener.keysSecretRef.name | quote }}
+                  key: {{ .Values.membershipListener.keysSecretRef.key | default "keys" | quote }}
+                  optional: true
+            - name: USHER_SIGN_IN_ROLES_LISTEN
+              value: ":{{ .Values.usher.signInRolesPort }}"
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /healthz

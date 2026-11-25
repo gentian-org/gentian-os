@@ -102,7 +102,6 @@ spec:
     cpu: "8"
     memory: 8Gi
     storage: 50Gi
-    maxApps: 10
     maxPods: 100
   compositeDeletePolicy: Background
   resourceRefs: []

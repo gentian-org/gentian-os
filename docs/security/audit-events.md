@@ -87,7 +87,7 @@ is empty rather than writing it empty. `kind` is one of `decision`, `change`,
 
 | Source | What it writes |
 | --- | --- |
-| bouncer | one envelope per decision in `internal/bouncer/decider.go`, allows and refusals, with the reason (no-session, unpublished, refused, allowed) and whether it was cached; on an entry that takes a token, the client the token was issued to |
+| bouncer | one envelope per decision in `internal/bouncer/decider.go`, allows and refusals, with the reason (no-session, unpublished, refused, allowed) and whether it was cached; on an entry that takes a token, the client the token was issued to; for a session it did not accept, the cause as a word (`no-token`, `expired`, `signature`, `unknown-key`, `keys-unavailable`, `audience`, `issuer`, …, never the verifier's text) and, for an expired token, `expired_by_ms` |
 | director | one envelope per commit after the write in `internal/director/gitops`: request id, subject, relation, object, commit, files |
 | registrar | identity actions in its record table |
 | custodian, usher | JSON logs with `request_id` |
@@ -95,6 +95,7 @@ is empty rather than writing it empty. `kind` is one of `decision`, `change`,
 | Keycloak | events in its database and, as JSON, on stdout: `KC_LOG_CONSOLE_OUTPUT=json`, the jboss-logging listener's success level at `info`, except a successful `CLIENT_LOGIN` (a client taking a token for itself, dozens a minute from the operator and provider-keycloak) at `debug`; `eventsExpiration` thirty days on every tenant realm |
 | Envoy edge | a JSON format on the `gentian-edge` EnvoyProxy: time, request id, method, host, path without query, status, flags, duration, upstream, client address, and the subject header the bouncer sets |
 | perimeter proxy | the same JSON fields, without subject |
+| outgoing gateway | one JSON line per connection on the `gentian-outgoing` EnvoyProxy's stdout: time, host (the TLS server name), port, client address (the caller's pod), bytes in each direction, duration, flags, upstream. No path, method or header, because TLS is not opened; the caller's name is not resolved, and the line is no audit envelope ([concepts/edge.md §3.4](../concepts/edge.md)) |
 
 ## 4. Forwarder
 

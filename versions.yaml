@@ -105,7 +105,7 @@ external-dns:
   repo: https://kubernetes-sigs.github.io/external-dns/
 
 # Postfix: the platform's own mail server (bokysan/mail, chart "mail"), where
-# mail.serviceMode is system. The mail ApplicationSet
+# mail.serviceMode is internal. The mail ApplicationSet
 # (kernel/appsets/raw/09a-mail.yaml) hands the pin to the postfix chart, whose
 # provider-helm Release installs it.
 postfix:

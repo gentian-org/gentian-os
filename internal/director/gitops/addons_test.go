@@ -56,7 +56,7 @@ func parseTenant(t *testing.T, text string) tenantDoc {
 
 func TestRewriteAddonsAddsBlockToBareEntry(t *testing.T) {
 	out, ok := rewriteAddons(baseTenant, "nextcloud-base-ce",
-		[]string{"nextcloud-mail-ce", "nextcloud-calendar-ce"}, nil, nil)
+		[]string{"nextcloud-mail-ce", "nextcloud-calendar-ce"}, nil)
 	if !ok {
 		t.Fatal("expected profile to be found")
 	}
@@ -72,8 +72,8 @@ func TestRewriteAddonsAddsBlockToBareEntry(t *testing.T) {
 }
 
 func TestRewriteAddonsReplacesRatherThanAccumulates(t *testing.T) {
-	once, _ := rewriteAddons(baseTenant, "nextcloud-base-ce", []string{"nextcloud-mail-ce"}, nil, nil)
-	twice, _ := rewriteAddons(once, "nextcloud-base-ce", []string{"nextcloud-deck-ce"}, nil, nil)
+	once, _ := rewriteAddons(baseTenant, "nextcloud-base-ce", []string{"nextcloud-mail-ce"}, nil)
+	twice, _ := rewriteAddons(once, "nextcloud-base-ce", []string{"nextcloud-deck-ce"}, nil)
 	doc := parseTenant(t, twice)
 	if len(doc.Spec.Apps[0].Addons) != 1 || doc.Spec.Apps[0].Addons[0] != "nextcloud-deck-ce" {
 		t.Fatalf("addons: %+v", doc.Spec.Apps[0].Addons)
@@ -84,8 +84,8 @@ func TestRewriteAddonsReplacesRatherThanAccumulates(t *testing.T) {
 }
 
 func TestRewriteAddonsEmptySelectionRemovesBlock(t *testing.T) {
-	once, _ := rewriteAddons(baseTenant, "nextcloud-base-ce", []string{"nextcloud-mail-ce"}, nil, nil)
-	cleared, _ := rewriteAddons(once, "nextcloud-base-ce", nil, nil, nil)
+	once, _ := rewriteAddons(baseTenant, "nextcloud-base-ce", []string{"nextcloud-mail-ce"}, nil)
+	cleared, _ := rewriteAddons(once, "nextcloud-base-ce", nil, nil)
 	if strings.Contains(cleared, "addons:") {
 		t.Fatalf("addons block survived an empty selection:\n%s", cleared)
 	}
@@ -110,7 +110,7 @@ spec:
     - nextcloud-mail-ce
   - profile: xwiki-ce
 `
-	out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"nextcloud-deck-ce"}, nil, nil)
+	out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"nextcloud-deck-ce"}, nil)
 	if !ok {
 		t.Fatal("expected profile to be found")
 	}
@@ -131,7 +131,7 @@ spec:
 
 func TestRewriteAddonsLastEntryInFile(t *testing.T) {
 	src := strings.Replace(baseTenant, "  - profile: xwiki-ce\n", "", 1)
-	out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"nextcloud-mail-ce"}, nil, nil)
+	out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"nextcloud-mail-ce"}, nil)
 	if !ok {
 		t.Fatal("expected profile to be found")
 	}
@@ -143,7 +143,7 @@ func TestRewriteAddonsLastEntryInFile(t *testing.T) {
 
 func TestRewriteAddonsStopsAtNextSection(t *testing.T) {
 	src := baseTenant + "  quotas:\n    storage: 10Gi\n"
-	out, ok := rewriteAddons(src, "xwiki-ce", []string{"xwiki-extra-ce"}, nil, nil)
+	out, ok := rewriteAddons(src, "xwiki-ce", []string{"xwiki-extra-ce"}, nil)
 	if !ok {
 		t.Fatal("expected profile to be found")
 	}
@@ -157,7 +157,7 @@ func TestRewriteAddonsStopsAtNextSection(t *testing.T) {
 }
 
 func TestRewriteAddonsUnknownProfileIsNotFound(t *testing.T) {
-	if _, ok := rewriteAddons(baseTenant, "not-installed-ce", []string{"x"}, nil, nil); ok {
+	if _, ok := rewriteAddons(baseTenant, "not-installed-ce", []string{"x"}, nil); ok {
 		t.Fatal("expected not-found for an uninstalled profile")
 	}
 }
@@ -165,7 +165,7 @@ func TestRewriteAddonsUnknownProfileIsNotFound(t *testing.T) {
 func TestRewriteAddonsDoesNotPartiallyMatchProfileName(t *testing.T) {
 	src := strings.Replace(baseTenant,
 		"- profile: nextcloud-base-ce", "- profile: nextcloud-base-ce-extra", 1)
-	if _, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"x"}, nil, nil); ok {
+	if _, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"x"}, nil); ok {
 		t.Fatal("nextcloud-base-ce must not match nextcloud-base-ce-extra")
 	}
 }
@@ -275,7 +275,7 @@ var (
 func TestRewriteAddonsWritesPinsBesideTheList(t *testing.T) {
 	out, ok := rewriteAddons(baseTenant, "nextcloud-base-ce",
 		[]string{"nextcloud-mail-ce", "nextcloud-talk-ce"},
-		[]AddonPin{{Name: "nextcloud-talk-ce", Digest: pinA, Catalogue: "main"}}, nil)
+		[]AddonPin{{Name: "nextcloud-talk-ce", Digest: pinA, Catalogue: "main"}})
 	if !ok {
 		t.Fatal("expected profile to be found")
 	}
@@ -301,9 +301,9 @@ func TestRewriteAddonsWritesPinsBesideTheList(t *testing.T) {
 // nothing to write -- in whichever order and form they were in.
 func TestRewriteAddonsReplacesPins(t *testing.T) {
 	once, _ := rewriteAddons(baseTenant, "nextcloud-base-ce", []string{"a-ce", "b-ce"},
-		[]AddonPin{{Name: "a-ce", Digest: pinA, Catalogue: "main"}, {Name: "b-ce", Digest: pinB, Catalogue: "main"}}, nil)
+		[]AddonPin{{Name: "a-ce", Digest: pinA, Catalogue: "main"}, {Name: "b-ce", Digest: pinB, Catalogue: "main"}})
 	twice, _ := rewriteAddons(once, "nextcloud-base-ce", []string{"b-ce"},
-		[]AddonPin{{Name: "b-ce", Digest: pinA, Catalogue: "main"}}, nil)
+		[]AddonPin{{Name: "b-ce", Digest: pinA, Catalogue: "main"}})
 	if strings.Count(twice, "addonPins:") != 1 || strings.Count(twice, "addons:") != 1 || strings.Contains(twice, pinB) {
 		t.Fatalf("the blocks accumulated:\n%s", twice)
 	}
@@ -311,7 +311,7 @@ func TestRewriteAddonsReplacesPins(t *testing.T) {
 	if len(app.AddonPins) != 1 || app.AddonPins[0].Digest != pinA || strings.Join(app.Addons, ",") != "b-ce" {
 		t.Fatalf("entry = %+v", app)
 	}
-	cleared, _ := rewriteAddons(twice, "nextcloud-base-ce", nil, nil, nil)
+	cleared, _ := rewriteAddons(twice, "nextcloud-base-ce", nil, nil)
 	if cleared != baseTenant {
 		t.Fatalf("clearing did not return the entry to what it was:\n%s", cleared)
 	}
@@ -339,7 +339,7 @@ spec:
   quotas:
     storage: 10Gi
 `
-	out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"c-ce"}, []AddonPin{{Name: "c-ce", Digest: pinA, Catalogue: "in-house"}}, nil)
+	out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"c-ce"}, []AddonPin{{Name: "c-ce", Digest: pinA, Catalogue: "in-house"}})
 	if !ok {
 		t.Fatal("expected profile to be found")
 	}
@@ -377,7 +377,7 @@ func TestRewriteAddonsReplacesAListWrittenOnOneLine(t *testing.T) {
 		src := strings.Replace(baseTenant, "  - profile: nextcloud-base-ce\n",
 			"  - profile: nextcloud-base-ce\n    "+flow+"\n    addonPins: []\n", 1)
 		parsePinned(t, src)
-		out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"c-ce"}, []AddonPin{{Name: "c-ce", Digest: pinA}}, nil)
+		out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"c-ce"}, []AddonPin{{Name: "c-ce", Digest: pinA}})
 		if !ok {
 			t.Fatal("expected profile to be found")
 		}
@@ -388,5 +388,35 @@ func TestRewriteAddonsReplacesAListWrittenOnOneLine(t *testing.T) {
 		if strings.Join(app.Addons, ",") != "c-ce" || len(app.AddonPins) != 1 || app.AddonPins[0].Catalogue != "" {
 			t.Fatalf("%q: entry = %+v", flow, app)
 		}
+	}
+}
+
+// An addonGrants block an entry still carries has no effect, and a rewrite
+// of the addons removes it with the other two.
+func TestRewriteAddonsRemovesAddonGrants(t *testing.T) {
+	src := `apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: demo
+spec:
+  apps:
+  - profile: nextcloud-base-ce
+    addons:
+    - nextcloud-mail-ce
+    addonGrants:
+    - name: nextcloud-mail-ce
+      defaultGrant: true
+  - profile: xwiki-ce
+`
+	out, ok := rewriteAddons(src, "nextcloud-base-ce", []string{"nextcloud-mail-ce"}, nil)
+	if !ok {
+		t.Fatal("expected profile to be found")
+	}
+	if strings.Contains(out, "addonGrants") || strings.Contains(out, "defaultGrant") {
+		t.Fatalf("the addonGrants block was left behind:\n%s", out)
+	}
+	doc := parseTenant(t, out)
+	if len(doc.Spec.Apps) != 2 || strings.Join(doc.Spec.Apps[0].Addons, ",") != "nextcloud-mail-ce" {
+		t.Fatalf("apps = %+v", doc.Spec.Apps)
 	}
 }

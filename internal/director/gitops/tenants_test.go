@@ -74,12 +74,16 @@ func TestATenantMadeWithSignUpSaysSoAndATenantWithoutIsUnchanged(t *testing.T) {
 		t.Errorf("a tenant made without sign-up mentions it:\n%s", text)
 	}
 
-	spec := gentianov1alpha1.TenantSpec{DisplayName: "Globex", SignUp: &gentianov1alpha1.TenantSignUp{Enabled: true}}
+	spec := gentianov1alpha1.TenantSpec{DisplayName: "Globex", SignUp: &gentianov1alpha1.TenantSignUp{Enabled: true},
+		PositionGivers: []gentianov1alpha1.TenantPositionGiver{{Tenant: "shop", Component: "checkout", Positions: []string{"customer"}}}}
 	if _, err := g.DeclareTenant(ctx, gitops.ImportedTenant{Name: "globex", Spec: &spec, Origin: "an export"}, tenantMeta()); err != nil {
 		t.Fatal(err)
 	}
 	if text := dt.RemoteFile(t, remote, dt.TenantPath("globex")); strings.Contains(text, "signUp") {
 		t.Errorf("sign-up travelled with a bundle from elsewhere:\n%s", text)
+	}
+	if text := dt.RemoteFile(t, remote, dt.TenantPath("globex")); strings.Contains(text, "positionGivers") {
+		t.Errorf("a component of elsewhere is let give positions here:\n%s", text)
 	}
 }
 

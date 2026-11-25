@@ -9,29 +9,30 @@
  */
 package io.gentianos.keycloak.events;
 
-import java.util.List;
 import java.util.UUID;
 
-/** The three statements the director understands, as JSON. */
+/** The statements the platform understands, as JSON. */
 final class Payload {
 
     private Payload() {
     }
 
-    static String userMemberships(String realm, String user, List<String> groups) {
-        StringBuilder json = head("user.memberships", realm).append(",\"user\":").append(quote(user)).append(",\"groups\":[");
-        for (int i = 0; i < groups.size(); i++) {
-            json.append(i == 0 ? "" : ",").append(quote(groups.get(i)));
+    /** providerUser is who the person is at the provider, or null when the realm does not say. */
+    static String userEntered(String realm, String user, String provider, String providerUser) {
+        StringBuilder out = head("user.entered", realm).append(",\"user\":").append(quote(user))
+            .append(",\"provider\":").append(quote(provider));
+        if (providerUser != null) {
+            out.append(",\"providerUser\":").append(quote(providerUser));
         }
-        return json.append("]}").toString();
+        return out.append('}').toString();
+    }
+
+    static String userRegistered(String realm, String user) {
+        return head("user.registered", realm).append(",\"user\":").append(quote(user)).append('}').toString();
     }
 
     static String userDeleted(String realm, String user) {
         return head("user.deleted", realm).append(",\"user\":").append(quote(user)).append('}').toString();
-    }
-
-    static String groupDeleted(String realm, String group) {
-        return head("group.deleted", realm).append(",\"group\":").append(quote(group)).append('}').toString();
     }
 
     private static StringBuilder head(String type, String realm) {

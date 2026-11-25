@@ -409,3 +409,31 @@ func TestBundlesInASharedBucketGoUnderTheirTenant(t *testing.T) {
 		t.Fatalf("an external bucket of the same name: %q", got)
 	}
 }
+
+// What is exported before a move is app until a policy says otherwise; the
+// tenant's own wins where the cluster allows one, and stating it where the
+// cluster does not is refused like any other override.
+func TestBeforeMoveIsAppUnlessAPolicySaysOtherwise(t *testing.T) {
+	tenant := policyTenant()
+	eff, err := ResolveEffective(tenant, nil, nil)
+	if err != nil || eff.BeforeMove != gentianov1alpha1.BeforeMoveApp {
+		t.Fatalf("no policy: %q, %v", eff.BeforeMove, err)
+	}
+	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{BeforeMove: gentianov1alpha1.BeforeMoveTenant})
+	if eff, _ := ResolveEffective(tenant, cluster, nil); eff.BeforeMove != gentianov1alpha1.BeforeMoveTenant {
+		t.Fatalf("the cluster's: %q", eff.BeforeMove)
+	}
+	own := tenantPolicy(gentianov1alpha1.BackupPolicySpec{BeforeMove: gentianov1alpha1.BeforeMoveNone})
+	if eff, _ := ResolveEffective(tenant, cluster, own); eff.BeforeMove != gentianov1alpha1.BeforeMoveNone {
+		t.Fatalf("the tenant's own: %q", eff.BeforeMove)
+	}
+	// A tenant policy stating something else inherits this.
+	other := tenantPolicy(gentianov1alpha1.BackupPolicySpec{Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{"age1x"}}})
+	if eff, _ := ResolveEffective(tenant, cluster, other); eff.BeforeMove != gentianov1alpha1.BeforeMoveTenant {
+		t.Fatalf("inherited: %q", eff.BeforeMove)
+	}
+	cluster.Spec.AllowTenantOverride = ptrBool(false)
+	if _, err := ResolveEffective(tenant, cluster, own); err == nil {
+		t.Fatal("a tenant's beforeMove where the cluster allows none was not refused")
+	}
+}

@@ -17,7 +17,7 @@ SPDX-License-Identifier: MPL-2.0
 // fetches the inputs from the component, runs the command with them, and
 // delivers what the command wrote. The command inherits the environment, so
 // one that wants more (progress, a file of evidence, a person's answer, a
-// call to an adapter) asks the component itself, at RUN_CALLBACK_URL with
+// call to an agent bridge) asks the component itself, at RUN_CALLBACK_URL with
 // RUN_TOKEN.
 //
 //	GET  $RUN_CALLBACK_URL/runs/$RUN_ID/inputs    the inputs, as the body

@@ -64,10 +64,12 @@ there is nothing to set.
 
 See [routing.md](../concepts/routing.md) for the topology: the
 `gentian-envoy` GatewayClass and the kernel's two Gateways, `authenticated`
-and `perimeter`, in `kernel-edge`.
+and `perimeter`, in `kernel-edge`. Inside entries and outgoing connections
+have classes of their own, `gentian-envoy-inside` and `gentian-envoy-out`;
+the whole edge is mapped in [edge.md](../concepts/edge.md).
 
-Installer step `A-05-envoy-gateway` installs Envoy Gateway into `kernel-edge`
-and the Gateway API CRDs.
+Installer step `A-05-envoy-gateway` installs Envoy Gateway into `kernel-edge`,
+the Gateway API CRDs, and the two other classes.
 
 Validate after install:
 

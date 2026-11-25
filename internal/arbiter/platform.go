@@ -16,15 +16,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/tokenreview"
 )
 
 // The platform's path to the arbiter: what the operator writes into stores
-// and reads out of them that no component's key may -- the realm's group
-// memberships, a store's export and its restore, a purge.
+// and reads out of them that no component's key may -- a store's export and
+// its restore, a purge.
 //
 // It is admitted by workload identity, as the operator's own listener admits
 // the director and the usher (internal/tokenreview): the
@@ -70,23 +72,6 @@ func (a *PlatformAuth) admit(ctx context.Context, header string) *refusal {
 	return nil
 }
 
-// MembershipsRequest states one person's complete set of groups in a realm,
-// as the realm's signed event did: state, not deltas. It reaches the stores
-// of the realm's tenant's components that mirror groups, and no other.
-type MembershipsRequest struct {
-	Tenant  string   `json:"tenant"`
-	Realm   string   `json:"realm"`
-	Subject string   `json:"subject"`
-	Groups  []string `json:"groups"`
-}
-
-// GroupDeletedRequest says a group of a realm no longer exists.
-type GroupDeletedRequest struct {
-	Tenant string `json:"tenant"`
-	Realm  string `json:"realm"`
-	Group  string `json:"group"`
-}
-
 // StoreExport is a store as a bundle carries it: its model and every tuple.
 type StoreExport struct {
 	Model  json.RawMessage `json:"model"`
@@ -116,8 +101,7 @@ func (s *Server) PlatformHandler(auth *PlatformAuth) http.Handler {
 			_ = json.NewEncoder(w).Encode(out)
 		})
 	}
-	route("PUT /v1/platform/memberships", s.platformMemberships)
-	route("POST /v1/platform/group-deleted", s.platformGroupDeleted)
+	route("PUT /v1/platform/roles/{tenant}/{component}", s.platformRoles)
 	route("GET /v1/platform/stores/{tenant}/{component}", s.platformExport)
 	route("PUT /v1/platform/stores/{tenant}/{component}", s.platformRestore)
 	route("DELETE /v1/platform/stores/{tenant}/{component}", s.platformPurge)
@@ -125,97 +109,100 @@ func (s *Server) PlatformHandler(auth *PlatformAuth) http.Handler {
 	return mux
 }
 
-// mirrors are the entries a realm's memberships reach: the components of
-// that tenant, of that realm, that mirror groups.
-func (s *Server) mirrors(tenant, realm string) []Entry {
-	var out []Entry
+// RolesRequest states, for one store handed roles, every person's roles on
+// the app: state, not deltas. A person it does not name holds none.
+type RolesRequest struct {
+	Holdings []authz.RoleHolding `json:"holdings"`
+}
+
+// MaxRoleHoldings bounds the people one hand-over names.
+const MaxRoleHoldings = 50000
+
+// handedTo is the entry of a tenant's component that is handed roles.
+func (s *Server) handedTo(tenant, component string) (Entry, bool) {
 	for _, e := range s.table.Load().byHash {
-		if e.Tenant == tenant && e.Realm == realm && e.MirrorGroups {
-			out = append(out, e)
+		if e.Tenant == tenant && e.Component == component && e.HandRoles {
+			return e, true
 		}
 	}
-	return out
+	return Entry{}, false
 }
 
-func (s *Server) platformMemberships(r *http.Request) (any, error) {
-	var req MembershipsRequest
+// platformRoles makes the roles a store holds what the platform says: the
+// holder tuples on role objects of the realm's people, written and taken
+// until they are exactly the request's. A store that is not handed roles
+// answers 404, and the platform hands it nothing.
+func (s *Server) platformRoles(r *http.Request) (any, error) {
+	tenant, component, err := storeRef(r)
+	if err != nil {
+		return nil, err
+	}
+	var req RolesRequest
 	if err := decode(r, &req); err != nil {
 		return nil, err
 	}
-	if !dnsLabel.MatchString(req.Tenant) || req.Subject == "" {
-		return nil, badRequest("tenant and subject are required")
+	if len(req.Holdings) > MaxRoleHoldings {
+		return nil, badRequest("at most %d people in one hand-over", MaxRoleHoldings)
 	}
-	user, err := UserObject(req.Realm, req.Subject)
+	e, ok := s.handedTo(tenant, component)
+	if !ok {
+		return nil, &refusal{status: http.StatusNotFound, code: "not_found", message: tenant + "/" + component + " is not handed roles"}
+	}
+	want := map[Tuple]bool{}
+	for i, h := range req.Holdings {
+		user, err := UserObject(e.Realm, h.Subject)
+		if err != nil {
+			return nil, badRequest("holdings[%d]: %v", i, err)
+		}
+		for _, name := range h.Roles {
+			role, err := RoleObject(name)
+			if err != nil {
+				return nil, badRequest("holdings[%d]: %v", i, err)
+			}
+			want[Tuple{User: user, Relation: RoleHolderRelation, Object: role}] = true
+		}
+	}
+	ids, err := s.stores.Resolve(r.Context(), e)
 	if err != nil {
-		return nil, badRequest("%v", err)
+		return nil, err
 	}
-	want := map[string]bool{}
-	for _, g := range req.Groups {
-		obj, err := GroupObject(req.Realm, g)
-		if err != nil {
-			// A nested group, or a name OpenFGA cannot hold: not mirrored,
-			// as the kernel's store does not hold one either.
-			continue
-		}
-		want[obj] = true
+	stored, err := s.fga.ofType(r.Context(), ids.Store, RoleHolderRelation, roleType)
+	if err != nil {
+		return nil, err
 	}
-	prefix := groupType + ":" + req.Realm + "/"
-	for _, e := range s.mirrors(req.Tenant, req.Realm) {
-		ids, err := s.stores.Resolve(r.Context(), e)
-		if err != nil {
-			return nil, err
-		}
-		stored, err := s.fga.readAll(r.Context(), ids.Store, fgaTuple{User: user, Object: groupType + ":"})
-		if err != nil {
-			return nil, err
-		}
-		have := map[string]bool{}
-		var deletes []Tuple
-		for _, t := range stored {
-			if t.Relation != "member" || !strings.HasPrefix(t.Object, prefix) {
-				continue
-			}
-			have[t.Object] = true
-			if !want[t.Object] {
-				deletes = append(deletes, t)
-			}
-		}
-		var writes []Tuple
-		for obj := range want {
-			if !have[obj] {
-				writes = append(writes, Tuple{User: user, Relation: "member", Object: obj})
-			}
-		}
-		if err := s.fga.writeTuples(r.Context(), ids.Store, ids.Model, writes, deletes); err != nil {
-			return nil, err
+	var writes, deletes []Tuple
+	have := map[Tuple]bool{}
+	for _, t := range stored {
+		have[t] = true
+		if !want[t] {
+			deletes = append(deletes, t)
 		}
 	}
+	for t := range want {
+		if !have[t] {
+			writes = append(writes, t)
+		}
+	}
+	if len(writes)+len(deletes) == 0 {
+		return nil, nil
+	}
+	sortTuples(writes)
+	sortTuples(deletes)
+	if err := s.fga.writeTuples(r.Context(), ids.Store, ids.Model, writes, deletes); err != nil {
+		return nil, err
+	}
+	s.log.InfoContext(r.Context(), "roles handed over", "store", e.StoreName(), "written", len(writes), "taken", len(deletes))
 	return nil, nil
 }
 
-func (s *Server) platformGroupDeleted(r *http.Request) (any, error) {
-	var req GroupDeletedRequest
-	if err := decode(r, &req); err != nil {
-		return nil, err
-	}
-	obj, err := GroupObject(req.Realm, req.Group)
-	if err != nil {
-		return nil, nil // a group that was never mirrored has no members here
-	}
-	for _, e := range s.mirrors(req.Tenant, req.Realm) {
-		ids, err := s.stores.Resolve(r.Context(), e)
-		if err != nil {
-			return nil, err
+func sortTuples(ts []Tuple) {
+	sort.Slice(ts, func(i, j int) bool {
+		a, b := ts[i], ts[j]
+		if a.Object != b.Object {
+			return a.Object < b.Object
 		}
-		members, err := s.fga.readAll(r.Context(), ids.Store, fgaTuple{Relation: "member", Object: obj})
-		if err != nil {
-			return nil, err
-		}
-		if err := s.fga.writeTuples(r.Context(), ids.Store, ids.Model, nil, members); err != nil {
-			return nil, err
-		}
-	}
-	return nil, nil
+		return a.User < b.User
+	})
 }
 
 func storeRef(r *http.Request) (string, string, error) {
@@ -279,3 +266,7 @@ func (s *Server) platformPurgeTenant(r *http.Request) (any, error) {
 
 // errForbiddenGroupTuple is a component writing a tuple about a group.
 var errForbiddenGroupTuple = errors.New("tuples whose object is a group are the platform's")
+
+// errForbiddenRoleTuple is a component writing a tuple about a role in a
+// store it is handed roles.
+var errForbiddenRoleTuple = errors.New("tuples whose object is a role are the platform's in a store handed roles")

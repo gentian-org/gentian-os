@@ -47,6 +47,15 @@ const maxIndex = 1 << 20
 // else's web server.
 const indexTTL = 5 * time.Minute
 
+// cacheFor is how long this fetcher reuses what it fetched: CacheFor, or
+// indexTTL where that is not set.
+func (f *Fetcher) cacheFor() time.Duration {
+	if f.CacheFor > 0 {
+		return f.CacheFor
+	}
+	return indexTTL
+}
+
 // IndexEntry is one entry as its source describes it.
 type IndexEntry struct {
 	// Name is the profile's metadata.name, which is the second half of its
@@ -153,7 +162,7 @@ func (f *Fetcher) cached(catalogue string) (cachedIndex, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	c, ok := f.indexes[catalogue]
-	if !ok || time.Since(c.at) > indexTTL {
+	if !ok || time.Since(c.at) > f.cacheFor() {
 		return cachedIndex{}, false
 	}
 	return c, true

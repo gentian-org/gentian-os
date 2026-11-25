@@ -29,7 +29,7 @@ func reason(text string) string { return `{"reason":"` + text + `"}` }
 // verb for it. tom is demo's, as the account of its realm; mia, who is not,
 // is refused.
 func TestThePerimeterApproverApprovesEgress(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	tom := h.token(t, "tenant-demo", "tom")
 	if code, _ := h.do(t, "PUT", egressPath, h.token(t, "tenant-demo", "mia"), reason("a member asking")); code != http.StatusForbidden {
 		t.Fatalf("a member approved egress: %d", code)
@@ -67,8 +67,8 @@ func TestThePerimeterApproverApprovesEgress(t *testing.T) {
 // administer themselves too: the perimeter is the cluster's. tina, who
 // administers solo, does not.
 func TestTheClusterAdministratorApprovesEgressInEveryTenant(t *testing.T) {
-	h := start(t)
-	path := "/v1/tenants/solo/privileges/element/egress/smtp-relay"
+	h := startEgressAsking(t, nil)
+	path := "/v1/tenants/solo/privileges/nextcloud/egress/smtp-relay"
 	if code, _ := h.do(t, "PUT", path, h.token(t, "tenant-solo", "tina"), reason("my own tenant, after all")); code != http.StatusForbidden {
 		t.Fatalf("a tenant administrator approved egress: %d", code)
 	}
@@ -82,7 +82,7 @@ func TestTheClusterAdministratorApprovesEgressInEveryTenant(t *testing.T) {
 // it. A tenant administrator's authority inside their own tenant is not that,
 // however complete it is there.
 func TestATenantAdministratorCannotWaivePodSecurity(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	before := h.tip(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
@@ -106,7 +106,7 @@ func TestATenantAdministratorCannotWaivePodSecurity(t *testing.T) {
 // administrator to do so -- which is the whole reason the check follows the
 // kind rather than the route's relation.
 func TestTheSecurityOfficerWaivesPodSecurity(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	sam := h.token(t, "gentian", "sam")
 
 	code, body := h.do(t, "PUT", waiverPath, sam, reason("the converter forks as root; reviewed 2026-09-20"))
@@ -129,7 +129,7 @@ func TestTheSecurityOfficerWaivesPodSecurity(t *testing.T) {
 // grant on the install, both recorded with the officer's verb. An allowlist
 // entry belongs to a pod-security approval and to nothing else.
 func TestTheSecurityOfficerPermitsAndGrantsAWaiverInOneStep(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	sam := h.token(t, "gentian", "sam")
 	body := `{"reason":"the converter forks as root; reviewed 2026-11-06",` +
 		`"allowlist":{"profile":"nextcloud","policy":"gentian-require-non-root","scope":"collabora"}}`
@@ -172,7 +172,7 @@ func TestTheSecurityOfficerPermitsAndGrantsAWaiverInOneStep(t *testing.T) {
 // A role holder of a tenant's realm approves with a token of that realm, and
 // with no other: the same subject signed in by another realm is nobody here.
 func TestARoleHolderApprovesOnlyWithATokenOfItsOwnRealm(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	before := h.tip(t)
 	if code, _ := h.do(t, "PUT", waiverPath, h.token(t, "tenant-solo", "ines"), reason("same subject, another realm")); code != http.StatusForbidden || h.tip(t) != before {
 		t.Fatalf("PUT from another realm = %d, want 403", code)
@@ -186,7 +186,7 @@ func TestARoleHolderApprovesOnlyWithATokenOfItsOwnRealm(t *testing.T) {
 // says alice has can_configure and can_approve: false, and this is what that
 // distinction is worth.
 func TestConfiguringTheClusterIsNotApprovingForIt(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	before := h.tip(t)
 	alice := h.token(t, "gentian", "alice")
 
@@ -198,19 +198,37 @@ func TestConfiguringTheClusterIsNotApprovingForIt(t *testing.T) {
 	}
 }
 
-// A grant needs a reason in the approver's own words. The profile already said
-// why it wants the privilege; this is the record of why somebody agreed, and
-// it is the only part of the entry a caller supplies.
-func TestAGrantNeedsAReason(t *testing.T) {
-	h := start(t)
+// A grant's reason is a comment the approver may leave. The profile already
+// said why it wants the privilege, and the approver and the time are recorded
+// from the call, so an approval with no comment, or a short one, is taken.
+func TestAGrantNeedsNoReason(t *testing.T) {
+	for name, body := range map[string]string{
+		"no body":    ``,
+		"none":       `{}`,
+		"short":      reason("ok"),
+		"whitespace": `{"reason":"           "}`,
+	} {
+		h := startEgressAsking(t, nil)
+		tom := h.token(t, "tenant-demo", "tom")
+		before := h.tip(t)
+		if code, answer := h.do(t, "PUT", egressPath, tom, body); code != http.StatusAccepted && code != http.StatusOK {
+			t.Errorf("%s: PUT = %d %v, want the grant taken", name, code, answer)
+		}
+		if h.tip(t) == before {
+			t.Errorf("%s: nothing was committed", name)
+		}
+	}
+}
+
+// What is not a grant's body, or is a comment too long to keep, is refused.
+func TestAGrantRefusesWhatIsNoBody(t *testing.T) {
+	h := startEgressAsking(t, nil)
 	before := h.tip(t)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	for name, body := range map[string]string{
-		"none":       `{}`,
-		"too short":  reason("ok"),
-		"whitespace": `{"reason":"           "}`,
-		"not json":   `nonsense`,
+		"not json": `nonsense`,
+		"too long": reason(strings.Repeat("x", 2001)),
 	} {
 		if code, _ := h.do(t, "PUT", egressPath, tom, body); code != http.StatusBadRequest {
 			t.Errorf("%s: PUT = %d, want 400", name, code)
@@ -224,7 +242,7 @@ func TestAGrantNeedsAReason(t *testing.T) {
 // An expiry that has already passed grants nothing, so committing it would
 // read as an approval while the component went on waiting.
 func TestAnExpiryInThePastIsRefused(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	body := `{"reason":"agreed for one quarter only","expiresAt":"2020-01-01T00:00:00Z"}`
@@ -239,7 +257,7 @@ func TestAnExpiryInThePastIsRefused(t *testing.T) {
 // A kind that is not one of the three is a 404: the route exists, the
 // privilege named on it does not.
 func TestAnUnknownPrivilegeKindIsNotFound(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	tom := h.token(t, "tenant-demo", "tom")
 
 	code, _ := h.do(t, "PUT", "/v1/tenants/demo/privileges/nextcloud/rootShell/everything",
@@ -252,7 +270,7 @@ func TestAnUnknownPrivilegeKindIsNotFound(t *testing.T) {
 // Somebody who cannot see the tenant cannot approve for it either, which the
 // route's own relation settles before any of the above runs.
 func TestApprovingNeedsToSeeTheTenantAtAll(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	before := h.tip(t)
 	tina := h.token(t, "tenant-solo", "tina")
 
@@ -284,7 +302,7 @@ func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
 		security.PrivilegeClusterRoles + "/tenant-exports",
 		security.PrivilegeAPIExtensions + "/something",
 	} {
-		h := start(t)
+		h := startEgressAsking(t, nil)
 		path := "/v1/tenants/demo/privileges/nextcloud/" + ref
 		for _, who := range []struct {
 			name, realm, user, approver string
@@ -313,7 +331,7 @@ func TestTheReportedApproverIsWhomTheDirectorAllows(t *testing.T) {
 // Every tenant's grants in one list, each with its tenant, for whoever may
 // audit the cluster -- and not for a tenant's administrator.
 func TestTheClustersGrantedPrivilegesAreListedAcrossTenants(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	tom := h.token(t, "tenant-demo", "tom")
 	if code, body := h.do(t, "PUT", egressPath, tom, reason("agreed in the security review")); code != http.StatusAccepted {
 		t.Fatalf("PUT = %d %v", code, body)
@@ -339,7 +357,7 @@ func TestTheClustersGrantedPrivilegesAreListedAcrossTenants(t *testing.T) {
 // An approval of an API extension names the definitions it approved, and
 // carries them into git; another kind names none.
 func TestAnAPIExtensionsApprovalNamesWhatItApproved(t *testing.T) {
-	h := start(t)
+	h := startEgressAsking(t, nil)
 	bea := h.token(t, "gentian", "bea")
 	sam := h.token(t, "gentian", "sam")
 	path := "/v1/tenants/demo/privileges/nextcloud/apiExtensions/schedules"
@@ -360,5 +378,49 @@ func TestAnAPIExtensionsApprovalNamesWhatItApproved(t *testing.T) {
 	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/privileges/nextcloud/podSecurity/x", sam,
 		`{"reason":"reviewed and agreed for this install","digest":"`+digest+`"}`); code != http.StatusBadRequest {
 		t.Errorf("a digest on another kind = %d", code)
+	}
+}
+
+// An egress approval may name the hosts it opens, for a request whose hosts
+// are named at approval: each a name outside the cluster, recorded once and
+// sorted. What is not a host, a name inside the cluster, or hosts on another
+// kind is refused before anything is written.
+func TestAnEgressApprovalNamesTheHostsItOpens(t *testing.T) {
+	h := startEgressAsking(t, nil)
+	tom := h.token(t, "tenant-demo", "tom")
+	sam := h.token(t, "gentian", "sam")
+	backends := "/v1/tenants/demo/privileges/nextcloud/egress/backends"
+	before := h.tip(t)
+	for name, body := range map[string]string{
+		"a URL":                `{"hosts":["https://erp.example.org"]}`,
+		"a bare name":          `{"hosts":["erp"]}`,
+		"a Service's name":     `{"hosts":["erp.billing.svc"]}`,
+		"a private name":       `{"hosts":["erp.corp.internal"]}`,
+		"a port that is not":   `{"hosts":["erp.example.org:99999"]}`,
+		"more than the schema": `{"hosts":[` + strings.TrimSuffix(strings.Repeat(`"a.example.org",`, 65), ",") + `]}`,
+	} {
+		if code, answer := h.do(t, "PUT", backends, tom, body); code != http.StatusBadRequest {
+			t.Errorf("%s: PUT = %d %v, want 400", name, code, answer)
+		}
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/privileges/nextcloud/podSecurity/x", sam, `{"hosts":["erp.example.org"]}`); code != http.StatusBadRequest {
+		t.Errorf("hosts on a podSecurity approval = %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused approval committed anyway")
+	}
+	if code, answer := h.do(t, "PUT", backends, tom, `{"hosts":["files.example.org:8443"," ERP.example.org","erp.example.org"]}`); code != http.StatusAccepted && code != http.StatusOK {
+		t.Fatalf("an approval naming hosts = %d %v", code, answer)
+	}
+	if got := h.remoteFile(t, "demo", "privileges.yaml"); !strings.Contains(got, "      hosts:\n        - \"erp.example.org\"\n        - \"files.example.org:8443\"\n") {
+		t.Errorf("the approval does not record its hosts once and sorted:\n%s", got)
+	}
+	// The file is rewritten on every grant; a later one keeps these hosts.
+	other := strings.TrimSuffix(backends, "/backends") + "/other-way"
+	if code, answer := h.do(t, "PUT", other, tom, `{}`); code != http.StatusAccepted && code != http.StatusOK {
+		t.Fatalf("a later grant = %d %v", code, answer)
+	}
+	if got := h.remoteFile(t, "demo", "privileges.yaml"); !strings.Contains(got, "        - \"files.example.org:8443\"\n") {
+		t.Errorf("a later grant dropped the hosts:\n%s", got)
 	}
 }

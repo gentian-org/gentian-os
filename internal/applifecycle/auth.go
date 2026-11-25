@@ -54,6 +54,9 @@ type Callers struct {
 	// Reader is admitted to the routes registered with Read. Empty means
 	// there is no reader.
 	Reader string
+	// Registrar is admitted to the routes registered with People. Empty
+	// means there is no registrar.
+	Registrar string
 }
 
 // ServiceAccountUsername is the name the API server reports for a
@@ -70,9 +73,10 @@ func ServiceAccountUsername(namespace, name string) string {
 // chart values, and the namespace is the operator's own.
 func CallersFromEnv(namespace string) Callers {
 	return Callers{
-		Audience: os.Getenv("APP_LIFECYCLE_AUDIENCE"),
-		Director: ServiceAccountUsername(namespace, os.Getenv("APP_LIFECYCLE_DIRECTOR_SERVICE_ACCOUNT")),
-		Reader:   ServiceAccountUsername(namespace, os.Getenv("APP_LIFECYCLE_USHER_SERVICE_ACCOUNT")),
+		Audience:  os.Getenv("APP_LIFECYCLE_AUDIENCE"),
+		Director:  ServiceAccountUsername(namespace, os.Getenv("APP_LIFECYCLE_DIRECTOR_SERVICE_ACCOUNT")),
+		Reader:    ServiceAccountUsername(namespace, os.Getenv("APP_LIFECYCLE_USHER_SERVICE_ACCOUNT")),
+		Registrar: ServiceAccountUsername(namespace, os.Getenv("APP_LIFECYCLE_REGISTRAR_SERVICE_ACCOUNT")),
 	}
 }
 
@@ -91,5 +95,5 @@ func NewCallerAuth(reviews tokenreview.Reviewer, callers Callers) *CallerAuth {
 // no audience, no way to ask, or no identity to admit refuses every request
 // and says why, rather than answering each with a 401 that explains nothing.
 func (a *CallerAuth) configured() bool {
-	return a != nil && a.review.Ready() && (a.callers.Director != "" || a.callers.Reader != "")
+	return a != nil && a.review.Ready() && (a.callers.Director != "" || a.callers.Reader != "" || a.callers.Registrar != "")
 }

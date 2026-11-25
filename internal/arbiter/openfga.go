@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/openfga"
@@ -106,6 +107,21 @@ func (c *openFGA) readAll(ctx context.Context, storeID string, filter fgaTuple) 
 	var out []Tuple
 	for _, t := range got {
 		out = append(out, Tuple(t))
+	}
+	return out, nil
+}
+
+// ofType is every tuple of a store with relation on an object of objType.
+func (c *openFGA) ofType(ctx context.Context, storeID, relation, objType string) ([]Tuple, error) {
+	all, err := c.readAll(ctx, storeID, fgaTuple{})
+	if err != nil {
+		return nil, err
+	}
+	var out []Tuple
+	for _, t := range all {
+		if t.Relation == relation && strings.HasPrefix(t.Object, objType+":") {
+			out = append(out, t)
+		}
 	}
 	return out, nil
 }

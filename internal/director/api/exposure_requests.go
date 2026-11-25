@@ -81,15 +81,21 @@ type exposureEntry struct {
 	State string `json:"state"`
 	// Kind is what approving the entry allows: public (a public address
 	// that passes no credential on), publicAppCredential (a public address
-	// that passes the caller's Authorization header to the app) or
-	// signInAppAuthorization (no public address: an entry behind sign-in
-	// whose Authorization header is the app's own). KindLabel is the same
-	// in a few words, for a list.
+	// that passes the caller's Authorization header to the app),
+	// insideAppCredential (no public address: the same, for callers inside
+	// the cluster alone) or signInAppAuthorization (no public address: an
+	// entry behind sign-in whose Authorization header is the app's own).
+	// KindLabel is the same in a few words, for a list.
 	Kind      string `json:"kind,omitempty"`
 	KindLabel string `json:"kindLabel,omitempty"`
 	// PublicAddress says approving the entry publishes something on the
-	// internet. False for an entry behind sign-in.
+	// internet. False for an entry behind sign-in and for an inside entry.
 	PublicAddress bool `json:"publicAddress"`
+	// InsideOnly says approving the entry publishes its paths to the
+	// cluster's own pods alone: at a name only the cluster's DNS knows, on a
+	// Gateway the internet has no way to, for the components granted the
+	// host as egress.
+	InsideOnly bool `json:"insideOnly"`
 	// PassesCredential says the caller's Authorization header reaches the
 	// app as the caller sent it once the entry is approved.
 	PassesCredential bool `json:"passesCredential"`
@@ -112,6 +118,9 @@ type exposureEntry struct {
 	// be sent back to after the person signed in: approving the entry
 	// registers them at the tenant's sign-in service.
 	ClientRedirectURIs []string `json:"clientRedirectURIs,omitempty"`
+	// SignInCookies are, for publicAppSignIn, the cookies of the app's own
+	// sign-in and the paths they pass on, as the profile declares them.
+	SignInCookies *gentianov1alpha1.SignInCookies `json:"signInCookies,omitempty"`
 	// AuthMode is the profile's own word for who the app expects to call.
 	AuthMode string `json:"authMode,omitempty"`
 	// AnyoneWithoutSignIn says the profile declares that nobody signs in
@@ -138,6 +147,8 @@ type exposureEntry struct {
 const (
 	kindPublic                 = gitops.KindPublic
 	kindPublicAppCredential    = gitops.KindPublicAppCredential
+	kindPublicAppSignIn        = gitops.KindPublicAppSignIn
+	kindInsideAppCredential    = gitops.KindInsideAppCredential
 	kindSignInAppAuthorization = gitops.KindSignInAppAuthorization
 	kindTokenEntry             = gitops.KindTokenEntry
 )
@@ -146,6 +157,8 @@ const (
 var kindLabels = map[string]string{
 	kindPublic:                 "Public address",
 	kindPublicAppCredential:    "Public address that passes the caller's credential to the app",
+	kindPublicAppSignIn:        "Public address that passes the caller's credential, and the app's own sign-in cookies, to the app",
+	kindInsideAppCredential:    "Inside the cluster only: passes the caller's credential to the app",
 	kindSignInAppAuthorization: "Behind sign-in: keeps the app's own Authorization header",
 	kindTokenEntry:             "Token entry: programs reach it as a person, with a token of the tenant's realm",
 }
@@ -166,6 +179,11 @@ func normalKind(k string) string {
 //   - public: the publishing proxy forwards the declared paths and drops
 //     every credential on the way in (component_perimeter_config.go).
 //   - publicAppCredential: the same proxy, passing the one header on.
+//   - publicAppSignIn: the same, and on the sign-in paths the named cookies
+//     in and the app's Set-Cookie out (signInAccessOf).
+//   - insideAppCredential: the same proxy and header, behind the inside
+//     Gateway (component_perimeter.go, coredns_hairpin.go,
+//     own_served_hosts.go).
 //   - signInAppAuthorization: the session and the bouncer as on any entry
 //     behind sign-in; only the header is left alone (internal/bouncer).
 //   - tokenEntry: no sign-in filter on the route; the bouncer verifies the
@@ -182,6 +200,16 @@ func accessOf(kind string) string {
 			"The platform does not know or check who calls. " +
 			"An app password or token of a person who was removed from the tenant keeps working until the app itself revokes it. " +
 			"Cookies are not passed to the app and the app cannot set any, so a client that needs cookies does not work on this address."
+	case kindPublicAppSignIn:
+		return signInAccessOf(nil)
+	case kindInsideAppCredential:
+		return "This is not a public address: nothing on the internet can reach it, and no public DNS record names it. " +
+			"Only programs running in this cluster reach these paths, at a name only the cluster's own DNS answers, " +
+			"and only those whose app was granted this address as a way out. " +
+			"Nobody signs in on the way: the caller's credential (the Authorization header) is passed to the app as the caller sent it, and the app alone checks it. " +
+			"The platform does not know or check who calls. " +
+			"An app password or token of a person who was removed from the tenant keeps working until the app itself revokes it. " +
+			"Cookies are not passed to the app and the app cannot set any."
 	case kindSignInAppAuthorization:
 		return "This is not a public address. People still have to sign in, and still have to be allowed to use the app, exactly as before. " +
 			"Once approved, the platform leaves the Authorization header on requests to this address as the app's own page sent it: " +
@@ -202,6 +230,39 @@ func accessOf(kind string) string {
 	return ""
 }
 
+// signInAccessOf is accessOf's sentence for publicAppSignIn, naming the
+// cookies and paths where the entry declares them.
+func signInAccessOf(c *gentianov1alpha1.SignInCookies) string {
+	cookies, paths := "the cookies the app's catalog entry names", "the paths of the app's own sign-in"
+	if c != nil {
+		cookies = "the cookies " + strings.Join(c.Names, ", ")
+		paths = strings.Join(c.Paths, ", ")
+	}
+	return "Nobody signs in at the platform's edge: anyone on the internet can send requests to these paths. " +
+		"The caller's credential (the Authorization header) is passed to the app as the caller sent it, and the app alone checks it. " +
+		"The platform does not know or check who calls. " +
+		"An app password or token of a person who was removed from the tenant keeps working until the app itself revokes it. " +
+		fmt.Sprintf("On %s alone, where the app signs a person in through the tenant's sign-in service, %s are passed to the app, and the cookies the app sets there reach the browser. ", paths, cookies) +
+		"No other cookie the browser holds is passed, the tenant's own sign-in session among them. " +
+		"Everywhere else on this address no cookie is passed and the app cannot set any."
+}
+
+// bridgeAccessOf says what approving a way of a bridge allows: a token entry
+// as accessOf's, except that the bouncer asks for the right to use the app
+// the bridge connects and hands the app an exchanged token, never the one the
+// program presented (internal/controller, bridge.go).
+func bridgeAccessOf(app string, protocol gentianov1alpha1.BridgeProtocolName) string {
+	return "This is not a public address, and nobody signs in on it with a browser. " +
+		fmt.Sprintf("A program on a person's own device, such as a file sync, calendar or address book program, reaches these paths of %s in %s as that person: ", app, protocol) +
+		"it presents a token the tenant's sign-in service issued to the person for this address alone, after the person signed in and agreed. " +
+		"The platform checks every request: that the token is valid, was issued by this tenant's sign-in service for this address, " +
+		fmt.Sprintf("belongs to a sign-in that has not ended, and that the person may use %s. ", app) +
+		"A person who is removed from the tenant, or whose sign-in is ended, loses this access within minutes. " +
+		"A token for this address is refused everywhere else on the platform, and a browser's session is refused here. " +
+		fmt.Sprintf("%s never receives the token the program presented: the platform exchanges it for one made out to %s alone, and %s acts with the person's own rights in it. ", app, app, app) +
+		"Until approved, these paths answer nobody."
+}
+
 // rateLimitOf says the limit one client address is held to on a public
 // address. The numbers are the ones the operator renders the proxy from
 // (addresses.PerimeterRateFor); the cluster's administrator may have set
@@ -212,9 +273,12 @@ func rateLimitOf(kind string) string {
 	switch kind {
 	case kindPublic:
 		rate = addresses.PerimeterRateFor(false)
-	case kindPublicAppCredential:
+	case kindPublicAppCredential, kindPublicAppSignIn:
 		rate = addresses.PerimeterRateFor(true)
 		why = " The limit is lower than on other public addresses, because every request may be a guess at a password."
+	case kindInsideAppCredential:
+		rate = addresses.PerimeterRateFor(true)
+		why = " A client address here is a program's in the cluster. The limit is the one of a public address that passes a credential on, because every request may be a guess at a password."
 	default:
 		return ""
 	}
@@ -334,7 +398,7 @@ func (s *Server) readExposureView(ctx context.Context, tenant string) (*exposure
 func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 	out := gentianov1alpha1.TenantExposure{
 		Install: e.Install, ExposureName: e.ExposureName, Owner: e.Owner, Reason: e.Reason, Apex: e.Apex,
-		Kind: gentianov1alpha1.ExposureKind(e.Kind), Alias: e.Alias,
+		Kind: gentianov1alpha1.ExposureKind(e.Kind), SignInCookies: e.SignInCookies, Alias: e.Alias,
 	}
 	if at, err := time.Parse(time.RFC3339, e.ReviewAt); err == nil {
 		out.ReviewAt = metav1.NewTime(at)
@@ -351,14 +415,30 @@ func registryEntry(e gitops.Exposure) gentianov1alpha1.TenantExposure {
 	return out
 }
 
+// entriesOf are the entries of a profile an approver may be asked about: the
+// ones it declares, and, for a bridge, one per way the tenant's door serves.
+// A bridge declares no exposure; what is approved of each way is that
+// programs reach the app it connects, under the way's paths, with a token of
+// the tenant's realm.
+func entriesOf(profile *gentianov1alpha1.ComponentProfile) []*gentianov1alpha1.ExposureSpec {
+	if profile == nil {
+		return nil
+	}
+	var out []*gentianov1alpha1.ExposureSpec
+	for i := range profile.Spec.Expose {
+		out = append(out, &profile.Spec.Expose[i])
+	}
+	out = append(out, profile.BridgeWayEntries()...)
+	return out
+}
+
 // approvableEntry is the profile's entry of this name that asks a perimeter
 // approver for something, or nil: a perimeter entry in a mode the platform
 // serves, or an entry behind sign-in that declares the Authorization header
 // the app's own. exists says the profile has an entry of the name at all,
 // and declared names the entries that do ask, for a refusal.
 func approvableEntry(profile *gentianov1alpha1.ComponentProfile, name string) (entry *gentianov1alpha1.ExposureSpec, exists bool, declared []string) {
-	for i := range profile.Spec.Expose {
-		e := &profile.Spec.Expose[i]
+	for _, e := range entriesOf(profile) {
 		asks := e.RequestKind() != ""
 		if asks {
 			declared = append(declared, e.Name)
@@ -400,20 +480,26 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 	kind := string(entry.RequestKind())
 	out.Kind, out.KindLabel = kind, kindLabels[kind]
 	out.PublicAddress = entry.Surface == gentianov1alpha1.SurfacePerimeter
-	out.PassesCredential = kind == kindPublicAppCredential || kind == kindSignInAppAuthorization || kind == kindTokenEntry
+	out.InsideOnly = entry.Surface == gentianov1alpha1.SurfaceInside
+	out.PassesCredential = kind == kindPublicAppCredential || kind == kindPublicAppSignIn || kind == kindInsideAppCredential ||
+		kind == kindSignInAppAuthorization || kind == kindTokenEntry
 	out.AuthMode = string(entry.AuthMode)
 	if kind == kindTokenEntry {
 		out.ClientRedirectURIs = append([]string{}, entry.ClientRedirectURIs...)
 	}
 	out.AnyoneWithoutSignIn = kind == kindPublic
 	out.Access, out.RateLimit = accessOf(kind), rateLimitOf(kind)
+	if kind == kindPublicAppSignIn {
+		out.Access = signInAccessOf(entry.SignInCookies)
+		out.SignInCookies = entry.SignInCookies.DeepCopy()
+	}
 	for _, p := range entry.DenyPaths {
 		if p = strings.TrimSpace(p); p != "" {
 			out.DenyPaths = append(out.DenyPaths, p)
 		}
 	}
 	sort.Strings(out.DenyPaths)
-	if !out.PublicAddress {
+	if !out.PublicAddress && !out.InsideOnly {
 		// Behind sign-in: the address is the one the entry already has on
 		// the tenant's own domain, and approving publishes nothing. An
 		// entry that names no paths there is the whole host.
@@ -427,7 +513,7 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 		return
 	}
 	out.Host, out.Note = v.resolve(out.Install, entry, out.Approval)
-	if out.Host != "" && out.Approval != nil {
+	if out.Host != "" && out.Approval != nil && !out.InsideOnly {
 		// By the operator's rule, asked of this tenant alone: what another
 		// tenant holds was refused when the alias was set.
 		in := v.inputs
@@ -445,6 +531,12 @@ func (v *exposureView) describe(out *exposureEntry, entry *gentianov1alpha1.Expo
 // the entry declares now, or "".
 func approvedAsAnother(entry *gentianov1alpha1.ExposureSpec, approval *gitops.Exposure) string {
 	was, now := normalKind(approval.Kind), string(entry.RequestKind())
+	if was == now && now == kindPublicAppSignIn && !entry.SignInCookies.Within(approval.SignInCookies) {
+		return fmt.Sprintf(
+			"This entry was approved by %s with the sign-in cookies %s on %s, and the app's catalog entry now names more. "+
+				"Only what was approved passes until it is approved again as it is now",
+			approval.Owner, strings.Join(approval.SignInCookies.Names, ", "), strings.Join(approval.SignInCookies.Paths, ", "))
+	}
 	if was == now {
 		return ""
 	}
@@ -480,8 +572,7 @@ func (v *exposureView) entries() []exposureEntry {
 	matched := map[string]bool{}
 
 	for install, profile := range v.profiles {
-		for i := range profile.Spec.Expose {
-			entry := &profile.Spec.Expose[i]
+		for _, entry := range entriesOf(profile) {
 			if entry.RequestKind() == "" {
 				// Asks for nothing: an ordinary entry behind sign-in, or
 				// one in a mode the platform does not serve.
@@ -500,6 +591,15 @@ func (v *exposureView) entries() []exposureEntry {
 				}
 			}
 			v.describe(&e, entry)
+			// A bridge: what the approval lets programs reach, and by
+			// what right.
+			if way := profile.BridgeWay(entry.Name); way != nil && way.DoorWay() && len(profile.Spec.Expose) == 0 {
+				app := profile.Spec.Bridge.App.Profile
+				e.Access = bridgeAccessOf(app, way.Protocol)
+				e.Note = strings.TrimSpace(fmt.Sprintf(
+					"A way of a bridge to %s, in %s: programs on a person's own devices reach these paths of %s as that person, who is asked the right to use %s as at its own address. Each way of the bridge is approved on its own. %s",
+					app, way.Protocol, app, app, e.Note))
+			}
 			if changed != "" {
 				e.Note = strings.TrimSpace(changed + ". " + e.Note)
 				e.Note = strings.TrimSuffix(e.Note, ". ")
@@ -517,7 +617,8 @@ func (v *exposureView) entries() []exposureEntry {
 		// not known here.
 		e.Kind = normalKind(p.Kind)
 		e.KindLabel = kindLabels[e.Kind]
-		e.PublicAddress = e.Kind != kindSignInAppAuthorization && e.Kind != kindTokenEntry
+		e.PublicAddress = e.Kind != kindSignInAppAuthorization && e.Kind != kindTokenEntry && e.Kind != kindInsideAppCredential
+		e.InsideOnly = e.Kind == kindInsideAppCredential
 		if why := v.unknownToTheRepository(p.Install); why != "" {
 			// Not shown as matching nothing: what it matches is not the
 			// repository's to say.
@@ -566,6 +667,10 @@ func (v *exposureView) unmatched(install, name string) string {
 		return fmt.Sprintf(
 			"entry %s of %s declares a way of checking callers that the platform does not offer on a public address, so nothing is published for it. Its catalog entry has to declare authMode none or authMode app",
 			name, install)
+	case exists && surfaceOf(profile, name) == gentianov1alpha1.SurfaceInside:
+		return fmt.Sprintf(
+			"entry %s of %s declares a way of checking callers that the platform does not offer inside the cluster, so nothing is published for it. Its catalog entry has to declare authMode app",
+			name, install)
 	case exists:
 		return fmt.Sprintf(
 			"entry %s of %s is not one for the internet and asks for nothing else an approver decides: it is served behind sign-in on the tenant's own address (surface gateway), and approval does not publish it",
@@ -579,9 +684,9 @@ func (v *exposureView) unmatched(install, name string) string {
 
 // surfaceOf is the surface of the profile's entry of this name.
 func surfaceOf(profile *gentianov1alpha1.ComponentProfile, name string) gentianov1alpha1.SurfaceKind {
-	for i := range profile.Spec.Expose {
-		if profile.Spec.Expose[i].Name == name {
-			return profile.Spec.Expose[i].Surface
+	for _, e := range entriesOf(profile) {
+		if e.Name == name {
+			return e.Surface
 		}
 	}
 	return ""
@@ -603,6 +708,14 @@ func (v *exposureView) mainAddressMismatch(install, name string, apex bool) stri
 	}
 	entry, _, _ := approvableEntry(profile, name)
 	if entry == nil {
+		return ""
+	}
+	if entry.Surface == gentianov1alpha1.SurfaceInside {
+		if apex {
+			return fmt.Sprintf(
+				"the request asks for a bare name (\"apex\": true), and entry %s of %s answers inside the cluster only: it has no public address. Send the request without \"apex\"",
+				name, install)
+		}
 		return ""
 	}
 	if entry.Surface != gentianov1alpha1.SurfacePerimeter {

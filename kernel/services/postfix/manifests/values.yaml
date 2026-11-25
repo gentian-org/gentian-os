@@ -36,12 +36,12 @@ kernelDomain: ""
 # Outbound relay host and port, supplied by the ApplicationSet from
 # EXTERNAL_SMTP_HOST / EXTERNAL_SMTP_PORT.
 #
-# Empty host means deliver directly, which is what MAIL_SERVICE_MODE=system wants:
-# it runs its own Postfix and needs no upstream. Because kernel mode leaves
+# Empty host means deliver directly, which is what mail.serviceMode internal wants:
+# it runs its own Postfix and needs no upstream. Because that mode leaves
 # EXTERNAL_SMTP_HOST unset, the mode needs no switch here — an unset host IS
 # direct delivery.
 #
-# Set for MAIL_SERVICE_MODE=external, together with relay credentials in OpenBao
+# Set for a smarthost, together with relay credentials in OpenBao
 # (gentian-os/kernel/mail/postfix); a relay host without credentials bounces every
 # message with 530 Authentication Required, after Keycloak has already reported the
 # invite as sent.
@@ -102,9 +102,10 @@ edge:
 # falls back to mail.<kernelDomain> and scheduling stays free.
 egressHost: ""
 
-# kernel or external, from the Cluster claim. external makes this a relay: no
-# DKIM signing, because the smarthost signs. Passed by the ApplicationSet.
-mailServiceMode: external
+# The Cluster claim's mail.serviceMode. This chart is deployed only where it
+# is internal, and the ApplicationSet passes that; any other value makes this
+# a relay: no DKIM signing, because the smarthost signs.
+mailServiceMode: relay
 # The node label the pin uses. A platform convention rather than a per-cluster
 # value — label the node holding the floating IP with it set to "true".
 egressNodeLabel: gentianos.io/mail-egress

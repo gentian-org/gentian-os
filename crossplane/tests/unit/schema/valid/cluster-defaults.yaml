@@ -10,5 +10,5 @@ metadata:
 spec:
   kernelDomain: example.org
   mail:
-    serviceMode: external
+    serviceMode: relay
     host: smtp.example.org

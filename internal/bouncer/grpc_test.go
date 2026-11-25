@@ -121,7 +121,7 @@ func TestEnvoyGetsHeadersOnAllowAndAStatusOnDeny(t *testing.T) {
 			asked = h.Header.Value
 		}
 	}
-	if asked != `Bearer resource_metadata="`+entryMetadata+`"` {
+	if asked != `Bearer scope="openid", resource_metadata="`+entryMetadata+`"` {
 		t.Fatalf("www-authenticate = %q", asked)
 	}
 	// A session route answers no such thing: a browser is sent to sign in by
@@ -185,5 +185,30 @@ func TestARefusalOnATokenRouteKeepsItsChallenge(t *testing.T) {
 	got := check("argocd.k.example", nil)
 	if _, there := got["www-authenticate"]; there || got["content-type"] == "application/json" || got["body"] == challengeBody {
 		t.Fatalf("a session route's refusal changed: %v", got)
+	}
+}
+
+// At a door whose realm takes device passwords the refusal carries two
+// challenges, each a header of its own, and the source address reaches the
+// decision.
+func TestADoorsRefusalCarriesThePasswordChallengeAsASecondHeader(t *testing.T) {
+	d, _, _ := deviceDoor(t)
+	s := &Server{Decider: d}
+	resp, err := s.Check(context.Background(), &authv3.CheckRequest{Attributes: &authv3.AttributeContext{
+		Request: &authv3.AttributeContext_Request{Http: &authv3.AttributeContext_HttpRequest{
+			Id: "r1", Host: doorHost, Path: "/remote.php/dav/calendars/ana/", Headers: map[string]string{":authority": doorHost},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var challenges []string
+	for _, hv := range resp.GetDeniedResponse().GetHeaders() {
+		if hv.Header.Key == "www-authenticate" {
+			challenges = append(challenges, hv.Header.Value)
+		}
+	}
+	if len(challenges) != 2 || !strings.HasPrefix(challenges[0], "Bearer ") || !strings.HasPrefix(challenges[1], "Basic ") {
+		t.Fatalf("challenges %q", challenges)
 	}
 }

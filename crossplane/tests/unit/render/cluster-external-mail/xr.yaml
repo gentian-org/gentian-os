@@ -1,0 +1,38 @@
+# A cluster whose mail is on a mail server outside it.
+#
+# What this asserts: mail.serviceMode `external` composes neither system-mail
+# nor system-mail-dmz, as a relay composes neither, and the address mail is
+# read at reaches gentian-cluster-config (mail.imapHost, mail.imapPort), which
+# is where the operator reads it for the apps that declare mail.imap. The port
+# is the schema's default; the claim names only the host.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  mail:
+    serviceMode: external
+    host: smtp.example.net
+    imap:
+      host: imap.example.net
+      port: 993
+  compositeDeletePolicy: Background
+  resourceRefs: []

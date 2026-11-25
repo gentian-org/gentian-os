@@ -38,7 +38,7 @@ def appsets(*extra):
         for line in (ROOT / "versions.yaml").read_text().splitlines():
             f.write("  " + line + "\n")
         f.flush()
-        return helm("appsets", "kernel/appsets", "-f", f.name, "--set", "mailServiceMode=system", *extra)
+        return helm("appsets", "kernel/appsets", "-f", f.name, "--set", "mailServiceMode=internal", *extra)
 
 
 def edge_ports(*extra):

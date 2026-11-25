@@ -34,7 +34,8 @@ func TestTheMailboxJobsAreTheMailServersOwn(t *testing.T) {
 	}
 	for _, want := range []string{
 		"image: " + DovecotImage,
-		"mail_location = " + MailLayout,
+		"mail_driver = maildir",
+		"mail_path = " + MailPath,
 		"mail_uid = 1000", "mail_gid = 1000",
 		"mountPath: " + MailRoot,
 	} {
@@ -42,8 +43,8 @@ func TestTheMailboxJobsAreTheMailServersOwn(t *testing.T) {
 			t.Errorf("the mail server's chart does not say %q, which the mailbox Jobs are built on", want)
 		}
 	}
-	if !strings.HasPrefix(MailLayout, "maildir:"+MailRoot+"/%d/%n") {
-		t.Errorf("the Jobs take a mailbox to be %s/<domain>/<name>, and the layout is %s", MailRoot, MailLayout)
+	if MailPath != MailRoot+"/%{user | domain}/%{user | username}" {
+		t.Errorf("the Jobs take a mailbox to be %s/<domain>/<name>, and the layout is %s", MailRoot, MailPath)
 	}
 }
 

@@ -1,10 +1,10 @@
 ---
 # The platform's own mail stack: Postfix and Dovecot, in the system tier.
 #
-# Skipped entirely unless mail.serviceMode is `system` — the wrapper drops this
+# Skipped entirely unless mail.serviceMode is `internal` — the wrapper drops this
 # file by name, because raw files are copied verbatim and a Helm conditional
-# cannot live inside one. A cluster that relays through a provider runs neither
-# and composes neither namespace.
+# cannot live inside one. A cluster that relays through a provider, or whose
+# mail is on a server outside it, runs neither and composes neither namespace.
 #
 # Postfix and Dovecot land in system-mail and have no load balancer. What the
 # internet reaches is the proxy in system-mail-dmz (kernel/services/mail-edge):
@@ -83,7 +83,7 @@ spec:
             - name: kernelDomain
               value: 'kernel.domain.placeholder'
             - name: mailServiceMode
-              value: 'system'
+              value: 'internal'
             - name: storageClass
               value: 'storage.class.placeholder'
             # Direct delivery, not a relay: a cluster running its own stack

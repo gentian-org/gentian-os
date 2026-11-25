@@ -64,7 +64,7 @@ trap cleanup EXIT
 
 # render [extra helm arguments for the edge...] — the charts, as deployed.
 render() {
-    local common=(--set env=dev --set kernelDomain=lab.test --set mailServiceMode=system
+    local common=(--set env=dev --set kernelDomain=lab.test --set mailServiceMode=internal
                   --set edge.namespace=system-mail-dmz --set mailNamespace=system-mail)
     mkdir -p "${W}/render"
     helm template postfix-dev kernel/services/postfix/manifests -n system-mail \
@@ -273,7 +273,7 @@ check "and finds the message delivered above" "${got}" '^inbox messages: 1$'
 got="$(out imaps "${EDGE_OUT}" 2993 ada@tenant.lab.test nope)"
 check "a wrong password is refused" "${got}" 'AUTHENTICATIONFAILED'
 sleep 3
-check "Dovecot logs the client's address with the login" "$(dovecot_log)" 'imap-login: Info: Login: user=<ada@tenant.lab.test>.*rip=172\.31\.0\.50,'
+check "Dovecot logs the client's address with the login" "$(dovecot_log)" 'imap-login: Info: Logged in: user=<ada@tenant.lab.test>.*rip=172\.31\.0\.50,'
 check "and counts the failed one against it" "$(dovecot_log)" 'auth failed.*rip=172\.31\.0\.50,'
 
 echo "(d) the PROXY-protocol ports, reached without a PROXY header"

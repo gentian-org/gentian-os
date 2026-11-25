@@ -12,6 +12,7 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -169,5 +170,47 @@ func TestTellingTheOperatorOfAPushNamesNothingButTheActor(t *testing.T) {
 	case s := <-got:
 		t.Fatalf("one push asked the operator twice: %+v", s)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// The operator's answer about a Tenant's manifest is the cluster's: nothing
+// for one it takes, the reason for one it refuses, and an error -- not a
+// verdict -- from an operator that has no such route or cannot ask.
+func TestTheOperatorIsAskedWhetherTheClusterTakesATenant(t *testing.T) {
+	answers := map[string]struct {
+		status int
+		body   string
+	}{
+		"taken":   {http.StatusOK, `{"admitted":true}`},
+		"refused": {http.StatusOK, `{"admitted":false,"reason":"denied the request: no"}`},
+		"older":   {http.StatusNotFound, `404 page not found`},
+		"unasked": {http.StatusBadGateway, `{"detail":"connection refused"}`},
+	}
+	var asked string
+	op := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Manifest string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		asked = r.Method + " " + r.URL.Path + " " + body.Manifest
+		a := answers[strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/actions/admit"), "/v1/tenants/")]
+		w.WriteHeader(a.status)
+		_, _ = w.Write([]byte(a.body))
+	}))
+	defer op.Close()
+	c := New(op.URL, TokenFile(filepath.Join(t.TempDir(), "token")))
+	ctx := context.Background()
+
+	if refusal, err := c.AdmitTenant(ctx, "taken", []byte("kind: Tenant")); err != nil || refusal != "" {
+		t.Fatalf("a tenant the cluster takes: %q, %v", refusal, err)
+	}
+	if asked != "POST /v1/tenants/taken/actions/admit kind: Tenant" {
+		t.Fatalf("asked %q", asked)
+	}
+	if refusal, err := c.AdmitTenant(ctx, "refused", nil); err != nil || refusal != "denied the request: no" {
+		t.Fatalf("a tenant the cluster refuses: %q, %v", refusal, err)
+	}
+	for _, name := range []string{"older", "unasked"} {
+		if refusal, err := c.AdmitTenant(ctx, name, nil); err == nil {
+			t.Fatalf("%s: read as a verdict: %q", name, refusal)
+		}
 	}
 }

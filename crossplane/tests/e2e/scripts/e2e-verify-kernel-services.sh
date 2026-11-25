@@ -6,7 +6,7 @@
 #
 # Prerequisites:
 #   - Gentian OS install complete
-#   - MAIL_SERVICE_MODE=system and dovecot-dev deployed; otherwise the check
+#   - MAIL_SERVICE_MODE=internal and dovecot-dev deployed; otherwise the check
 #     is skipped
 set -euo pipefail
 
@@ -27,7 +27,7 @@ kubectl cluster-info --request-timeout=5s >/dev/null 2>&1 \
   || fail "No reachable cluster — point KUBECONFIG at your dev cluster."
 
 if verify_dovecot_installation; then
-    pass "Dovecot installation verification (or skipped when MAIL_SERVICE_MODE≠system)"
+    pass "Dovecot installation verification (or skipped when MAIL_SERVICE_MODE≠internal)"
 else
     fail "Dovecot installation verification failed"
 fi

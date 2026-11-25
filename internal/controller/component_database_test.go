@@ -329,22 +329,22 @@ func TestAnInstalledComponentIsGivenItsOwnDatabaseNotTheDesktops(t *testing.T) {
 	r := &ComponentReconciler{Client: c, Scheme: s, KernelRealm: "kernel"}
 
 	comp := &gentianov1alpha1.Component{}
-	comp.Name, comp.Namespace, comp.UID = "fellwort", "tenant-acme", "fellwort-uid"
+	comp.Name, comp.Namespace, comp.UID = "voles", "tenant-acme", "voles-uid"
 	installed := &gentianov1alpha1.ComponentProfile{}
-	installed.Name = "fellwort"
+	installed.Name = "voles"
 	ready, reason, _, err := r.ensureDatabaseRequirement(ctx, comp, installed, acmeTenantFixture())
 	if err != nil || ready || reason != "DatabaseProvisioning" {
 		t.Fatalf("ready=%v reason=%q err=%v, want waiting for the credential", ready, reason, err)
 	}
 	es := &unstructured.Unstructured{}
 	es.SetGroupVersionKind(secrets.ExternalSecretGVK)
-	if err := c.Get(ctx, types.NamespacedName{Name: "fellwort" + componentDatabaseSecretSuffix, Namespace: comp.Namespace}, es); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: "voles" + componentDatabaseSecretSuffix, Namespace: comp.Namespace}, es); err != nil {
 		t.Fatal(err)
 	}
 	data, _, _ := unstructured.NestedSlice(es.Object, "spec", "data")
 	for _, d := range data {
 		key := d.(map[string]interface{})["remoteRef"].(map[string]interface{})["key"]
-		if key != "gentian-os/tenants/acme/apps/fellwort/database" {
+		if key != "gentian-os/tenants/acme/apps/voles/database" {
 			t.Errorf("the credential reads %v, want the app's own path", key)
 		}
 	}

@@ -20,20 +20,20 @@ import (
 	"strings"
 )
 
-// Who holds a platform role is not the registrar's to change.
+// Who holds a cluster role is not the registrar's to change.
 //
-// A platform role held by a group -- administrator and break-glass, and
-// whatever the Cluster claim's platformRoles names besides -- is held by the
-// members of one Keycloak group, named on the claim
-// (spec.platformRoles.<role>); the operator projects each into the
-// authorization store as a relation on the cluster. Every other cluster role
-// is held by name (spec.platformAccess.roleHolders), and a person of the
-// platform tenant named there holds it with their kernel-realm account.
-// Whoever can change one of those groups, or take over one of those
-// accounts, decides who holds that role over the cluster. The registrar manages people
-// for whoever the store allows, and that is a far wider set of callers than
-// the people who may decide that -- so it refuses to be the way it is done,
-// whoever asks.
+// Every cluster role is held by name (spec.platformAccess.roleHolders of
+// the Cluster claim), and a person of the platform tenant named there holds
+// it with their kernel-realm account: the cluster's administrator, the
+// security officer, an auditor. Whoever can take over one of those accounts
+// holds that role over the cluster. The registrar manages people for whoever
+// the store allows, and that is a far wider set of callers than the people
+// who may decide that -- so it refuses to be the way it is done, whoever
+// asks.
+//
+// Who is named a role holder is written on the claim, by the director, and
+// nowhere in the realm: there is no group whose membership is the role, so
+// the rule is about the accounts alone.
 //
 // The rule is applied in ONE place: guard, which doAt calls before every
 // request that is not a read. Every call this package makes to Keycloak
@@ -41,72 +41,52 @@ import (
 // about the rule, and a write whose shape guard does not recognize is refused
 // rather than let through.
 //
-// What is refused, for every one of those groups alike:
+// What is refused:
 //
-//   - adding somebody to the group or removing them from it, including
-//     creating a person already in it;
-//   - renaming or deleting the group, creating a group of that name, renaming
-//     another group to it, or creating anything beneath it;
-//   - any write to a person who is in the group, or who is a platform-tenant
-//     role holder: their names, address and
-//     whether they may sign in, removing them, their second factor, a mailed
-//     password link, an activation link, linking them to a component that
-//     vouches for people. Changing a role holder's address and then mailing
-//     a reset is the same as replacing them, and a component that could
-//     obtain their tokens would be them.
-//
-// A member's membership of groups that hold no platform role may still be
-// changed: that does not touch who holds one.
+//   - any write to a person who is a platform-tenant role holder: their
+//     names, address and whether they may sign in, removing them, their
+//     second factor, a mailed password link, an activation link, linking
+//     them to a component that vouches for people. Changing a role holder's
+//     address and then mailing a reset is the same as replacing them, and a
+//     component that could obtain their tokens would be them;
+//   - any write to a group: the registrar writes none;
+//   - in a realm several tenants share, any write to a person who is not
+//     one of the tenant's own (Realm.Scoped).
 //
 // This is a rule in the registrar's code, not a property of its credential.
 // The Keycloak client it authenticates as holds manage-users in the realm,
 // and Keycloak would carry out any of the above for it.
 
-// ErrProtected is a write that would change who holds a platform role.
-var ErrProtected = errors.New("the holders of the platform's roles are not managed here")
+// ErrProtected is a write that would change who holds a cluster role.
+var ErrProtected = errors.New("the holders of the cluster's roles are not managed here")
 
-// beneath is the test for a set of group names: the one a path is, or is
-// beneath.
-func beneath(names []string) func(path string) (string, bool) {
-	return func(path string) (string, bool) {
-		path = strings.TrimPrefix(path, "/")
-		for _, name := range names {
-			if path == name || strings.HasPrefix(path, name+"/") {
-				return name, true
-			}
-		}
-		return "", false
-	}
-}
-
-// ErrGuardUnavailable means the rule could not be applied: the groups' names
+// ErrGuardUnavailable means the rule could not be applied: the role holders
 // could not be read. The write is refused, because letting it through would
 // be deciding without knowing.
-var ErrGuardUnavailable = errors.New("the platform role groups could not be determined")
+var ErrGuardUnavailable = errors.New("the holders of the cluster's roles could not be determined")
 
 // ErrUnguarded is a write whose shape guard has no rule for. It is a mistake
 // in this package and never the caller's, and it is refused.
 var ErrUnguarded = errors.New("a write the registrar has no rule for")
 
-// RoleGroups answers the names of the groups whose members hold a platform
-// role, as the Cluster claim names them: every one, not the administrators'
-// alone. Asked on every write rather than read once: the claim can change,
-// and the rule has to follow it. Each name answered is protected.
-type RoleGroups func(ctx context.Context) ([]string, error)
+// RoleHolders answers the subjects of the platform tenant's people the
+// Cluster claim names role holders. Asked on every write rather than read
+// once: the claim can change, and the rule has to follow it.
+type RoleHolders func(ctx context.Context) ([]string, error)
 
 // change is what one request to Keycloak would change, as far as the rule
 // cares.
 type change struct {
 	// user is the person written to, when the write is about one person.
 	user string
-	// group is the group written to or joined, by Keycloak's id.
-	group string
-	// membership marks a write that only puts user in group or takes them
-	// out. It is judged by the group alone.
-	membership bool
 	// vouching marks a write to a person's link to a component that vouches
 	// for people (vouching.go).
 	vouching bool
+	// credential is the id of a person's credential the write removes:
+	// only ever a device password (devicepasswords.go).
+	credential string
+	// session is the id of a sign-in session the write ends (sessions.go).
+	session string
 }
 
 // classify reads a request path as a write. ok is false for a path this
@@ -114,7 +94,14 @@ type change struct {
 func classify(realm, rel string) (w change, ok bool) {
 	admin := "/admin/realms/" + url.PathEscape(realm)
 	activation := "/realms/" + url.PathEscape(realm) + "/gentian-activation/users/"
+	devices := "/realms/" + url.PathEscape(realm) + "/gentian-device-passwords/users/"
 	switch {
+	case strings.HasPrefix(rel, devices):
+		rest := strings.TrimPrefix(rel, devices)
+		if rest != "" && !strings.Contains(rest, "/") {
+			return change{user: unescape(rest)}, true
+		}
+		return change{}, false
 	case strings.HasPrefix(rel, activation):
 		rest := strings.Split(strings.TrimPrefix(rel, activation), "/")
 		if len(rest) == 2 && rest[0] != "" && rest[1] == "link" {
@@ -135,18 +122,22 @@ func classify(realm, rel string) (w change, ok bool) {
 		switch {
 		case len(seg) == 1:
 			return change{}, true
-		case len(seg) == 4 && seg[2] == "groups":
-			return change{user: unescape(seg[1]), group: unescape(seg[3]), membership: true}, true
+		case len(seg) >= 3 && seg[2] == "groups":
+			// What a person holds is the rights store's: nobody is put in
+			// a group from here.
+			return change{}, false
 		case len(seg) == 4 && seg[2] == "federated-identity" && strings.HasPrefix(unescape(seg[3]), vouchingAliasPrefix):
 			return change{user: unescape(seg[1]), vouching: true}, true
+		case len(seg) == 4 && seg[2] == "credentials":
+			return change{user: unescape(seg[1]), credential: unescape(seg[3])}, true
 		default:
 			return change{user: unescape(seg[1])}, true
 		}
-	case "groups":
-		if len(seg) == 1 {
-			return change{}, true
+	case "sessions":
+		if len(seg) == 2 {
+			return change{session: unescape(seg[1])}, true
 		}
-		return change{group: unescape(seg[1])}, true
+		return change{}, false
 	}
 	return change{}, false
 }
@@ -178,31 +169,60 @@ func (c *Client) guard(ctx context.Context, r Realm, method, rel string, body an
 	if w.vouching && method == http.MethodDelete {
 		return nil
 	}
-	which, err := c.roleGroups(ctx)
-	if err != nil {
-		return err
+	// Ending a sign-in session is let through for the same reason: it gives
+	// nobody anything, and the holder of a platform role signs in again.
+	// Whose session it is was settled before (EndSession ends only the
+	// caller's own).
+	if w.session != "" && method == http.MethodDelete {
+		return nil
 	}
-
-	// What the body itself names: a new group's name, a group's new name,
-	// the groups a new person is created in.
-	named, err := namedIn(body)
-	if err != nil {
+	// Removing a device password is the same: it ends what the person was
+	// given, for everybody, the holder of a platform role included. Whether
+	// the credential is one is asked of the realm, not taken from the
+	// caller; any other credential (a second factor) is judged below like
+	// every write to a person.
+	if w.credential != "" && method == http.MethodDelete {
+		held, err := c.DevicePasswords(ctx, r, w.user)
+		if err != nil {
+			return err
+		}
+		for _, d := range held {
+			if d.ID == w.credential {
+				return nil
+			}
+		}
+	}
+	// A body that asks for groups would put somebody in one at creation.
+	if named, err := namedIn(body); err != nil {
 		return fmt.Errorf("%w: %s %s: %v", ErrUnguarded, method, rel, err)
+	} else if len(named.Groups) > 0 {
+		return fmt.Errorf("%w: %s %s names groups", ErrUnguarded, method, rel)
 	}
-	if err := c.refuse(ctx, r, w, named, which, ErrProtected); err != nil {
-		return err
+	// In a shared realm, only the tenant's own people are written to.
+	if w.user != "" {
+		in, err := r.within(ctx, w.user)
+		if err != nil {
+			return err
+		}
+		if !in {
+			return fmt.Errorf("%w: user %q", ErrOutOfScope, w.user)
+		}
 	}
 	return c.refuseHolder(ctx, w)
 }
 
-// refuseHolder is the same rule for a person who holds a role by name: a
-// person of the platform tenant the Cluster claim names a role holder
-// (RoleHolders). Their account is the role, as a group member's is, and the
-// people of the kernel realm are managed by the cluster's administrator, who
-// must not be able to take over the security officer's.
+// refuseHolder is the rule itself: a person of the platform tenant the
+// Cluster claim names a role holder is not written to. Their account is the
+// role, and the people of the kernel realm are managed by whoever manages
+// the platform tenant's people, who must not be able to take over the
+// security officer's account, or another administrator's. It fails closed:
+// holders that cannot be read refuse the write.
 func (c *Client) refuseHolder(ctx context.Context, w change) error {
-	if w.user == "" || w.membership || c.holders == nil {
+	if w.user == "" {
 		return nil
+	}
+	if c.holders == nil {
+		return ErrGuardUnavailable
 	}
 	subjects, err := c.holders(ctx)
 	if err != nil {
@@ -216,100 +236,13 @@ func (c *Client) refuseHolder(ctx context.Context, w change) error {
 	return nil
 }
 
-// refuse is the rule itself, for one set of groups: which says whether a
-// path is one of them, and refusal is what the caller hears when the write
-// would change who is in one.
-func (c *Client) refuse(
-	ctx context.Context, r Realm, w change, named names,
-	which func(path string) (string, bool), refusal error,
-) error {
-	if name, is := which(named.Name); is && w.user == "" {
-		return fmt.Errorf("%w: a group may not be given the name %q", refusal, name)
-	}
-	for _, g := range named.Groups {
-		if name, is := which(g); is {
-			return fmt.Errorf("%w: nobody is added to %q from here", refusal, name)
-		}
-	}
-
-	if w.group != "" {
-		var g groupRep
-		if err := c.call(ctx, r, http.MethodGet, "/groups/"+url.PathEscape(w.group), nil, nil, &g); err != nil {
-			return err
-		}
-		path := g.Path
-		if path == "" {
-			path = g.Name
-		}
-		if name, is := which(path); is {
-			if w.membership {
-				return fmt.Errorf("%w: membership of %q is not changed from here", refusal, name)
-			}
-			return fmt.Errorf("%w: the group %q is not changed from here", refusal, name)
-		}
-	}
-	if w.user != "" && !w.membership {
-		var groups []groupRep
-		if err := c.call(ctx, r, http.MethodGet, "/users/"+url.PathEscape(w.user)+"/groups", nil, nil, &groups); err != nil {
-			return err
-		}
-		for _, g := range groups {
-			if name, is := which(g.Path); is {
-				return fmt.Errorf("%w: this person is in %q", refusal, name)
-			}
-		}
-	}
-	return nil
-}
-
-// roleGroups asks which groups hold a platform role and returns the test for
-// them: the role group a path is, or is beneath. It fails closed: no name is
-// ErrGuardUnavailable, never "none".
-func (c *Client) roleGroups(ctx context.Context) (func(path string) (string, bool), error) {
-	if c.roles == nil {
-		return nil, ErrGuardUnavailable
-	}
-	answered, err := c.roles(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrGuardUnavailable, err)
-	}
-	var protected []string
-	for _, name := range answered {
-		if name = strings.TrimPrefix(strings.TrimSpace(name), "/"); name != "" {
-			protected = append(protected, name)
-		}
-	}
-	if len(protected) == 0 {
-		return nil, ErrGuardUnavailable
-	}
-	return beneath(protected), nil
-}
-
-// notCustom is the answer for a group the platform composes, which is not
-// renamed or deleted from here. For a platform role's group it is
-// ErrProtected instead: that group is refused for the stronger reason, and a
-// caller told only "not a custom group" would not learn that nothing here
-// will ever change it. This decides which refusal is heard and nothing else
-// -- the request is refused either way, and guard is what stops the write.
-func (c *Client) notCustom(ctx context.Context, path string) error {
-	which, err := c.roleGroups(ctx)
-	if err != nil {
-		return err
-	}
-	if name, is := which(path); is {
-		return fmt.Errorf("%w: the group %q is not changed from here", ErrProtected, name)
-	}
-	return fmt.Errorf("%w: %q", ErrNotCustom, path)
-}
-
 // names is the part of a request body the rule reads.
 type names struct {
-	Name   string   `json:"name"`
 	Groups []string `json:"groups"`
 }
 
-// namedIn reads a body's group name and group list. A body that is not an
-// object -- the list of actions a mail carries -- names neither.
+// namedIn reads a body's group list. A body that is not an object -- the
+// list of actions a mail carries -- names none.
 func namedIn(body any) (names, error) {
 	var out names
 	if body == nil {

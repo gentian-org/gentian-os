@@ -74,7 +74,7 @@ func Requirement(req *gentianov1alpha1.AuthorizationRequirement) (json.RawMessag
 	for _, t := range req.Tuples {
 		tuples = append(tuples, Tuple{User: t.User, Relation: t.Relation, Object: t.Object})
 	}
-	if err := ValidateStartingTuples(model, tuples, req.MirrorsGroups()); err != nil {
+	if err := ValidateStartingTuples(model, tuples, req.MirrorsGroups(), req.HandsOverRoles()); err != nil {
 		return nil, nil, err
 	}
 	return model, tuples, nil

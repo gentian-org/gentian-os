@@ -151,8 +151,8 @@ func TestAnAddonWithNoProfileOnTheClusterHoldsItsApp(t *testing.T) {
 	}
 }
 
-// toolsBundle is an adapter's profile: a release of its own in the tenant,
-// nobody opens it, and the reviewed list of its tools.
+// toolsBundle is an agent bridge's profile: a release of its own in the
+// tenant, nobody opens it, and one way from the tenant's agents.
 const toolsBundle = `apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:
@@ -160,7 +160,7 @@ metadata:
   labels:
     gentianos.io/profile-name: wiki-tools
 spec:
-  classes: [adapter]
+  classes: [bridge]
   launch: none
   trustTier: certified
   version: "1.0.0"
@@ -169,16 +169,18 @@ spec:
       repository: oci://example.invalid/wiki-tools
       name: wiki-tools
       version: "1.0.0"
-  adapter:
-    adapts: {profile: wiki}
+  bridge:
+    app: {profile: wiki}
+    ways:
+    - {name: tools, caller: agents, callee: app, protocol: mcp, speaksAs: person}
 `
 
-// An adapter is rolled out like an app, from a release of its own in its
+// An agent bridge is rolled out like an app, from a release of its own in its
 // tenant. An instance of a class its profile is not certified for rolls out
 // nothing, and says that a reinstall is what changes it.
-func TestAnAdapterRollsOutAndAMisclassedInstanceDoesNot(t *testing.T) {
+func TestAnAgentBridgeRollsOutAndAMisclassedInstanceDoesNot(t *testing.T) {
 	h := startDigestHarness(t, materialised(t, toolsBundle), "")
-	h.comp.Spec.Class = gentianov1alpha1.ComponentClassAdapter
+	h.comp.Spec.Class = gentianov1alpha1.ComponentClassBridge
 	if err := h.c.Update(context.Background(), h.comp); err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +199,7 @@ func TestAnAdapterRollsOutAndAMisclassedInstanceDoesNot(t *testing.T) {
 		t.Fatalf("condition = %+v, want %s", ready, reasonClassMismatch)
 	}
 	if h.releasedVersion() != "" || h.networkPolicyWritten() {
-		t.Fatalf("an adapter rolled out as an app: release %q, network policy %v",
+		t.Fatalf("a bridge rolled out as an app: release %q, network policy %v",
 			h.releasedVersion(), h.networkPolicyWritten())
 	}
 }

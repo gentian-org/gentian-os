@@ -549,3 +549,48 @@ func TestWhoHoldsWhatIsReadUnderTheObjectsReadRelation(t *testing.T) {
 		t.Errorf("an unreadable store: %d, want 502", code)
 	}
 }
+
+// The door's ways are offered to a person for the apps they may use, and a
+// door of another tenant is not this tenant's.
+func TestTheDoorOffersTheWaysToAppsTheCallerMayUse(t *testing.T) {
+	body, err := tilecatalogue.Marshal(tilecatalogue.Catalogue{Doors: []tilecatalogue.Door{
+		{Tenant: "acme", Host: "sync.acme.k.example", Ways: []tilecatalogue.DoorWay{
+			{Bridge: "nextcloud-sync-ce", Name: "calendars", Protocol: "caldav", App: "nextcloud-base-ce", Object: "app:acme/nextcloud-base-ce"},
+			{Bridge: "nextcloud-sync-ce", Name: "files", Protocol: "webdav", App: "nextcloud-base-ce", Object: "app:acme/nextcloud-base-ce"},
+			{Bridge: "odoo-sync", Name: "contacts", Protocol: "carddav", App: "odoo", Object: "app:acme/odoo"},
+			// Named for another tenant's app: never this door's to offer.
+			{Bridge: "x", Name: "stray", Protocol: "webdav", App: "notes", Object: "app:other/notes"},
+		}},
+		{Tenant: "other", Host: "sync.other.k.example", Ways: []tilecatalogue.DoorWay{
+			{Bridge: "y", Name: "files", Protocol: "webdav", App: "notes", Object: "app:other/notes"},
+		}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "tiles.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{held: map[string]bool{
+		"user:mel can_enter tenant:acme":              true,
+		"user:mel can_use app:acme/nextcloud-base-ce": true,
+		"user:mel can_use app:other/notes":            true,
+		"user:solo can_enter tenant:acme":             true,
+	}}
+	s := New(Config{Authn: fakeAuthn{"mel": "mel", "solo": "solo"}, Authz: store, TilesPath: path})
+
+	status, got := ask(t, s, "/v1/tenants/acme/door", "mel")
+	ways, _ := got["ways"].([]any)
+	if status != http.StatusOK || got["host"] != "sync.acme.k.example" || len(ways) != 2 {
+		t.Fatalf("mel: %d %v", status, got)
+	}
+	for _, w := range ways {
+		if m, _ := w.(map[string]any); m["app"] != "nextcloud-base-ce" || m["object"] != nil {
+			t.Fatalf("offered %v", m)
+		}
+	}
+	if _, got := ask(t, s, "/v1/tenants/acme/door", "solo"); len(got["ways"].([]any)) != 0 {
+		t.Fatalf("somebody who may use no app is offered %v", got["ways"])
+	}
+}

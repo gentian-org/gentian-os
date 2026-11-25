@@ -122,6 +122,8 @@ spec:
               value: {{ .Values.bouncer.pollInterval | quote }}
             - name: BOUNCER_AUDIENCE
               value: {{ .Values.director.audience | quote }}
+            - name: BOUNCER_KERNEL_REALM
+              value: {{ .Values.kernelRealm | default "kernel" | quote }}
             - name: DIRECTOR_ISSUER_BASE_URL
               value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
             - name: DIRECTOR_JWKS_BASE_URL
@@ -139,7 +141,7 @@ spec:
             {{- end }}
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: health
             initialDelaySeconds: 2
             periodSeconds: 5

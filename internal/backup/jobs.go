@@ -640,8 +640,14 @@ func nodeSelectorFor(node string) map[string]string {
 	return map[string]string{corev1.LabelHostname: node}
 }
 
+// RunJobTTLSeconds is how long a finished Job of an export or a restore is
+// kept. A run records a unit done when a pass sees its Job complete; the
+// Job outliving the busiest operator's queue is what makes that certain.
+// The run removes its Jobs when it is deleted.
+const RunJobTTLSeconds int32 = 6 * 60 * 60
+
 func newJob(p JobParams, containers, initContainers []corev1.Container, extraVolumes []corev1.Volume) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
+	ttl := RunJobTTLSeconds
 	backoff := p.BackoffLimit
 
 	volumes := extraVolumes

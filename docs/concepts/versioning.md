@@ -97,8 +97,8 @@ minor too, where the index says it is applied in place; the commits name
 `policy:autoUpgrade`. A release the mode does not take stays `pending`, on
 the status, in the console and in `kubectl gentian release show`, until a
 person sets it, and the cluster's administrators are told once: a notice in
-the platform tenant's console, and a mail to the members of the platform
-admin group through the platform's own mail settings
+the platform tenant's console, and a mail to the cluster's administrators the Cluster claim names
+(`spec.platformAccess.roleHolders`, role `admin`) through the platform's own mail settings
 (`keycloak-smtp-credentials`), sent by the operator on the director's behalf
 (`POST /v1/actions/notify-administrators`). A move the mover made is
 announced the same way. The director names only the event and the
@@ -183,7 +183,9 @@ next upstream release breaks; `latest` does not walk past it.
 
 `latest` moves apps inside a window set on the `Cluster` claim
 (`spec.catalogue.updates.window`: a daily `start` and `end` in a `timezone`;
-absent, any time). The mover runs inside the director every five minutes and
+absent, any time). The mover runs inside the director every five minutes
+(`director.updaterEvery` in the chart; a development cluster that follows a
+develop channel shortens it) and
 reads the update report (§4.2); nothing is stored between runs, so what it
 acts on is what a person reads. Within the window it moves one tenant first,
 waits for that move to verify (§5), then the rest in batches of five per run.
@@ -224,10 +226,20 @@ and the operator carries the move out (`internal/controller/component_move.go`):
 2. **Export** the app's data to the platform's own storage, as a manual
    export of that app; the instance keeps running the build it ran until the
    export is ready, and an export that fails ends the move with nothing
-   changed.
+   changed. What is exported is the tenant's backup policy's
+   `spec.beforeMove`: `app` (the default) exports the app alone and holds
+   only the app, so moves of other apps run beside it; `tenant` adds the
+   tenant's own (its realm, its desktop's database, its mailboxes) and holds
+   the whole tenant; `none` exports nothing, and the last backup is what
+   there is to go back to. An app that holds no data (no database, no
+   bucket, no volume, in the build it runs or the one it moves to) is never
+   exported: its move starts at step 3.
 3. **Materialize** the new build beside the old one and repoint the
    `Component`.
-4. **Verify**: wait for the release, run the profile's
+4. **Verify**: wait for the release to deploy the new build (a later Helm
+   revision than the one it ran: provider-helm's conditions still report the
+   revision before as ready right after the change) and for the app's
+   workloads to roll out to it, then run the profile's
    `spec.backup.restore.verify` command in the app's pod. A build that does
    not come up within fifteen minutes, or does not verify, is rolled back:
    the instance is rendered from the build it ran, which the cluster still

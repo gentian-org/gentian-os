@@ -66,7 +66,7 @@ American English: catalog, organization, license, color. An identifier keeps
 its spelling, as in `kubectl gentian catalogues`. Plain, factual sentences;
 no marketing. People are "they". The platform components are named as the
 code names them: the Gateway, the bouncer, the director, the operator, the
-registrar, the custodian, the usher, the arbiter, the concierge.
+registrar, the custodian, the confidant, the usher, the arbiter, the concierge.
 
 ## 6. What stays out
 

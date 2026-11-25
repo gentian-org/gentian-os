@@ -221,4 +221,70 @@ check "operator: no image tag refuses to render" \
 check "operator: the tag the installer resolved is the image" \
     "$(has "$(render false true false)" 'tag: "develop-abc1234"' && echo 1 || echo 0)"
 
+# The home sync is on, and its chart is left to follow the image the
+# gentian-os chart runs: Image Updater moves image.tag, not this pin.
+check "homesync: on, with no pinned chart" \
+    "$(r="$(render false true false)"; has "$r" 'homesync:' && ! has "$r" '0.1.0-develop.abc1234' && echo 1 || echo 0)"
+
+# In the gentian-os chart, the home sync's chart follows image.tag: a
+# commit's chart, or a release's.
+hs() { helm template x charts/gentian-os --set homesync.enabled=true "$@" \
+    --show-only templates/componentprofile-homesync.yaml 2>&1; }
+check "homesync: a commit's image pins that commit's chart" \
+    "$(has "$(hs --set-string image.tag=develop-abc1234)" 'version: "0.1.0-develop.abc1234"' && echo 1 || echo 0)"
+check "homesync: a release's image pins that release's chart" \
+    "$(has "$(hs --set-string image.tag=0.5.2)" 'version: "0.1.0-v0.5.2"' && echo 1 || echo 0)"
+
+# The porter is placed and published as the home sync is.
+check "porter: on, with no pinned chart" \
+    "$(r="$(render false true false)"; has "$r" 'porter:' && echo 1 || echo 0)"
+po() { helm template x charts/gentian-os --set porter.enabled=true "$@" \
+    --show-only templates/componentprofile-porter.yaml 2>&1; }
+check "porter: a commit's image pins that commit's chart" \
+    "$(has "$(po --set-string image.tag=develop-abc1234)" 'version: "0.1.0-develop.abc1234"' && echo 1 || echo 0)"
+check "porter: a release's image pins that release's chart" \
+    "$(has "$(po --set-string image.tag=0.5.2)" 'version: "0.1.0-v0.5.2"' && echo 1 || echo 0)"
+
+# The liaison is shipped and published as the home sync is, and placed
+# nowhere: an app that comes with it brings it.
+check "liaison: on, with no pinned chart" \
+    "$(r="$(render false true false)"; has "$r" 'liaison:' && echo 1 || echo 0)"
+li() { helm template x charts/gentian-os --set liaison.enabled=true "$@" \
+    --show-only templates/componentprofile-liaison.yaml 2>&1; }
+check "liaison: a commit's image pins that commit's chart" \
+    "$(has "$(li --set-string image.tag=develop-abc1234)" 'version: "0.1.0-develop.abc1234"' && echo 1 || echo 0)"
+check "liaison: a release's image pins that release's chart" \
+    "$(has "$(li --set-string image.tag=0.5.2)" 'version: "0.1.0-v0.5.2"' && echo 1 || echo 0)"
+check "liaison: placed in no tenant" \
+    "$(has "$(li)" 'placement:' && echo 0 || echo 1)"
+
+# A self-hosted zone (rfc2136: BIND, Knot, PowerDNS). external-dns was handed
+# the provider's name and nothing else -- no server, no zone, no key name, and
+# the key under a variable it does not read -- so it published nothing (#1329).
+# Everything it needs comes from the claim's dnsParams through the provider's
+# entry in kernel/platforms.yaml.
+rfc() { render true true true --set-string dnsProvider=rfc2136 --set-string dnsParams.tsigKeyName=gentian-key \
+    --set-string dnsParams.zone=example.org "$@" 2>&1; }
+rfc_out="$(rfc --set-string dnsParams.nameserver=192.0.2.10 --set 'dnsZones={tenant.example}')"
+for arg in '--rfc2136-host=192.0.2.10' '--rfc2136-port=53' '--rfc2136-zone=example.org' '--rfc2136-zone=tenant.example' \
+    '--rfc2136-tsig-keyname=gentian-key' '--rfc2136-tsig-secret-alg=hmac-sha512' '--rfc2136-axfr'; do
+    check "rfc2136: external-dns is started with ${arg}" \
+        "$(grep -qF -- "- \"${arg}\"" <<<"${rfc_out}" && echo 1 || echo 0)"
+done
+check "rfc2136: the key reaches external-dns under the variable it reads" \
+    "$(has "${rfc_out}" 'name: EXTERNAL_DNS_RFC2136_TSIG_SECRET$' && echo 1 || echo 0)"
+rfc_port="$(rfc --set-string 'dnsParams.nameserver=[2001:db8::1]:5353' --set-string dnsParams.tsigAlgorithm=HMACSHA256)"
+check "rfc2136: an address with a port is taken apart, and the algorithm respelled" \
+    "$(grep -qF -- '--rfc2136-host=2001:db8::1"' <<<"${rfc_port}" && grep -qF -- '--rfc2136-port=5353"' <<<"${rfc_port}" \
+        && grep -qF -- '--rfc2136-tsig-secret-alg=hmac-sha256"' <<<"${rfc_port}" && echo 1 || echo 0)"
+check "rfc2136: no zone named stops the render, naming it" \
+    "$(has "$(render true true true --set-string dnsProvider=rfc2136 --set-string dnsParams.tsigKeyName=k \
+        --set-string dnsParams.nameserver=192.0.2.10 2>&1)" 'requires dnsParams\.zone' && echo 1 || echo 0)"
+check "rfc2136: a nameserver by name stops the render (cert-manager takes an address)" \
+    "$(has "$(rfc --set-string dnsParams.nameserver=ns1.example.org)" 'dnsParams\.nameserver is "ns1\.example\.org", which does not match' && echo 1 || echo 0)"
+check "rfc2136: an algorithm only one of the two speaks stops the render" \
+    "$(has "$(rfc --set-string dnsParams.nameserver=192.0.2.10 --set-string dnsParams.tsigAlgorithm=HMACSHA384)" 'dnsParams\.tsigAlgorithm' && echo 1 || echo 0)"
+check "cloudflare: no provider arguments are added" \
+    "$(has "$(render true true true --set-string dnsProvider=cloudflare)" 'rfc2136' && echo 0 || echo 1)"
+
 finish

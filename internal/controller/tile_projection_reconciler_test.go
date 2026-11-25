@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -43,6 +44,12 @@ func tileFixtureRoute(name, namespace, host string) *gatewayv1.HTTPRoute {
 // wrote, parsed the way the director parses it.
 func project(t *testing.T, objs ...client.Object) []tilecatalogue.Tile {
 	t.Helper()
+	return projectCatalogue(t, objs...).Tiles
+}
+
+// projectCatalogue is project, with everything the catalog holds.
+func projectCatalogue(t *testing.T, objs ...client.Object) tilecatalogue.Catalogue {
+	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
@@ -68,7 +75,34 @@ func project(t *testing.T, objs ...client.Object) []tilecatalogue.Tile {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return catalogue.Tiles
+	return catalogue
+}
+
+// A tenant's door lists the ways its bridges' routes serve, and no other:
+// a bridge whose route is not there, or a way not approved, is not offered.
+func TestTheDoorListsTheWaysItsRoutesServe(t *testing.T) {
+	tenant := tileFixtureTenant("demo")
+	profile := bridgeProfile("nextcloud-sync-ce", "nextcloud-base-ce",
+		deviceWay("files", gentianov1alpha1.BridgeProtocolWebDAV, "/remote.php/dav/files/"),
+		deviceWay("calendars", gentianov1alpha1.BridgeProtocolCalDAV, "/remote.php/dav/calendars/"),
+	)
+	comp := tileFixtureComponent("nextcloud-sync-ce", "tenant-demo", "nextcloud-sync-ce")
+	route := tileFixtureRoute("nextcloud-sync-ce-bridge", "tenant-demo", "sync.demo.k.example")
+	route.Annotations = map[string]string{
+		bouncerDoorPathsAnnotation: "/remote.php/dav/calendars",
+		bouncerDoorWaysAnnotation:  "/remote.php/dav/calendars=calendars",
+		bouncerObjectAnnotation:    "app:demo/nextcloud-base-ce",
+	}
+	if got := projectCatalogue(t, tenant, comp, profile).Doors; len(got) != 0 {
+		t.Fatalf("a bridge with no route: %+v", got)
+	}
+	got := projectCatalogue(t, tenant, comp, profile, route).Doors
+	want := []tilecatalogue.Door{{Tenant: "demo", Host: "sync.demo.k.example", Ways: []tilecatalogue.DoorWay{
+		{Bridge: "nextcloud-sync-ce", Name: "calendars", Protocol: "caldav", App: "nextcloud-base-ce", Object: "app:demo/nextcloud-base-ce"},
+	}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("doors %+v, want %+v", got, want)
+	}
 }
 
 func tileNames(got []tilecatalogue.Tile) []string {

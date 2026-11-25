@@ -22,6 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -1504,5 +1505,82 @@ func TestRestartAppWorkloadsLeavesOtherAppsAlone(t *testing.T) {
 	other := getDeployment(t, r.Client, "docmost")
 	if _, stamped := other.Spec.Template.Annotations[restartWorkloadAnnotation]; stamped {
 		t.Error("restoring one app rolled another app's pods")
+	}
+}
+
+func componentOf(app string, annotations map[string]string) *gentianov1alpha1.Component {
+	return &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{
+		Name: app, Namespace: "tenant-demo", Annotations: annotations,
+	}}
+}
+
+// An action installs nothing that runs, and an app whose release was never
+// rendered has nothing running either: neither has anything to pause, and a
+// backup of its tenant goes on with it captured as it stands, not failed.
+func TestAnAppThePlatformDeploysNothingForIsCapturedWithoutAPause(t *testing.T) {
+	ctx := context.Background()
+	for name, comp := range map[string]*gentianov1alpha1.Component{
+		"an action":                componentOf("notify-me", nil),
+		"a release never rendered": componentOf("notify-me", map[string]string{renderedAnnotation: `["group.keycloak.crossplane.io/v1alpha1|Group||g"]`}),
+		"an empty inventory":       componentOf("notify-me", map[string]string{renderedAnnotation: `[]`}),
+	} {
+		r := quiesceReconciler(comp)
+		mode, err := r.quiesceApp(ctx, "demo", "notify-me", nil)
+		if err != nil {
+			t.Fatalf("%s: quiesceApp: %v", name, err)
+		}
+		if mode != gentianov1alpha1.BackupQuiesceNone {
+			t.Errorf("%s: mode = %q, want none", name, mode)
+		}
+		if err := r.unquiesceApp(ctx, "demo", "notify-me", nil, mode); err != nil {
+			t.Errorf("%s: resume: %v", name, err)
+		}
+	}
+}
+
+// The refusal stays wherever something of the app may run unseen: its release
+// was rendered or taken over and exists, its inventory cannot be read, or there
+// is no Component to ask.
+func TestAPauseThatFindsNoWorkloadIsStillRefusedWhereTheAppMayRun(t *testing.T) {
+	ctx := context.Background()
+	release := `["helm.crossplane.io/v1beta1|Release||tenant-demo-notify-me"]`
+	live := liveRelease("tenant-demo-notify-me")
+	for name, objs := range map[string][]client.Object{
+		"a rendered release":   {componentOf("notify-me", map[string]string{renderedAnnotation: release}), live},
+		"a taken-over release": {componentOf("notify-me", map[string]string{takenAnnotation: release}), live},
+		"an unreadable list":   {componentOf("notify-me", map[string]string{renderedAnnotation: "not json"})},
+		"no component":         nil,
+	} {
+		r := quiesceReconciler(objs...)
+		_, err := r.quiesceApp(ctx, "demo", "notify-me", nil)
+		if !errors.Is(err, errNoWorkload) {
+			t.Errorf("%s: err = %v, want the refusal", name, err)
+		}
+	}
+}
+
+// liveRelease is a provider-helm Release as it stands on the cluster.
+func liveRelease(name string) *unstructured.Unstructured {
+	r := &unstructured.Unstructured{}
+	r.SetGroupVersionKind(helmReleaseGVK)
+	r.SetName(name)
+	return r
+}
+
+// The inventory records what is about to be written. A component held back on
+// values it waits for named its release and never created it: nothing of the
+// app runs, so a tenant's backup captures it unpaused instead of failing on it.
+func TestAnAppWhoseReleaseWasNeverCreatedIsCapturedWithoutAPause(t *testing.T) {
+	ctx := context.Background()
+	comp := componentOf("audit", map[string]string{
+		renderedAnnotation: `["external-secrets.io/v1|ExternalSecret|kernel-control|credreq","helm.crossplane.io/v1beta1|Release||tenant-demo-audit"]`,
+	})
+	r := quiesceReconciler(comp)
+	mode, err := r.quiesceApp(ctx, "demo", "audit", nil)
+	if err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+	if mode != gentianov1alpha1.BackupQuiesceNone {
+		t.Errorf("mode = %q, want none", mode)
 	}
 }

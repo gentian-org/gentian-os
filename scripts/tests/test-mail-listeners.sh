@@ -18,9 +18,9 @@ echo ""
 echo "mail edge: the ports its load balancer serves"
 echo ""
 
-ports() { python3 scripts/tests/mail_listeners.py ports --set mailServiceMode=system "$@" 2>&1; }
+ports() { python3 scripts/tests/mail_listeners.py ports --set mailServiceMode=internal "$@" 2>&1; }
 
-out="$(ports --set mailServiceMode=system)"
+out="$(ports --set mailServiceMode=internal)"
 check "a claim that names no listeners: 25, 587 and 993, as before the setting" '[[ "${out}" == "25 587 993" ]]' "${out}"
 
 out="$(ports --set-string mailSubmission= --set-string mailImaps=)"
@@ -67,10 +67,10 @@ fields() {
     env -i HOME="${SANDBOX}" PATH="${PATH}" SCRIPT_DIR="$(pwd)" "$@" \
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; trap - ERR; set +e; _claim_cluster_fields' 2>&1
 }
-out="$(fields MAIL_SERVICE_MODE=system NETWORK_MODE=static-ip)"
+out="$(fields MAIL_SERVICE_MODE=internal NETWORK_MODE=static-ip)"
 check "a new claim with its own mail states submission: false and imaps: false" \
     'grep -A2 "^    listeners:$" <<<"${out}" | grep -q "^      submission: false" && grep -A2 "^    listeners:$" <<<"${out}" | grep -q "^      imaps: false"' "${out}"
-out="$(fields MAIL_SERVICE_MODE=external)"
+out="$(fields MAIL_SERVICE_MODE=relay)"
 check "a new claim that relays names no listeners" '! grep -q "listeners:" <<<"${out}"' "${out}"
 
 finish

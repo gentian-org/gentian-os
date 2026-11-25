@@ -45,6 +45,14 @@ const (
 // It waits for Crossplane-owned Jobs in the kernel namespace that call the
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
 func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	return r.ensureIdentityFor(ctx, tenant, nil)
+}
+
+// ensureIdentityFor is ensureIdentity recording in waits the apps whose
+// client is not made yet, instead of ending at the first of them: their
+// clients hold back those apps only, and the realm's mail is set up while
+// they wait. With nil waits it ends at a pending client, as ensureIdentity.
+func (r *TenantReconciler) ensureIdentityFor(ctx context.Context, tenant *gentianov1alpha1.Tenant, waits appWaits) (ctrl.Result, error) {
 	realmName := keycloakRealmName(tenant)
 	if r.adoptsKernelRealm(tenant) {
 		return r.ensureAdoptedRealmIdentity(ctx, tenant)
@@ -119,6 +127,7 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !done {
 			allDone = false
 			pendingClientJobs = append(pendingClientJobs, clientJobName(tenant.Name, cfg.profileName))
+			waits.add(cfg.profileName, "its sign-in client")
 		}
 	}
 
@@ -130,13 +139,17 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		if !done {
 			allDone = false
 			pendingClientJobs = append(pendingClientJobs, clientJobName(tenant.Name, cfg.profileName))
+			waits.add(cfg.profileName, "its sign-in client")
 		}
 	}
 
-	if !allDone {
+	clientsPending := func() (ctrl.Result, error) {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
 			"ProvisioningClients", "Waiting for OIDC/SAML client Jobs to complete")
 		return r.requeueForPendingJob(ctx, tenant.Name, pendingClientJobs...), nil
+	}
+	if !allDone && waits == nil {
+		return clientsPending()
 	}
 
 	if r.KernelRealm != "" {
@@ -156,6 +169,10 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 				"ProvisioningTenantSMTP", "Waiting for tenant realm SMTP Job to complete")
 			return r.requeueForPendingJob(ctx, tenant.Name, tenantSMTPJobName(tenant.Name)), nil
 		}
+	}
+
+	if !allDone {
+		return clientsPending()
 	}
 
 	if r.reportRefusedOIDCClients(ctx, tenant, refused) {
@@ -356,7 +373,6 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, username string) *
 		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: username},
 		corev1.EnvVar{Name: "TENANT_ADMIN_REQUIRE_MFA", Value: requireMFA},
 		corev1.EnvVar{Name: "TENANT_SIGN_UP", Value: strconv.FormatBool(tenant.SignUpEnabled())},
-		corev1.EnvVar{Name: "TENANT_ADMINS_GROUP", Value: gentianTenantAdminsGroup(tenant.Name)},
 	)
 	return newKeycloakJob(adminJobName(tenant.Name), tenant, "", container)
 }
@@ -614,29 +630,10 @@ else
     "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/role-mappings/clients/${MGMT_CLIENT_ID}" \
     -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${ROLE_NAME}\"}]"
   echo "realm-admin role granted"
-fi
-
-# --- 4. Assign gentian:tenant:<t>:admins group membership ---
-GROUP_LIST=$(kc_curl -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/groups?search=${TENANT_ADMINS_GROUP}&exact=true")
-keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${TENANT_ADMINS_GROUP}"
-ADMINS_GROUP_ID="${_kj_id}"
-if [ -z "${ADMINS_GROUP_ID}" ]; then
-  echo "ERROR: tenant admins group ${TENANT_ADMINS_GROUP} not found in realm %s" >&2
-  exit 1
-fi
-MEMBER_GROUPS=$(kc_curl -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups")
-if echo "${MEMBER_GROUPS}" | grep -q "\"name\":\"${TENANT_ADMINS_GROUP}\""; then
-  echo "tenant admin already in group ${TENANT_ADMINS_GROUP}"
-else
-  kc_curl -X PUT -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/%s/users/${UID}/groups/${ADMINS_GROUP_ID}"
-  echo "tenant admin joined group ${TENANT_ADMINS_GROUP}"
 fi`,
 		realmName, realmName, realmName, realmName, realmName,
 		realmName, realmName, realmName, realmName, realmName,
-		realmName, realmName, realmName, realmName, realmName, realmName)
+		realmName, realmName)
 }
 
 // buildRealmDeleteScript deletes the tenant's realm, and with it every

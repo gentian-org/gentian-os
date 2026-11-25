@@ -19,7 +19,9 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -55,9 +57,10 @@ func TestTheManifestIsTheInventorys(t *testing.T) {
 }
 
 // Every kernel namespace has one policy that selects every pod, which is
-// what refuses an ingress nothing lists. No policy says anything of egress,
-// none is in a namespace that is not a kernel one, and the mail namespaces
-// in particular carry none of these.
+// what refuses an ingress nothing lists. Every policy but kernel-egress is
+// ingress only, so that none of them gives a pod egress semantics; none is
+// in a namespace that is not a kernel one, and the mail namespaces in
+// particular carry none of these.
 func TestEveryKernelNamespaceRefusesByDefault(t *testing.T) {
 	inv := load(t)
 	policies := inv.Policies()
@@ -69,8 +72,11 @@ func TestEveryKernelNamespaceRefusesByDefault(t *testing.T) {
 		if _, ok := kernel[p.Namespace]; !ok {
 			t.Errorf("%s/%s: not a kernel namespace", p.Namespace, p.Name)
 		}
+		if p.Name == EgressPolicyName {
+			continue // TestClusterEgressStaysInTheCluster
+		}
 		if len(p.Spec.PolicyTypes) != 1 || p.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
-			t.Errorf("%s/%s: policyTypes %v; these rules are ingress only", p.Namespace, p.Name, p.Spec.PolicyTypes)
+			t.Errorf("%s/%s: policyTypes %v; only %s restricts egress", p.Namespace, p.Name, p.Spec.PolicyTypes, EgressPolicyName)
 		}
 		if len(p.Spec.Egress) != 0 {
 			t.Errorf("%s/%s restricts egress", p.Namespace, p.Name)
@@ -191,7 +197,12 @@ var (
 	chart = func(component string) map[string]string {
 		return map[string]string{"app.kubernetes.io/name": "gentian-os", "app.kubernetes.io/instance": "gentian-os", "app.kubernetes.io/component": component}
 	}
-	envoyPod    = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway"}
+	envoyPod = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy"}
+	// A proxy pod of the fleet for outgoing connections: the label
+	// every proxy pod has, and not the inbound class.
+	otherFleet = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy-out"}
+	// A proxy pod of the fleet for inside entries.
+	insideFleet = map[string]string{"app.kubernetes.io/name": "envoy", "app.kubernetes.io/component": "proxy", "app.kubernetes.io/managed-by": "envoy-gateway", "gateway.envoyproxy.io/owning-gatewayclass": "gentian-envoy-inside"}
 	openfgaPod  = map[string]string{"app.kubernetes.io/name": "openfga", "app.kubernetes.io/instance": "gentian-openfga"}
 	openbaoPod  = map[string]string{"app.kubernetes.io/name": "openbao", "app.kubernetes.io/instance": "openbao"}
 	transitPod  = map[string]string{"app.kubernetes.io/name": "openbao", "app.kubernetes.io/instance": "openbao-transit"}
@@ -216,6 +227,9 @@ func TestTheFlowsAClusterNeeds(t *testing.T) {
 	}{
 		{"Envoy asks the bouncer", at("kernel-edge", envoyPod), at("kernel-edge", chart("bouncer")), 9001},
 		{"Envoy fetches its configuration", at("kernel-edge", envoyPod), at("kernel-edge", map[string]string{"control-plane": "envoy-gateway"}), 18000},
+		{"the outgoing fleet fetches its configuration", at("kernel-edge", otherFleet), at("kernel-edge", map[string]string{"control-plane": "envoy-gateway"}), 18000},
+		{"the inside fleet fetches its configuration", at("kernel-edge", insideFleet), at("kernel-edge", map[string]string{"control-plane": "envoy-gateway"}), 18000},
+		{"a component calls an inside entry", tenantApp, at("kernel-edge", insideFleet), 10443},
 		{"the bouncer asks OpenFGA", at("kernel-edge", chart("bouncer")), at("kernel-authorization", openfgaPod), 8080},
 		{"the bouncer reads Keycloak's keys", at("kernel-edge", chart("bouncer")), at("kernel-authentication", keycloakPod), 8080},
 		{"Envoy routes id.<kernel> to Keycloak", at("kernel-edge", envoyPod), at("kernel-authentication", keycloakPod), 8080},
@@ -308,6 +322,15 @@ func TestWhatIsRefused(t *testing.T) {
 		{"the administration console reaches the operator on the registrar's port", adminConsole, at("kernel-control", chart("operator")), 9445},
 		{"a component reaches cert-manager on the rights check's port", tenantApp, certManager, 8082},
 		{"Envoy reaches cert-manager on the bouncer's port", at("kernel-edge", envoyPod), certManager, 9001},
+		// The edge is the inbound fleet. Another fleet in the edge namespace
+		// is admitted nowhere the edge is, and takes no connection as it.
+		{"another fleet asks the bouncer", at("kernel-edge", otherFleet), at("kernel-edge", chart("bouncer")), 9001},
+		{"another fleet reaches Keycloak", at("kernel-edge", otherFleet), at("kernel-authentication", keycloakPod), 8080},
+		{"another fleet reaches headlamp", at("kernel-edge", otherFleet), at("kernel-observability", map[string]string{"app.kubernetes.io/name": "headlamp"}), 4466},
+		{"a component reaches another fleet as a public listener", tenantApp, at("kernel-edge", otherFleet), 10443},
+		{"the inside fleet asks the bouncer", at("kernel-edge", insideFleet), at("kernel-edge", chart("bouncer")), 9001},
+		{"a pod outside the layout calls an inside entry", at("default", map[string]string{"app": "x"}), at("kernel-edge", insideFleet), 10443},
+		{"a component reaches the inside fleet's metrics", tenantApp, at("kernel-edge", insideFleet), 19001},
 	} {
 		if admitted(policies, f.src, f.dst, f.port) {
 			t.Errorf("admitted: %s (%s -> %s:%d)", f.what, f.src.namespace, f.dst.namespace, f.port)
@@ -376,6 +399,7 @@ type kernelAddress struct {
 // says so here, and the inventory must admit it.
 var inClusterAddressFiles = map[string][]kernelAddress{
 	"charts/gentian-os/templates/bouncer.yaml":    {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}},
+	"charts/gentian-os/templates/confidant.yaml":  {{"kernel-authentication", 8080}, {"kernel-secrets", 8200}},
 	"charts/gentian-os/templates/custodian.yaml":  {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}, {"kernel-secrets", 8200}},
 	"charts/gentian-os/templates/deployment.yaml": {{"kernel-authorization", 8080}, {"kernel-secrets", 8200}, {"kernel-authentication", 8080}},
 	"charts/gentian-os/templates/director.yaml":   {{"kernel-authentication", 8080}, {"kernel-authorization", 8080}, {"kernel-control", 8082}},
@@ -424,7 +448,8 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/controller/keycloak_tenant_smtp.go": {},
 	"internal/controller/mail_reconciler.go":      {{"kernel-authentication", 8080}},
 	// The address of the bouncer's rights check, handed to a component.
-	"internal/controller/rights_check.go": {{"kernel-edge", 8082}},
+	"internal/controller/person_secrets.go": {{"kernel-control", 9446}},
+	"internal/controller/rights_check.go":   {{"kernel-edge", 8082}},
 	// The arbiter's address, handed to a component: a system namespace.
 	"internal/controller/authorization_service.go": {},
 	// A run's way back to the component that started it, in its tenant.
@@ -447,6 +472,9 @@ var inClusterAddressFiles = map[string][]kernelAddress{
 	"internal/director/catalogue/address.go": {},
 	// The model gateway, in a system namespace.
 	"internal/modelgateway/modelgateway.go": {},
+	// Recognizes a name inside a cluster, to refuse it as a host outside;
+	// dials none.
+	"internal/egress/egress.go": {},
 }
 
 var inClusterAddress = regexp.MustCompile(`\.svc(\.cluster\.local)?\b`)
@@ -523,5 +551,118 @@ func TestTheEnvoyPeerIsTheBaselines(t *testing.T) {
 		if got.PodLabels[k] != v {
 			t.Fatalf("peer envoy is %v, the baseline's is %v", got.PodLabels, want)
 		}
+	}
+}
+
+// withAPIServer is the policies as the installer applies them on a cluster
+// whose API server is at cidr and port: the placeholders replaced.
+func withAPIServer(policies []*networkingv1.NetworkPolicy, cidr string, port int32) []*networkingv1.NetworkPolicy {
+	var out []*networkingv1.NetworkPolicy
+	for _, p := range policies {
+		p = p.DeepCopy()
+		for i, rule := range p.Spec.Egress {
+			for j, to := range rule.To {
+				if to.IPBlock != nil && to.IPBlock.CIDR == APIServerCIDR {
+					p.Spec.Egress[i].To[j].IPBlock.CIDR = cidr
+				}
+			}
+			for j, pp := range rule.Ports {
+				if pp.Port != nil && pp.Port.Type == intstr.String && pp.Port.StrVal == APIServerPort {
+					v := intstr.FromInt32(port)
+					p.Spec.Egress[i].Ports[j].Port = &v
+				}
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// A namespace whose egress is "cluster" reaches every pod of the cluster, the
+// private ranges, DNS and the API server, and nothing public; a namespace
+// whose egress is "open" has no egress policy and reaches everything.
+func TestClusterEgressStaysInTheCluster(t *testing.T) {
+	inv := load(t)
+	generated := inv.Policies()
+	tcp, udp := corev1.ProtocolTCP, corev1.ProtocolUDP
+	cluster := 0
+	for _, ns := range inv.Namespaces {
+		var own []*networkingv1.NetworkPolicy
+		for _, p := range generated {
+			if p.Namespace == ns.Name && p.Name == EgressPolicyName {
+				own = append(own, p)
+			}
+		}
+		src := at(ns.Name, map[string]string{"app": "any"})
+		if ns.Egress == EgressOpen {
+			if len(own) != 0 {
+				t.Errorf("%s: egress open, and has %s", ns.Name, EgressPolicyName)
+			}
+			if !egressAdmitted(generated, src, address("1.1.1.1"), 443, tcp) {
+				t.Errorf("%s: egress open, and the internet is refused", ns.Name)
+			}
+			continue
+		}
+		cluster++
+		if len(own) != 1 {
+			t.Fatalf("%s: egress cluster, and %d %s policies", ns.Name, len(own), EgressPolicyName)
+		}
+		p := own[0]
+		if len(p.Spec.PodSelector.MatchLabels)+len(p.Spec.PodSelector.MatchExpressions) != 0 {
+			t.Errorf("%s/%s does not select every pod", ns.Name, p.Name)
+		}
+		if len(p.Spec.PolicyTypes) != 1 || p.Spec.PolicyTypes[0] != networkingv1.PolicyTypeEgress {
+			t.Errorf("%s/%s: policyTypes %v; it says nothing of ingress", ns.Name, p.Name, p.Spec.PolicyTypes)
+		}
+		placeholder := 0
+		for _, rule := range p.Spec.Egress {
+			for _, to := range rule.To {
+				if to.IPBlock != nil && to.IPBlock.CIDR == APIServerCIDR {
+					placeholder++
+				}
+			}
+		}
+		if placeholder != 1 {
+			t.Errorf("%s/%s: %d API server placeholders, not one", ns.Name, p.Name, placeholder)
+		}
+
+		// As applied on a cluster whose API server is a public address.
+		applied := withAPIServer(generated, "83.166.143.133/32", 31099)
+		for _, c := range []struct {
+			what  string
+			dst   destination
+			port  int32
+			proto corev1.Protocol
+			want  bool
+		}{
+			{"a pod of a tenant", toPod(at("tenant-acme", nil)), 8080, tcp, true},
+			{"a pod of another kernel namespace", toPod(at("kernel-control", nil)), 9443, tcp, true},
+			{"a pod of its own namespace", toPod(at(ns.Name, nil)), 5432, tcp, true},
+			{"a Service address", address("10.96.0.1"), 443, tcp, true},
+			{"a node's address", address("172.21.0.128"), 10250, tcp, true},
+			{"a home network's address", address("192.168.0.100"), 16443, tcp, true},
+			{"the shared address space", address("100.64.3.4"), 443, tcp, true},
+			{"a node-local DNS cache", address("169.254.20.10"), 53, udp, true},
+			{"a node-local DNS cache over TCP", address("169.254.20.10"), 53, tcp, true},
+			{"the API server", address("83.166.143.133"), 31099, tcp, true},
+			{"the API server's address on another port", address("83.166.143.133"), 22, tcp, false},
+			{"a public address on the API server's port", address("83.166.143.134"), 31099, tcp, false},
+			{"a public address", address("1.1.1.1"), 443, tcp, false},
+			{"a public resolver", address("8.8.8.8"), 53, udp, false},
+			{"the cloud's metadata service", address("169.254.169.254"), 80, tcp, false},
+			{"a public address over UDP", address("9.9.9.9"), 443, udp, false},
+		} {
+			if got := egressAdmitted(applied, src, c.dst, c.port, c.proto); got != c.want {
+				t.Errorf("%s to %s (%d/%s): admitted %v, want %v", ns.Name, c.what, c.port, c.proto, got, c.want)
+			}
+		}
+		// Before the installer fills it in, the API server's public address
+		// is refused like any other.
+		if egressAdmitted(generated, src, address("83.166.143.133"), 31099, tcp) {
+			t.Errorf("%s: the placeholder admits an address", ns.Name)
+		}
+	}
+	if cluster == 0 {
+		t.Error("no kernel namespace keeps its egress inside the cluster")
 	}
 }

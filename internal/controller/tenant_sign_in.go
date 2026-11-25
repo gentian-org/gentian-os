@@ -21,13 +21,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
 
 // One tenant's people signing in to another of the same cluster.
 //
 // It takes both tenants: the target names the source in spec.signInFrom, with
-// the groups of the target its people are in, and the source names the target
+// the positions of the target its people are given when they arrive
+// (realm_arrivals.go), and the source names the target
 // in spec.signInTo. Only where both say so does anything reach either
 // composite:
 //
@@ -35,15 +35,10 @@ import (
 //     realm signs in with (broker-to-<target>, authenticated by the JWT the
 //     target realm signs, checked against its published keys);
 //   - the target's gets a signInFrom entry: the identity provider
-//     tenant-<source> and one mapper per group.
+//     tenant-<source>.
 //
 // Everything a person could otherwise have mistyped in two consoles follows
 // from the two tenants' names and the kernel domain.
-
-// signInMemberGroup is the one platform group a sign-in may give: the
-// tenant's members, who may enter it (tenant#member). Its administrators and
-// perimeter approvers are never given this way.
-const signInMemberGroup = "members"
 
 // signInAlias is the target realm's identity provider for a source tenant,
 // and the path segment of its broker endpoint.
@@ -55,34 +50,6 @@ func tenantRealmName(t *gentianov1alpha1.Tenant) string {
 		return t.Spec.Isolation.KeycloakRealm
 	}
 	return t.Name
-}
-
-// signInGroupPaths are a sign-in's groups as the target realm's paths, in
-// the order given: members as the tenant's member group, a declared group by
-// its name. A name the target does not declare is left out.
-func signInGroupPaths(target *gentianov1alpha1.Tenant, groups []string) []interface{} {
-	declared := map[string]bool{}
-	for _, g := range target.Spec.Groups {
-		declared[g.Name] = true
-	}
-	var out []interface{}
-	seen := map[string]bool{}
-	for _, g := range groups {
-		var path string
-		switch {
-		case g == signInMemberGroup:
-			path = "/" + keycloak.TenantMembersGroup(target.Name)
-		case declared[g]:
-			path = "/" + g
-		default:
-			continue
-		}
-		if !seen[path] {
-			seen[path] = true
-			out = append(out, path)
-		}
-	}
-	return out
 }
 
 // tenantSignInProjection is what the composite of tenant carries for the
@@ -119,7 +86,6 @@ func (r *TenantReconciler) tenantSignInProjection(ctx context.Context, tenant *g
 			"displayName": display,
 			"realm":       tenantRealmName(source),
 			"clientID":    "broker-to-" + tenant.Name,
-			"groups":      signInGroupPaths(tenant, from.Groups),
 		})
 	}
 	// As the source: each target that names this tenant, and that this one

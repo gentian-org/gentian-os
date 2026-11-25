@@ -75,11 +75,9 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		// In-cluster. The public issuer refuses /admin by design.
 		BaseURL: envvar.Or("REGISTRAR_IDENTITY_BASE_URL", issuer),
 		Source:  identity.NewDirectorySource(realmDir, identity.ClientID),
-		// The groups whose members hold a platform role, and the platform
-		// tenant's people who hold one by name, from the Cluster claim on
-		// every write. The registrar refuses to change any of them or
-		// anybody in one (identity/guard.go).
-		PlatformRoleGroups:  ClaimPlatformRoleGroups(reader),
+		// The platform tenant's people who hold a cluster role by name,
+		// from the Cluster claim on every write. The registrar refuses to
+		// change their accounts (identity/guard.go).
 		PlatformRoleHolders: ClaimPlatformRoleHolders(reader),
 		Logger:              log,
 	})
@@ -123,6 +121,11 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	vouchingKeys := &VouchingKeys{}
 	go vouchingKeys.Follow(ctx, envvar.Or("REGISTRAR_VOUCHING_KEYS", "/etc/gentian/vouching/keys.json"), 5*time.Second, log, VouchingKeysList)
 
+	// The components tenants let give some of their positions, each with the
+	// hash of its own key, written and followed the same way.
+	positionGivers := &PositionGivers{}
+	go positionGivers.Follow(ctx, envvar.Or("REGISTRAR_POSITION_GIVERS", "/etc/gentian/position-givers/keys.json"), 5*time.Second, log, PositionGiversList)
+
 	// The Tenants, and -- for one that is not there -- its Argo CD
 	// Application, which says whether its creation failed.
 	tenants := &ClusterTenants{
@@ -133,6 +136,7 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 	}
 	srv, err := New(Config{
 		Authn:             verifier,
+		Consent:           verifier,
 		Authz:             graph,
 		Tenants:           tenants,
 		Identity:          idClient,
@@ -146,9 +150,11 @@ func NewFromEnvWithMailboxes(ctx context.Context, reader client.Reader, mailboxe
 		// settings templates an invitation may apply live there.
 		DesktopAPI:       os.Getenv("REGISTRAR_DESKTOP_API_URL"),
 		VouchingKeys:     vouchingKeys,
+		PositionGivers:   positionGivers,
 		Invitations:      invitations,
 		InvitationExpiry: invitationExpiry(log),
-		PlatformRoles:    ClaimPlatformRoles(reader),
+		RoleHolders:      ClaimRoleHolders(reader),
+		Rights:           operatorRightsFromEnv(log),
 	})
 	if err != nil {
 		closer()
@@ -217,4 +223,16 @@ func pruneRecord(ctx context.Context, store *record.Store, log *slog.Logger) {
 		case <-time.After(24 * time.Hour):
 		}
 	}
+}
+
+// operatorRightsFromEnv is the way to the operator's listener, which gives
+// and takes what a person holds, or nil where none is configured: a
+// registrar that then says so on the routes that need it.
+func operatorRightsFromEnv(log *slog.Logger) Rights {
+	base := os.Getenv("REGISTRAR_LIFECYCLE_URL")
+	if base == "" {
+		log.Warn("no way to the operator: positions and roles cannot be given here", "setting", "REGISTRAR_LIFECYCLE_URL")
+		return nil
+	}
+	return NewOperatorRights(base, envvar.Or("REGISTRAR_LIFECYCLE_TOKEN_FILE", "/var/run/secrets/gentian/operator/token"))
 }
