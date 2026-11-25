@@ -842,7 +842,7 @@ func runPolicy(name, namespace string, labels map[string]string, pods map[string
 // installed action is given the egress granted to that action; and a run is
 // let through to the component that started it, on the port it calls back
 // to. No rule reaches an agent bridge, an engine or the kernel.
-func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, labels map[string]string, dns []corev1.Service, now time.Time) []*networkingv1.NetworkPolicy {
+func runNamespacePolicies(runs *tenantRuns, namespace, tenantNamespace string, labels map[string]string, dns netpolicy.ClusterDNS, now time.Time) []*networkingv1.NetworkPolicy {
 	tcp := corev1.ProtocolTCP
 	deny := runPolicy(runsDefaultDeny, namespace, labels, nil)
 	deny.Spec.PolicyTypes = []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress}

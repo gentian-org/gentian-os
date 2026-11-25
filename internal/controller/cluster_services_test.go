@@ -19,6 +19,7 @@ import (
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -28,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
 	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
@@ -89,7 +91,7 @@ func TestLoadClusterServicesReadsTheDNSAndTheAPIServerWhereTheyAre(t *testing.T)
 		kubeAPIEndpointSlice(31099, "83.166.143.133"), foreignSlice)
 	got := loadClusterServices(context.Background(), c)
 
-	if len(got.DNS) != 1 || got.DNS[0].Name != "pck-k9pfly2-addon-coredns" {
+	if len(got.DNS.Services) != 1 || got.DNS.Services[0].Name != "pck-k9pfly2-addon-coredns" {
 		t.Fatalf("DNS = %+v, want the kube-system DNS Service alone", got.DNS)
 	}
 	if got.APIService == nil || got.APIService.Spec.ClusterIP != "10.96.0.1" {
@@ -102,6 +104,34 @@ func TestLoadClusterServicesReadsTheDNSAndTheAPIServerWhereTheyAre(t *testing.T)
 	empty := loadClusterServices(context.Background(), clusterServicesClient(t))
 	if empty.HasDNS() || empty.HasAPIEndpoints() || empty.APIService != nil {
 		t.Fatalf("an empty cluster read as %+v", empty)
+	}
+}
+
+// A Cilium cluster that redirects the DNS Service to a node-local cache:
+// the redirect is read beside the Service, so the cache's pods are admitted.
+func TestLoadClusterDNSReadsALocalRedirectOfTheDNSService(t *testing.T) {
+	dns := clusterDNSService()
+	redirect := &unstructured.Unstructured{Object: map[string]interface{}{
+		"spec": map[string]interface{}{
+			"redirectFrontend": map[string]interface{}{
+				"serviceMatcher": map[string]interface{}{"namespace": "kube-system", "serviceName": dns.Name},
+			},
+			"redirectBackend": map[string]interface{}{
+				"localEndpointSelector": map[string]interface{}{
+					"matchLabels": map[string]interface{}{"k8s-app": "node-local-dns"},
+				},
+				"toPorts": []interface{}{map[string]interface{}{"port": "53", "protocol": "UDP"}},
+			},
+		},
+	}}
+	redirect.SetGroupVersionKind(netpolicy.LocalRedirectPolicyGVK)
+	redirect.SetName("nodelocaldns")
+	redirect.SetNamespace("kube-system")
+
+	got := loadClusterDNS(context.Background(), clusterServicesClient(t, dns, redirect))
+	if len(got.Services) != 1 || len(got.Redirects) != 1 ||
+		got.Redirects[0].Selector.MatchLabels["k8s-app"] != "node-local-dns" {
+		t.Fatalf("DNS = %+v, want the Service and its redirect to node-local-dns", got)
 	}
 }
 
@@ -233,7 +263,7 @@ func TestARunsDNSIsTheClusters(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}
 	runs := &tenantRuns{tenant: tenant}
 	policies := runNamespacePolicies(runs, layout.TenantRuns("acme"), tenant.NamespaceName(), nil,
-		[]corev1.Service{*clusterDNSService()}, time.Now())
+		netpolicy.ClusterDNS{Services: []corev1.Service{*clusterDNSService()}}, time.Now())
 	deny := policies[0]
 	if deny.Name != runsDefaultDeny || len(deny.Spec.Egress) == 0 {
 		t.Fatalf("default = %+v", deny)

@@ -21,7 +21,9 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -115,7 +117,12 @@ func loadClusterServices(ctx context.Context, c client.Reader) netpolicy.Cluster
 
 // loadClusterDNS is the DNS half of loadClusterServices, for a policy that
 // admits the cluster's DNS and not the API server.
-func loadClusterDNS(ctx context.Context, c client.Reader) []corev1.Service {
+//
+// Besides the DNS Services it reads Cilium's CiliumLocalRedirectPolicy
+// objects in kube-system, which send a DNS Service's traffic to a node-local
+// cache (netpolicy.LocalRedirects). A cluster without Cilium's definition
+// has none, and that is no error.
+func loadClusterDNS(ctx context.Context, c client.Reader) netpolicy.ClusterDNS {
 	logger := log.FromContext(ctx)
 	var dns []corev1.Service
 	services := &corev1.ServiceList{}
@@ -130,8 +137,19 @@ func loadClusterDNS(ctx context.Context, c client.Reader) []corev1.Service {
 	}
 	if len(dns) == 0 {
 		logger.Error(errDNSNotNarrowed, "network policies refuse to narrow DNS")
+		return netpolicy.ClusterDNS{}
 	}
-	return dns
+	out := netpolicy.ClusterDNS{Services: dns}
+	redirects := &unstructured.UnstructuredList{}
+	redirects.SetGroupVersionKind(netpolicy.LocalRedirectPolicyGVK.GroupVersion().WithKind(netpolicy.LocalRedirectPolicyGVK.Kind + "List"))
+	if err := c.List(ctx, redirects, client.InNamespace(netpolicy.DNSNamespace)); err != nil {
+		if !apimeta.IsNoMatchError(err) {
+			logger.Error(err, "list the CiliumLocalRedirectPolicies in "+netpolicy.DNSNamespace+" for a node-local DNS cache")
+		}
+		return out
+	}
+	out.Redirects = netpolicy.LocalRedirects(dns, redirects.Items)
+	return out
 }
 
 // The label an EndpointSlice names its Service by, and the API server's

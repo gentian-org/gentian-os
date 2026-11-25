@@ -96,9 +96,13 @@ Service's own selector, on the port it sends 53 to, and its cluster address on
 53. The API server is each address of the `kubernetes` EndpointSlice on its
 port, and the `kubernetes` Service's cluster address on its port. Both forms
 are there because a network plugin matches a policy either before the Service
-address is translated or after it (Calico). A change of those Services or of
-the EndpointSlice rewrites the policies that admit them
-(`internal/kernel/netpolicy/cluster.go`). Where nothing can be read, two
+address is translated or after it (Calico). Where Cilium sends a DNS
+Service's traffic to a node-local cache instead (a `CiliumLocalRedirectPolicy`
+in `kube-system`, as on a Gardener cluster with node-local DNS), the cache's
+pods on the redirect's ports are admitted as well: Cilium matches the policy
+after the redirect, against the cache pod. The redirect is read each time the
+policies are written. A change of those Services or of the EndpointSlice
+rewrites the policies that admit them (`internal/kernel/netpolicy/cluster.go`). Where nothing can be read, two
 fallbacks keep the tenants running, and the operator logs each: with no DNS
 Service found, port 53 is open to every address; with no address of the API
 server, `KUBE_APISERVER_CIDR` (default `10.0.0.0/8`) is admitted on 443. A

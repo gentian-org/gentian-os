@@ -215,6 +215,14 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - cilium.io
+    resources:
+    - ciliumlocalredirectpolicies
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
     - client.keycloak.crossplane.io
     resources:
     - protocolmappers
