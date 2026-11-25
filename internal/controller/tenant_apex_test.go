@@ -51,7 +51,7 @@ func TestTheBareNameOfAnOwnDomainHasItsOwnCertificateAndListener(t *testing.T) {
 	zoned := acmeTenantFixture()
 	zoned.Name = "team"
 
-	cert := buildTenantApexCertificate(own, "tenant-acme", "acme.example", "issuer")
+	cert := buildTenantApexCertificate(own, "tenant-acme", "acme.example", "issuer", "")
 	names, _, _ := unstructured.NestedStringSlice(cert.Object, "spec", "dnsNames")
 	if len(names) != 1 || names[0] != "acme.example" {
 		t.Fatalf("apex certificate names %v, want exactly [acme.example]", names)

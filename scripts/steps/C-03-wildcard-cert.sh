@@ -3,7 +3,7 @@
 # phase: platform
 # requires: C-02-appsets
 # provides: the cluster issuers and the wildcard certificate for *.<kernelDomain>, copied into the namespaces that terminate TLS for a kernel host
-# mutates: ClusterIssuers, the Certificate in cert-manager, and wildcard-tls Secrets in the edge and gitops namespaces and, where the cluster runs its own mail, the mail namespace; on this host, the kept copy of the wildcard under ~/.gentian/certs
+# mutates: ClusterIssuers, the Certificate in cert-manager (a cert.gardener.cloud Certificate where the DNS provider's shoot issues them), and wildcard-tls Secrets in the edge and gitops namespaces and, where the cluster runs its own mail, the mail namespace; on this host, the kept copy of the wildcard under ~/.gentian/certs
 
 # The Gateway's listener reads wildcard-tls from its own namespace: without it
 # the listener is invalid and the Gateway is never programmed, whatever else
@@ -19,6 +19,11 @@ check() {
     # The claim says which provider hosts the zone, not the environment: a
     # --status pass carries no DNS_PROVIDER and would otherwise report a
     # cluster that is serving the certificate as undefined.
+    if gentian_kernel_wildcard_issued_by_gardener; then
+        kernel_wildcard_current || return "${CHECK_MISSING}"
+        GENTIAN_WILDCARD_TARGETS="$(_v5_wildcard_targets)" kernel_wildcard_propagated
+        return
+    fi
     gentian_dns_provider_solves || return "${CHECK_UNDEFINED}"
     # Issued by the issuer the claim names now. A switch from staging to
     # production otherwise left the staging certificate in place for good:

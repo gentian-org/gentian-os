@@ -86,6 +86,23 @@ gentian_dns_provider_solves() {
     [[ -n "${n}" && "${n}" != "0" ]]
 }
 
+# gentian_dns_provider_certificates — who issues the edge's certificates when
+# it is not cert-manager: the provider entry's `certificates` (gardener: the
+# shoot's certificate service), or nothing.
+gentian_dns_provider_certificates() {
+    local v
+    v="$(yq_get ".dnsProviders.\"$(gentian_dns_provider)\".certificates // \"\"" \
+        "$(gentian_platforms_values)" 2>/dev/null || true)"
+    [[ "${v}" == "null" ]] && v=""
+    printf '%s\n' "${v}"
+}
+
+# gentian_kernel_wildcard_issued_by_gardener — the kernel wildcard is a
+# cert.gardener.cloud Certificate rather than cert-manager's.
+gentian_kernel_wildcard_issued_by_gardener() {
+    [[ "$(gentian_dns_provider_certificates)" == "gardener" ]]
+}
+
 # ACME_ENV: production (default) or staging (Let's Encrypt staging API).
 # Staging avoids production rate limits; certs are not browser-trusted.
 #
@@ -782,6 +799,10 @@ install_kernel_wildcard() {
         return
     fi
     local dns_provider; dns_provider="$(gentian_dns_provider)"
+    if gentian_kernel_wildcard_issued_by_gardener; then
+        install_kernel_wildcard_gardener
+        return
+    fi
     if ! gentian_dns_provider_solves; then
         info "dnsProvider ${dns_provider} has no DNS-01; skipping the kernel wildcard Certificate."
         info "  Wildcards need DNS-01. Kernel hostnames are served by per-host"
@@ -915,6 +936,47 @@ install_kernel_wildcard() {
     propagate_kernel_wildcard
 }
 
+# install_kernel_wildcard_gardener — the kernel wildcard from a Gardener
+# shoot's certificate service, which solves DNS-01 with the shoot's own DNS
+# credential: the same names in the same Secret as cert-manager's, so the
+# copies and everything that reads them are unchanged. Not kept on this host:
+# the service has its own issuer and renews in the cluster.
+install_kernel_wildcard_gardener() {
+    local ns; ns="$(gentian_cert_manager_namespace)"
+    banner "Installing kernel wildcard Certificate (Gardener certificate service)"
+    kubectl apply -f - <<EOF_CERT
+apiVersion: cert.gardener.cloud/v1alpha1
+kind: Certificate
+metadata:
+  name: wildcard-kernel
+  namespace: ${ns}
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  commonName: ${KERNEL_DOMAIN}
+  dnsNames:
+    - "*.${KERNEL_DOMAIN}"
+  secretRef:
+    name: wildcard-kernel-tls
+    namespace: ${ns}
+EOF_CERT
+    local timeout="${GENTIAN_WILDCARD_WAIT_SECS:-900}"
+    local deadline=$(( SECONDS + timeout ))
+    info "Waiting for wildcard-kernel-tls to be issued by the shoot (max $(( timeout / 60 ))m)..."
+    until kernel_wildcard_current; do
+        (( SECONDS > deadline )) && break
+        sleep 5
+    done
+    if ! kernel_wildcard_current; then
+        warn "wildcard-kernel-tls not yet issued: $(kubectl get certificates.cert.gardener.cloud wildcard-kernel \
+            -n "${ns}" -o jsonpath='{.status.state}: {.status.message}' 2>/dev/null)"
+        warn "Re-run ./install.sh --only C-03 once it is Ready."
+        return
+    fi
+    success "Kernel wildcard issued by the shoot's certificate service."
+    propagate_kernel_wildcard
+}
+
 # =============================================================================
 # The kernel wildcard, kept on this host across purges
 # =============================================================================
@@ -942,6 +1004,15 @@ install_kernel_wildcard() {
 kernel_wildcard_current() {
     local ns want ready have
     ns="$(gentian_cert_manager_namespace)"
+    # Gardener's: Ready for the names asked now, and the Secret written.
+    if gentian_kernel_wildcard_issued_by_gardener; then
+        read -r want ready < <(kubectl get certificates.cert.gardener.cloud wildcard-kernel -n "${ns}" \
+            -o jsonpath='{.spec.commonName} {.status.state}' 2>/dev/null || true)
+        [[ "${want}" == "${KERNEL_DOMAIN:-}" && "${ready}" == "Ready" ]] || return 1
+        [[ -n "$(kubectl get secret wildcard-kernel-tls -n "${ns}" \
+            -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)" ]]
+        return
+    fi
     # `|| true` inside: the substitution runs in a subshell that inherits the
     # ERR trap, so a Certificate that is gone -- every purge after the edge
     # namespace went -- printed the installer's abort banner from in there,
@@ -965,6 +1036,8 @@ gentian_wildcard_cache_file() {
 # whether a Secret it finds is its own.
 save_kernel_wildcard() {
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
+    # The shoot keeps and renews its own; the copy here is cert-manager's.
+    gentian_kernel_wildcard_issued_by_gardener && return 0
     command -v jq >/dev/null 2>&1 || return 0
     # Only what the claim asks for: mid-reissue the Secret still holds the
     # previous issuer's certificate, and keeping that would keep the wrong one.

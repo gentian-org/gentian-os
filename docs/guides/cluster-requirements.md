@@ -121,7 +121,7 @@ the others under `acme-dns01`.
 | `azuredns` | `subscriptionID`, `tenantID`, `resourceGroupName`, `clientID` |
 | `rfc2136` (BIND, Knot, PowerDNS with TSIG) | `nameserver`, `tsigKeyName`, `zone` |
 | `hetzner`, `infomaniak` | `webhookGroupName`, `webhookSolverName` of a cert-manager webhook |
-| `gardener` | no credential: a Gardener shoot's DNS service publishes the names (§4.3); `acme-http01` only |
+| `gardener` | no credential: a Gardener shoot's DNS service publishes the names and its certificate service issues the certificates (§4.3); `acme-http01` only |
 | `none` | no DNS-01 and no published records (§4.2); `acme-http01` only |
 
 ### 4.1 What the credential must be allowed to write
@@ -174,6 +174,12 @@ Gardener publishes them for the Service's address, follows the address when
 it changes, and removes them with the Service. Gardener writes the zone with
 the shoot's own credential, so the platform holds none, and the scoped tokens
 of §4.1 do not matter.
+
+The shoot's certificate service (`shoot-cert-service`, `cert.gardener.cloud`)
+must be enabled too: it issues the edge's certificates, the kernel wildcard,
+each tenant's wildcard and the TURN edge's, by DNS-01 with the same
+credential. The entry's `certificates: gardener` says so. cert-manager on such
+a cluster has no DNS-01 issuer, so without the service there are no wildcards.
 
 ## 5. Adding an entry
 

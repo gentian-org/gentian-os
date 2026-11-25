@@ -45,16 +45,8 @@ func (r *TenantReconciler) tenantDNS01ClusterIssuer() string {
 
 func buildTenantWildcardCertificate(
 	tenant *gentianov1alpha1.Tenant,
-	nsName, certName, secretName, domain, clusterIssuer string,
+	nsName, certName, secretName, domain, clusterIssuer, source string,
 ) *unstructured.Unstructured {
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(certManagerCertGVK)
-	obj.SetName(certName)
-	obj.SetNamespace(nsName)
-	obj.SetLabels(map[string]string{
-		tenantLabel:    tenant.Name,
-		managedByLabel: managedByValue,
-	})
 	// Wildcard only. The bare domain is deliberately absent, and that is what
 	// keeps the tenant apex reachable.
 	//
@@ -79,12 +71,11 @@ func buildTenantWildcardCertificate(
 	//
 	// The invariant, the same one 4eb6235d established for listeners: a
 	// certificate must cover exactly what its listener can route.
-	_ = unstructured.SetNestedStringSlice(obj.Object, []string{"*." + domain}, "spec", "dnsNames")
-	_ = unstructured.SetNestedField(obj.Object, secretName, "spec", "secretName")
-	_ = unstructured.SetNestedField(obj.Object, map[string]interface{}{
-		"name": clusterIssuer,
-		"kind": "ClusterIssuer",
-	}, "spec", "issuerRef")
+	obj := buildEdgeCertificate(source, certName, nsName, secretName, []string{"*." + domain}, clusterIssuer)
+	obj.SetLabels(map[string]string{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
+	})
 	return obj
 }
 
@@ -144,19 +135,16 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 		return fmt.Errorf("delete tenant ReferenceGrants: %w", err)
 	}
 
-	wildcardCert := &unstructured.Unstructured{}
-	wildcardCert.SetGroupVersionKind(certManagerCertGVK)
-	wildcardCert.SetName(tenantWildcardCertName(tenant.Name))
-	wildcardCert.SetNamespace(nsName)
-	if err := r.Delete(ctx, wildcardCert); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
-	}
-	apexCert := &unstructured.Unstructured{}
-	apexCert.SetGroupVersionKind(certManagerCertGVK)
-	apexCert.SetName(tenantApexCertName(tenant.Name))
-	apexCert.SetNamespace(nsName)
-	if err := r.Delete(ctx, apexCert); client.IgnoreNotFound(err) != nil {
-		return fmt.Errorf("delete tenant apex Certificate: %w", err)
+	// Of the kind this cluster asks for: the other kind's CRD is not
+	// necessarily installed.
+	for _, name := range []string{tenantWildcardCertName(tenant.Name), tenantApexCertName(tenant.Name)} {
+		cert := &unstructured.Unstructured{}
+		cert.SetGroupVersionKind(edgeCertificateGVK(r.EdgeCertificates))
+		cert.SetName(name)
+		cert.SetNamespace(nsName)
+		if err := r.Delete(ctx, cert); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete tenant Certificate %s: %w", name, err)
+		}
 	}
 
 	// Not for the user tenant of a single-tenancy cluster: its domain is the
@@ -233,8 +221,11 @@ func tenantApexSecretName(tenantName string) string {
 // the wildcard's listener cannot route the bare name. Kept apart, neither
 // connection can be reused for the other's name, so the coalescing fault
 // described at the wildcard cannot happen.
-func buildTenantApexCertificate(tenant *gentianov1alpha1.Tenant, nsName, domain, clusterIssuer string) *unstructured.Unstructured {
-	obj := buildTenantWildcardCertificate(tenant, nsName, tenantApexCertName(tenant.Name), tenantApexSecretName(tenant.Name), domain, clusterIssuer)
-	_ = unstructured.SetNestedStringSlice(obj.Object, []string{domain}, "spec", "dnsNames")
+func buildTenantApexCertificate(tenant *gentianov1alpha1.Tenant, nsName, domain, clusterIssuer, source string) *unstructured.Unstructured {
+	obj := buildEdgeCertificate(source, tenantApexCertName(tenant.Name), nsName, tenantApexSecretName(tenant.Name), []string{domain}, clusterIssuer)
+	obj.SetLabels(map[string]string{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
+	})
 	return obj
 }

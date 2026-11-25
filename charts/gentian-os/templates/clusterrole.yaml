@@ -215,6 +215,18 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - cert.gardener.cloud
+    resources:
+    - certificates
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
     - cilium.io
     resources:
     - ciliumlocalredirectpolicies

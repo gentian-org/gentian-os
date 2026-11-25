@@ -181,6 +181,7 @@ var xTenantGVK = schema.GroupVersionKind{
 //
 // cert-manager Certificates for tenant edge TLS (tenant_edge_tls.go).
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cert.gardener.cloud,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 //
 // Crossplane composites read by tenant_xr_status.go and applifecycle/service.go.
 // list+watch are required even though the code only calls Get: the manager's
@@ -316,6 +317,11 @@ type TenantReconciler struct {
 	// per-tenant wildcard certificates (*.<effectiveDomain>). Defaults to
 	// letsencrypt-dns01-cloudflare when unset. Sourced from TENANT_DNS01_CLUSTER_ISSUER.
 	TenantDNS01ClusterIssuer string
+	// EdgeCertificates is who issues the certificates a tenant is served
+	// under: EdgeCertificatesGardener for a Gardener shoot's certificate
+	// service, anything else cert-manager through TenantDNS01ClusterIssuer.
+	// Sourced from EDGE_CERTIFICATES.
+	EdgeCertificates string
 	// KernelRealm is the name of the shared Keycloak realm for platform identity.
 	// Sourced from the KERNEL_REALM env var at startup.
 	KernelRealm string
