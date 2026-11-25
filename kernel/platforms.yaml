@@ -163,6 +163,30 @@ dnsProviders:
     externalDNS:
       enabled: false
 
+  # The zone is written by a Gardener shoot's own DNS service
+  # (shoot-dns-service), with the provider credential the shoot holds. The
+  # platform holds no credential and runs no external-dns: the edge's
+  # LoadBalancer Service carries Gardener's annotations, and Gardener publishes
+  # the kernel domain and its wildcard for the Service's address and keeps
+  # them. No DNS-01, so certificates come by HTTP-01, and with no
+  # _acme-challenge record under a tenant's name the one wildcard answers for
+  # every name below the domain. The default answer at the interview on a
+  # cluster that serves dns.gardener.cloud.
+  #
+  # edgeAnnotations: put on the edge's LoadBalancer Service beside the
+  # platform's lbAnnotations, rendered against the edge chart's values
+  # (.Values.kernelDomain). The claim's own lbAnnotations win over both.
+  gardener:
+    displayName: Gardener (the shoot's DNS service)
+    # The interview offers this as the default where the cluster serves it.
+    detectCRD: dnsentries.dns.gardener.cloud
+    solver: {}
+    externalDNS:
+      enabled: false
+    edgeAnnotations:
+      dns.gardener.cloud/class: garden
+      dns.gardener.cloud/dnsnames: '{{ .Values.kernelDomain }},*.{{ .Values.kernelDomain }}'
+
   cloudflare:
     displayName: Cloudflare
     credential:

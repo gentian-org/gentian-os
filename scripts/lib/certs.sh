@@ -74,6 +74,18 @@ gentian_issuer_mode() {
 # kernel/platforms.yaml.
 gentian_dns_provider() { echo "${DNS_PROVIDER:-cloudflare}"; }
 
+# gentian_dns_provider_solves — whether this cluster's DNS provider answers
+# DNS-01: its entry in kernel/platforms.yaml carries a solver. none and
+# gardener do not; their certificates come by HTTP-01, one per host, and
+# nothing writes an _acme-challenge record. Read from the entry, so a provider
+# is never recognized by its name.
+gentian_dns_provider_solves() {
+    local n
+    n="$(yq_get ".dnsProviders.\"$(gentian_dns_provider)\".solver | length" \
+        "$(gentian_platforms_values)" 2>/dev/null || true)"
+    [[ -n "${n}" && "${n}" != "0" ]]
+}
+
 # ACME_ENV: production (default) or staging (Let's Encrypt staging API).
 # Staging avoids production rate limits; certs are not browser-trusted.
 #
@@ -497,6 +509,8 @@ apply_edge_envoyproxy() {
         --set-string "controllerName=${GENTIAN_GATEWAY_CONTROLLER_NAME}" \
         --set-string "nodeIp=${NODE_IP:-}" \
         --set-string "platform=${PLATFORM:-}" \
+        --set-string "dnsProvider=$(gentian_dns_provider)" \
+        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "addressRef=${EDGE_ADDRESS_REF:-}" \
         --set-string "envoy.serviceType=LoadBalancer" \
         "${extra[@]+"${extra[@]}"}" \
@@ -768,8 +782,8 @@ install_kernel_wildcard() {
         return
     fi
     local dns_provider; dns_provider="$(gentian_dns_provider)"
-    if [[ "${dns_provider}" == "none" ]]; then
-        info "No DNS provider for this cluster; skipping the kernel wildcard Certificate."
+    if ! gentian_dns_provider_solves; then
+        info "dnsProvider ${dns_provider} has no DNS-01; skipping the kernel wildcard Certificate."
         info "  Wildcards need DNS-01. Kernel hostnames are served by per-host"
         info "  certificates from the HTTP-01 issuer instead."
         return

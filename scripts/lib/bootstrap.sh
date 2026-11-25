@@ -1707,8 +1707,18 @@ _claim_cluster_fields() {
         fi
         printf '    # dnsRecords:               records with nothing on the cluster behind\n'
         printf '    #                           them: "docs.example.org CNAME x.example.net"\n'
+    elif [[ "${im}" == "acme-http01" ]]; then
+        # Written, never left to the default: the claim's default is
+        # cloudflare, which would install external-dns and a DNS-01 issuer
+        # for a zone this cluster was never given a credential for.
+        printf '    # Who publishes the cluster'"'"'s names, with no DNS-01:\n'
+        printf '    #   gardener  the Gardener shoot'"'"'s DNS service, from annotations on\n'
+        printf '    #             the edge'"'"'s Service: the domain and *.<domain>\n'
+        printf '    #   none      nobody: keep <domain> and *.<domain> in the zone yourself\n'
+        printf '    dnsProvider: %s\n' "${DNS_PROVIDER:-none}"
     else
         printf '    # dnsProvider:              only read when issuerMode is acme-dns01\n'
+        printf '    #                           or acme-http01\n'
     fi
     if [[ "${im}" == "private-ca" ]]; then
         printf '    caBundleSecretRef:\n'

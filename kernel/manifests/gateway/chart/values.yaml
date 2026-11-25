@@ -27,6 +27,12 @@ platform: ""
 # kernel/platforms.yaml under requiredParams.
 platformParams: {}
 
+# certificates.dnsProvider and the kernel domain: a DNS provider whose records
+# follow the edge's Service (gardener) puts its edgeAnnotations on it, rendered
+# against kernelDomain.
+dnsProvider: ""
+kernelDomain: ""
+
 # Free-form additions, applied on top of whatever the platform contributes, so a
 # provider with no entry in the table works without changing anything.
 extraAnnotations: {}
@@ -35,6 +41,7 @@ extraAnnotations: {}
 # here so a render that forgets the file fails with a message naming it rather
 # than emitting a Service with no annotations at all.
 platforms: {}
+dnsProviders: {}
 
 envoy:
   # The proxy image, pinned here rather than left to the Envoy Gateway release:

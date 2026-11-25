@@ -105,10 +105,13 @@ empty, the cloud allocates one.
 
 ## 4. The DNS provider
 
-`certificates.dnsProvider` says who hosts the zone. It is independent of the
-platform: a Hetzner cluster on a Cloudflare zone is ordinary. Its entry under
-`dnsProviders` in `kernel/platforms.yaml` gives cert-manager its DNS-01 solver
-and external-dns its provider, and names the one credential both read.
+`certificates.dnsProvider` says who hosts the zone and who publishes the
+cluster's names in it. It is independent of the platform: a Hetzner cluster on
+a Cloudflare zone is ordinary. Its entry under `dnsProviders` in
+`kernel/platforms.yaml` gives cert-manager its DNS-01 solver and external-dns
+its provider, and names the one credential both read. An entry without a
+solver answers no DNS-01: the installer offers those under `acme-http01` and
+the others under `acme-dns01`.
 
 | Entry | Needs, besides the credential |
 |---|---|
@@ -118,7 +121,8 @@ and external-dns its provider, and names the one credential both read.
 | `azuredns` | `subscriptionID`, `tenantID`, `resourceGroupName`, `clientID` |
 | `rfc2136` (BIND, Knot, PowerDNS with TSIG) | `nameserver`, `tsigKeyName`, `zone` |
 | `hetzner`, `infomaniak` | `webhookGroupName`, `webhookSolverName` of a cert-manager webhook |
-| `none` | no DNS-01 and no published records |
+| `gardener` | no credential: a Gardener shoot's DNS service publishes the names (§4.3); `acme-http01` only |
+| `none` | no DNS-01 and no published records (§4.2); `acme-http01` only |
 
 ### 4.1 What the credential must be allowed to write
 
@@ -143,24 +147,33 @@ provider for these rights before you install.
 With `dnsProvider: none` nothing publishes the cluster's names, and you keep
 them in the zone yourself. Wildcards replace the per-name A and CNAME records,
 and with them external-dns's ownership TXT records, which exist only for
-external-dns. Every name the cluster serves points at the same address, so a
-few wildcard A records stand in for all of them:
+external-dns. Every name the cluster serves points at the same address, so two
+records stand in for all of them:
 
 | Name | Points at |
 |---|---|
 | `<domain>` | the edge's address |
 | `*.<domain>` | the edge's address |
-| `*.platform.<domain>` | the edge's address |
-| `*.<tenant>.<domain>`, one per tenant on a multi-tenancy cluster | the edge's address |
 
-A wildcard one level up does not stand in for the per-tenant ones: once
-anything exists under `<tenant>.<domain>`, as the certificate challenge
-`_acme-challenge.<tenant>.<domain>` does, DNS no longer answers names below it
-from `*.<domain>`. A new tenant needs its record; a new app in a tenant needs
-none. With `mail.serviceMode: internal`, the mail records of §4.1 are kept by
-hand too, the DKIM key again whenever it changes. Without a DNS provider,
-certificates are not issued over DNS: choose `acme-http01` or `self-signed` at
-the issuer question.
+`*.<domain>` answers for names several levels down too
+(`desktop.<tenant>.<domain>`), as long as nothing exists under
+`<tenant>.<domain>` itself. Nothing does here: without DNS-01 no
+`_acme-challenge` record is written. Anything else you put under a tenant's
+name ends the wildcard there, and that tenant then needs its own
+`*.<tenant>.<domain>`. A new app needs no record. With
+`mail.serviceMode: internal`, the mail records of §4.1 are kept by hand too,
+the DKIM key again whenever it changes.
+
+### 4.3 Records published by a Gardener cluster
+
+On a Gardener shoot whose DNS service (`shoot-dns-service`) manages the zone,
+choose `dnsProvider: gardener` with `acme-http01`; where the cluster serves
+`dns.gardener.cloud`, it is the interview's default. The edge's `LoadBalancer`
+Service then carries Gardener's annotations for the two records of §4.2, and
+Gardener publishes them for the Service's address, follows the address when
+it changes, and removes them with the Service. Gardener writes the zone with
+the shoot's own credential, so the platform holds none, and the scoped tokens
+of §4.1 do not matter.
 
 ## 5. Adding an entry
 
@@ -216,8 +229,12 @@ Then:
 
 1. Add the name to the matching `enum` in `crossplane/xrds/cluster.yaml`
    (`platform`, or `certificates.dnsProvider`).
-2. Add it to the list the installer offers in `scripts/lib/common.sh`
-   (`prompt_cluster_settings`).
+2. For a platform, add it to the list the installer offers in
+   `scripts/lib/common.sh` (`prompt_cluster_settings`). A DNS provider is
+   offered from the table itself: under `acme-dns01` if it has a `solver`,
+   under `acme-http01` if not. A `detectCRD` makes it the default on a
+   cluster that serves that definition, and `edgeAnnotations` are put on the
+   edge's Service, rendered against `.Values.kernelDomain`.
 3. For a platform the nodes identify, add its `providerID` prefix to
    `_detect_platform` in `scripts/lib/certs.sh`.
 4. Run `make gen-all`: it renders the DNS credential's `CredentialRequirement`

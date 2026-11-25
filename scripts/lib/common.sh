@@ -1286,7 +1286,7 @@ explain_issuer_mode() {
             ;;
         acme-http01)
             _decided "port 80 must reach this cluster from the internet; no wildcard certificate."
-            _decided "dnsProvider: not asked — only DNS-01 uses it."
+            _decided "dnsProvider: who publishes the cluster's names (none: you keep them in the zone)."
             ;;
         *)
             _decided "acmeEnv and dnsProvider: not asked — only the ACME issuers use them."
@@ -1547,6 +1547,40 @@ _dns_param() {
     return 1
 }
 
+# _dns_provider_names solving|publishing — the dnsProviders entries of
+# kernel/platforms.yaml with a DNS-01 solver, or without one, space-separated.
+_dns_provider_names() {
+    local want="$1" name n out=()
+    for name in $(yq_get '.dnsProviders | keys | .[]' \
+            "${GENTIAN_PLATFORMS_FILE:-${SCRIPT_DIR}/kernel/platforms.yaml}" 2>/dev/null); do
+        n="$(yq_get ".dnsProviders.\"${name}\".solver | length" \
+            "${GENTIAN_PLATFORMS_FILE:-${SCRIPT_DIR}/kernel/platforms.yaml}" 2>/dev/null || true)"
+        if [[ -n "${n}" && "${n}" != "0" ]]; then
+            [[ "${want}" == "solving" ]] && out+=("${name}")
+        else
+            [[ "${want}" == "publishing" ]] && out+=("${name}")
+        fi
+    done
+    printf '%s' "${out[*]}"
+}
+
+# _detect_dns_provider — the default answer under HTTP-01: the first entry
+# whose detectCRD the cluster serves (a Gardener shoot's dns.gardener.cloud),
+# else none. Like the platform from the nodes' providerID: a guess the
+# operator confirms, never a decision made for them.
+_detect_dns_provider() {
+    local file="${GENTIAN_PLATFORMS_FILE:-${SCRIPT_DIR}/kernel/platforms.yaml}" name crd
+    for name in $(yq_get '.dnsProviders | keys | .[]' "${file}" 2>/dev/null); do
+        crd="$(yq_get ".dnsProviders.\"${name}\".detectCRD" "${file}" 2>/dev/null || true)"
+        [[ -n "${crd}" ]] || continue
+        if kubectl get crd "${crd}" >/dev/null 2>&1; then
+            printf '%s' "${name}"
+            return 0
+        fi
+    done
+    printf 'none'
+}
+
 # _dns_provider_list <yq filter under the provider's entry> — one item a line.
 _dns_provider_list() {
     yq_get ".dnsProviders.\"${DNS_PROVIDER:-cloudflare}\"$1" \
@@ -1591,6 +1625,14 @@ prompt_dns_params() {
 check_dns_params() {
     [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]] || return 0
     local key value pattern failed=0
+    local solver
+    solver="$(_dns_provider_list '.solver | length')"
+    if [[ -z "${solver}" || "${solver}" == "0" ]]; then
+        error "issuerMode acme-dns01 needs a DNS provider that answers DNS-01;"
+        error "  dnsProvider ${DNS_PROVIDER:-cloudflare} does not. Choose acme-http01, or one of:"
+        error "  $(_dns_provider_names solving)"
+        exit 1
+    fi
     for key in $(_dns_provider_list '.requiredParams[]'); do
         if ! _dns_param "${key}" >/dev/null; then
             error "dnsProvider ${DNS_PROVIDER} requires certificates.dnsParams.${key}."
@@ -1662,9 +1704,17 @@ prompt_cluster_settings() {
             _decided "  a purge-and-reinstall orders no new certificate."
         fi
     fi
-    if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]; then
-        prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" cloudflare \
-            "cloudflare route53 clouddns azuredns rfc2136 hetzner infomaniak"
+    if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == acme-* ]]; then
+        # DNS-01 needs a provider that solves it; HTTP-01 is offered the ones
+        # that do not, which publish the cluster's names or leave them to
+        # you. Both lists are read from kernel/platforms.yaml.
+        if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]; then
+            prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" cloudflare \
+                "$(_dns_provider_names solving)"
+        else
+            prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" "$(_detect_dns_provider)" \
+                "$(_dns_provider_names publishing)"
+        fi
         prompt_dns_params
     fi
     # Written to the platform tenant, not the claim: the same spec.admin every

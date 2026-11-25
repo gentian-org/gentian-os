@@ -35,7 +35,9 @@ spec:
                 name: {{ $root.Values.gatewayName }}
                 namespace: {{ $root.Values.gatewayNamespace }}
 {{- $dnsProvider := $root.Values.dnsProvider | default "none" }}
-{{- if ne $dnsProvider "none" }}
+{{- /* A provider without a solver (none, gardener) proves nothing over DNS-01. */}}
+{{- $dnsProfile := index ($root.Values.dnsProviders | default dict) $dnsProvider | default dict }}
+{{- if index $dnsProfile "solver" }}
 ---
 # DNS-01, the only challenge type that can issue a wildcard. The solver block
 # below is kernel/platforms.yaml's entry for this provider, passed through

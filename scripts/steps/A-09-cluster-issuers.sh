@@ -6,7 +6,7 @@
 # mutates: cluster-scoped ClusterIssuer objects; the internal CA's ServiceAccount, and the Role and RoleBinding that let cert-manager request its token, in the cert-manager namespace
 
 # v5 reached the issuers only through C-03's install_kernel_wildcard, which
-# returns early when the DNS provider is `none`. So a cluster without DNS-01
+# returns early when the DNS provider has no DNS-01 solver. So a cluster without DNS-01
 # got no ClusterIssuers at all -- not even the HTTP-01 one it can actually
 # use -- and the two offline anchors, self-signed and private-ca, had no v5
 # path whatsoever. The dispatch is the step; C-03 keeps the wildcard.
@@ -89,7 +89,7 @@ check() {
             _v5_internal_ca_present || return "${CHECK_MISSING}"
             kubectl get clusterissuer "$(_v5_http01_issuer_name)" >/dev/null 2>&1 ||
                 return "${CHECK_MISSING}"
-            if [[ "$(gentian_dns_provider)" != "none" ]]; then
+            if gentian_dns_provider_solves; then
                 kubectl get clusterissuer "$(gentian_dns01_cluster_issuer_name)" >/dev/null 2>&1 ||
                     return "${CHECK_MISSING}"
             fi
@@ -135,9 +135,9 @@ apply() {
             export KERNEL_PUBLIC_GATEWAY_NAMESPACE="${KERNEL_PUBLIC_GATEWAY_NAMESPACE:-$(ns_kernel edge)}"
             _v5_apply_internal_ca
             apply_gentian_cluster_issuers
-            if [[ "$(gentian_dns_provider)" == "none" ]]; then
+            if ! gentian_dns_provider_solves; then
                 success "ClusterIssuer $(_v5_http01_issuer_name) applied."
-                info "  No DNS provider: this cluster issues per-host certificates, not wildcards."
+                info "  dnsProvider $(gentian_dns_provider) has no DNS-01: this cluster issues per-host certificates, not wildcards."
             else
                 success "ClusterIssuers $(_v5_http01_issuer_name) and $(gentian_dns01_cluster_issuer_name) applied."
                 info "  The DNS-01 issuer stays NotReady until C-03 materializes its credential."
