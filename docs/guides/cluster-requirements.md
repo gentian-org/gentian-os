@@ -143,24 +143,40 @@ provider for these rights before you install.
 With `dnsProvider: none` nothing publishes the cluster's names, and you keep
 them in the zone yourself. Wildcards replace the per-name A and CNAME records,
 and with them external-dns's ownership TXT records, which exist only for
-external-dns. Every name the cluster serves points at the same address, so a
-few wildcard A records stand in for all of them:
+external-dns. Every name the cluster serves points at the same address, so two
+records stand in for all of them:
 
 | Name | Points at |
 |---|---|
 | `<domain>` | the edge's address |
 | `*.<domain>` | the edge's address |
-| `*.platform.<domain>` | the edge's address |
-| `*.<tenant>.<domain>`, one per tenant on a multi-tenancy cluster | the edge's address |
 
-A wildcard one level up does not stand in for the per-tenant ones: once
-anything exists under `<tenant>.<domain>`, as the certificate challenge
-`_acme-challenge.<tenant>.<domain>` does, DNS no longer answers names below it
-from `*.<domain>`. A new tenant needs its record; a new app in a tenant needs
-none. With `mail.serviceMode: internal`, the mail records of §4.1 are kept by
-hand too, the DKIM key again whenever it changes. Without a DNS provider,
-certificates are not issued over DNS: choose `acme-http01` or `self-signed` at
-the issuer question.
+`*.<domain>` answers for names several levels down too (`desktop.<tenant>.<domain>`),
+as long as nothing exists under `<tenant>.<domain>` itself. Nothing does here:
+without a DNS provider no `_acme-challenge` record is written. Anything else
+you put under a tenant's name ends the wildcard there, and that tenant then
+needs its own `*.<tenant>.<domain>`. A new app needs no record. With
+`mail.serviceMode: internal`, the mail records of §4.1 are kept by hand too,
+the DKIM key again whenever it changes. Without a DNS provider, certificates
+are not issued over DNS: choose `acme-http01` or `self-signed` at the issuer
+question.
+
+### 4.3 Records published by a Gardener cluster
+
+A Gardener shoot whose DNS service (`shoot-dns-service`) manages the zone
+publishes the two records of §4.2 itself, from annotations on the edge's
+`LoadBalancer` Service, and keeps them pointing at its address. Install with
+`dnsProvider: none` and `acme-http01`, and set on the Cluster claim:
+
+```yaml
+spec:
+  lbAnnotations: "dns.gardener.cloud/class=garden,dns.gardener.cloud/dnsnames=<domain>,*.<domain>"
+```
+
+A piece without `=` continues the value before it, so both names reach the
+one annotation. Gardener writes the zone with the shoot's own credential, so
+the scoped tokens of §4.1 do not matter, and the records go when the Service
+goes.
 
 ## 5. Adding an entry
 
