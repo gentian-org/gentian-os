@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091,SC2015,SC2329 # sourced lib; ok/bad report, never fail the line; kubectl stand-in called by the sourced functions
 # Every namespace gentian-os creates carries Gardener's opt-out from pointing
 # pods at the API server's public name (os #1374); the platform's own
 # namespaces, which the installer only labels, do not.

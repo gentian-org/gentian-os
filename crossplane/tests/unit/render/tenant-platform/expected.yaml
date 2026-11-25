@@ -1002,6 +1002,7 @@ spec:
       kind: Namespace
       metadata:
         labels:
+          apiserver-proxy.networking.gardener.cloud/inject: disable
           app.kubernetes.io/managed-by: gentian-os
           gentianos.io/managed-by: crossplane
           gentianos.io/tenant: platform
