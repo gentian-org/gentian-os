@@ -82,6 +82,10 @@ check() {
     # route (never an open one).
     kubectl get secret edge-kernel-oidc -n "${EDGE_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
     [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.ancestors[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
+    # And the bouncer behind that policy ready, which it is only with the
+    # realm's signing keys: the gentian-os Application Healthy. D-01 waits
+    # for it Synced only, because before this step there is no realm.
+    _v5_delivered "${GITOPS_NAMESPACE}" gentian-os || return "${CHECK_MISSING}"
     # The platform's desktop: a component of the platform tenant, at
     # platform.<kernel> behind the kernel session. Ready means its chart is
     # deployed and its routes exist -- the chart the profile pins, not an
@@ -190,6 +194,21 @@ apply() {
                 error "  The policy does not exist: is the operator running, and did Tenant/platform compose ${EDGE_NAMESPACE}/edge-kernel-oidc?"
             return 1
         fi
+        sleep 10
+    done
+
+    # The bouncer answers for every request on those UIs, and it is ready only
+    # once it holds the realm's signing keys -- this step made the realm, so
+    # this is where the gentian-os Application can first be Healthy.
+    info "Waiting for gentian-os to be Healthy (the bouncer, with the kernel realm's keys)..."
+    deadline=$((SECONDS + 600))
+    until _v5_delivered "${GITOPS_NAMESPACE}" gentian-os; do
+        if (( SECONDS > deadline )); then
+            error "gentian-os is not Synced and Healthy after 10 minutes:"
+            kubectl get application gentian-os -n "${GITOPS_NAMESPACE}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
+            return 1
+        fi
+        request_argo_sync_if_stalled "${GITOPS_NAMESPACE}" gentian-os 2>/dev/null || true
         sleep 10
     done
     success "The kernel UIs sit behind the kernel zone's session and the ext-auth bouncer."
