@@ -35,7 +35,8 @@ allocate one" without a second field saying which.
     {{- $_ := set $ann $key $rendered -}}
   {{- end -}}
 {{- end -}}
-{{- $ann = merge $ann .Values.extraAnnotations -}}
+{{- /* The claim's own annotations win over the entry's: they are the escape hatch. */ -}}
+{{- $ann = mergeOverwrite $ann .Values.extraAnnotations -}}
 {{- $pinIP := and .Values.nodeIp (index $profile "supportsLoadBalancerIP" | default false) -}}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
