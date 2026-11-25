@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# =============================================================================
+# scripts/tests/test-gardener-dns-provider.sh
+# =============================================================================
+# dnsProvider gardener (#1366): the zone is written by a Gardener shoot's DNS
+# service, from annotations on the edge's Service. What decides it is read
+# from the entry in kernel/platforms.yaml, never from the provider's name:
+#
+#   - the edge chart puts the entry's edgeAnnotations on the Service, rendered
+#     against the kernel domain;
+#   - an entry without a solver gets no DNS-01 ClusterIssuer and no wildcard;
+#   - the interview offers it under HTTP-01, as the default where the cluster
+#     serves its detectCRD, and refuses it under DNS-01.
+# =============================================================================
+# shellcheck disable=SC2016,SC2034 # the checks are strings the harness evaluates, and read rc there
+
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
+
+# shellcheck source=scripts/tests/lib/harness.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/harness.sh"
+
+SCRIPT_DIR="$(pwd)"
+export SCRIPT_DIR
+# shellcheck disable=SC2317,SC2329 # called by the functions under test
+warn() { printf 'warn: %s\n' "$*" >&2; }
+# shellcheck disable=SC2317,SC2329 # called by the functions under test
+error() { printf 'error: %s\n' "$*" >&2; }
+for fn in yq_get _dns_provider_names _detect_dns_provider _dns_provider_list check_dns_params _dns_param; do
+    eval "$(sed -n "/^${fn}() {/,/^}/p" scripts/lib/common.sh)"
+done
+for fn in gentian_dns_provider gentian_dns_provider_solves gentian_platforms_values gentian_set_args_from_pairs; do
+    eval "$(sed -n "/^${fn}() {/,/^}/p" scripts/lib/certs.sh)"
+done
+
+# edge_annotations <dnsProvider> <kernelDomain> — the edge Service's annotations, as JSON.
+edge_annotations() {
+    helm template gentian-edge kernel/manifests/gateway/chart \
+        -f kernel/platforms.yaml \
+        --set namespace=kernel-edge \
+        --set-string platform=openstack \
+        --set-string nodeIp=192.0.2.1 \
+        --set-string "dnsProvider=$1" \
+        --set-string "kernelDomain=$2" 2>&1 |
+        python3 -c '
+import json, sys, yaml
+text = sys.stdin.read()
+try:
+    docs = list(yaml.safe_load_all(text))
+except yaml.YAMLError:
+    print(text); sys.exit()
+for doc in docs:
+    if doc and doc.get("kind") == "EnvoyProxy" and doc["metadata"]["name"] == "gentian-edge":
+        print(json.dumps(doc["spec"]["provider"]["kubernetes"]["envoyService"]["annotations"]))
+        sys.exit()
+print(text)
+'
+}
+
+# issuers <dnsProvider> — the names of the ClusterIssuers the cert-manager chart renders.
+issuers() {
+    helm template gentian-cert-manager kernel/manifests/cert-manager/chart \
+        -f kernel/platforms.yaml --show-only templates/cluster-issuers.yaml \
+        --set-string letsencryptEmail=admin@example.org --set-string kernelDomain=example.org \
+        --set-string gatewayNamespace=kernel-edge --set-string gatewayName=perimeter \
+        --set-string "dnsProvider=$1" 2>/dev/null |
+        python3 -c '
+import sys, yaml
+print(" ".join(sorted(d["metadata"]["name"] for d in yaml.safe_load_all(sys.stdin) if d and d.get("kind") == "ClusterIssuer")))
+'
+}
+
+echo ""
+echo "dnsProvider gardener"
+echo ""
+
+got="$(edge_annotations gardener example.org)"
+check "the edge Service names the domain and its wildcard" \
+    '[[ "$(jq -r ".\"dns.gardener.cloud/dnsnames\"" <<<"${got}")" == "example.org,*.example.org" ]]' "${got}"
+check "the edge Service is in Gardener's class" \
+    '[[ "$(jq -r ".\"dns.gardener.cloud/class\"" <<<"${got}")" == garden ]]' "${got}"
+check "the platform's annotations stay beside them" \
+    '[[ "$(jq -r ".\"loadbalancer.openstack.org/keep-floatingip\"" <<<"${got}")" == true ]]' "${got}"
+
+got="$(edge_annotations cloudflare example.org)"
+check "another provider puts nothing of Gardener's on the edge" \
+    '[[ "$(jq -r "keys | map(select(startswith(\"dns.gardener.cloud\"))) | length" <<<"${got}")" == 0 ]]' "${got}"
+
+got="$(edge_annotations gardener "")"
+check "without a kernel domain the render stops and says why" '[[ "${got}" == *"set kernelDomain"* ]]' "${got}"
+
+got="$(issuers gardener)"
+check "no DNS-01 issuer for a provider without a solver" '[[ "${got}" != *dns01* && "${got}" == *http01* ]]' "${got}"
+got="$(issuers cloudflare)"
+check "a provider with a solver still gets its DNS-01 issuer" '[[ "${got}" == *dns01-cloudflare* ]]' "${got}"
+
+check "gardener does not solve DNS-01" '! DNS_PROVIDER=gardener gentian_dns_provider_solves'
+check "none does not solve DNS-01" '! DNS_PROVIDER=none gentian_dns_provider_solves'
+check "cloudflare does" 'DNS_PROVIDER=cloudflare gentian_dns_provider_solves'
+
+check "HTTP-01 is offered gardener and none" \
+    '[[ " $(_dns_provider_names publishing) " == *" gardener "* && " $(_dns_provider_names publishing) " == *" none "* ]]'
+check "DNS-01 is offered neither" \
+    '[[ " $(_dns_provider_names solving) " != *" gardener "* && " $(_dns_provider_names solving) " != *" none "* && " $(_dns_provider_names solving) " == *" cloudflare "* ]]'
+
+STUB_DIR="$(mktemp -d)"
+trap 'rm -rf "${STUB_DIR}"' EXIT
+cat > "${STUB_DIR}/kubectl" <<'STUB'
+#!/usr/bin/env bash
+# get crd <name> succeeds for the names in KUBECTL_STUB_CRDS.
+[[ "$1 $2" == "get crd" && " ${KUBECTL_STUB_CRDS:-} " == *" $3 "* ]]
+STUB
+chmod +x "${STUB_DIR}/kubectl"
+check "a Gardener shoot defaults to gardener" \
+    '[[ "$(PATH="${STUB_DIR}:${PATH}" KUBECTL_STUB_CRDS=dnsentries.dns.gardener.cloud _detect_dns_provider)" == gardener ]]'
+check "any other cluster defaults to none" \
+    '[[ "$(PATH="${STUB_DIR}:${PATH}" KUBECTL_STUB_CRDS= _detect_dns_provider)" == none ]]'
+
+out="$(CERT_ISSUER_MODE=acme-dns01 DNS_PROVIDER=gardener check_dns_params 2>&1)"; rc=$?
+check "acme-dns01 with gardener is refused" '(( rc != 0 )) && [[ "${out}" == *"needs a DNS provider that answers DNS-01"* ]]' "${out}"
+out="$(CERT_ISSUER_MODE=acme-http01 DNS_PROVIDER=gardener check_dns_params 2>&1)"; rc=$?
+check "acme-http01 with gardener passes" '(( rc == 0 ))' "${out}"
+
+finish

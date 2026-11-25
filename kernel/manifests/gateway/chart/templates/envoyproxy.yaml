@@ -35,7 +35,24 @@ allocate one" without a second field saying which.
     {{- $_ := set $ann $key $rendered -}}
   {{- end -}}
 {{- end -}}
-{{- /* The claim's own annotations win over the entry's: they are the escape hatch. */ -}}
+{{- /*
+The DNS provider's: a provider whose records follow the Service (gardener)
+names them in its entry, rendered against the kernel domain.
+*/ -}}
+{{- $dnsProvider := .Values.dnsProvider | default "" -}}
+{{- if $dnsProvider -}}
+  {{- $dnsProfile := index (.Values.dnsProviders | default dict) $dnsProvider | default dict -}}
+  {{- range $key, $value := (index $dnsProfile "edgeAnnotations" | default dict) -}}
+    {{- if not $.Values.kernelDomain -}}
+      {{- fail (printf "dnsProvider %q annotates the edge with the kernel domain: set kernelDomain" $dnsProvider) -}}
+    {{- end -}}
+    {{- $rendered := tpl (toString $value) $ | trim -}}
+    {{- if $rendered -}}
+      {{- $_ := set $ann $key $rendered -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- /* The claim's own annotations win over the entries': they are the escape hatch. */ -}}
 {{- $ann = mergeOverwrite $ann .Values.extraAnnotations -}}
 {{- $pinIP := and .Values.nodeIp (index $profile "supportsLoadBalancerIP" | default false) -}}
 apiVersion: gateway.envoyproxy.io/v1alpha1

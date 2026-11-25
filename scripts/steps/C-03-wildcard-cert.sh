@@ -19,7 +19,7 @@ check() {
     # The claim says which provider hosts the zone, not the environment: a
     # --status pass carries no DNS_PROVIDER and would otherwise report a
     # cluster that is serving the certificate as undefined.
-    [[ "$(gentian_dns_provider)" == "none" ]] && return "${CHECK_UNDEFINED}"
+    gentian_dns_provider_solves || return "${CHECK_UNDEFINED}"
     # Issued by the issuer the claim names now. A switch from staging to
     # production otherwise left the staging certificate in place for good:
     # it was still there and still propagated, which was all this asked.
