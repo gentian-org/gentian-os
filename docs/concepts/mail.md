@@ -553,9 +553,14 @@ that declare `mail.smtp` send straight to the address the claim names
 §6).
 
 A cluster whose claim was stored as `system`, the former name of `internal`,
-keeps its mail stack: the Composition and the ApplicationSets read the stored
-word as `internal` until the claim is edited, and the schema refuses it on
-the next edit.
+keeps its mail stack: the operator, the Composition and the ApplicationSets
+read the stored word as `internal` until the claim is edited. The schema
+refuses it on the next edit of `mail`, and the installer's pre-flight
+(`--validate`) reports it, as it reports `external` without `mail.imap.host`
+(what a relay used to be called). The installer does not rewrite the claim:
+edit `system` to `internal` and a former `external` to `relay` together with
+the install run that brings the release, since an operator from before the
+rename reads `internal` as no mail stack.
 
 What differs between the two is *mailboxes*. A `relay` cluster has none that
 the platform knows of: outbound and notification mail work, and an app that

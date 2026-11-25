@@ -90,8 +90,8 @@ spec:
             # in the control namespace, on the cluster network.
             - name: global.eventListener.signInRolesURL
               value: 'http://gentian-os-usher.ns.control.placeholder.svc.cluster.local:8083/v1/sign-in-roles'
-            # The claim's mail.host, the relay Keycloak's realm sends through on
-            # an external-mail cluster -- the same placeholder the mail
+            # The claim's mail.host, the server Keycloak's realm sends through on
+            # a relay or external-mail cluster -- the same placeholder the mail
             # ApplicationSet fills. Without it keycloak-smtp-credentials had an
             # empty smtp_host, and the realm was configured to send to ":587".
             - name: relayHost
