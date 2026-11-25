@@ -336,6 +336,7 @@ func (r *ComponentReconciler) ensureDMZNamespace(ctx context.Context, tenant *ge
 			// The DMZ runs somebody else's traffic with no session in front of
 			// it, so it gets the restricted posture without exception.
 			"pod-security.kubernetes.io/enforce": "restricted",
+			layout.LabelAPIServiceHostOptOut:     layout.APIServiceHostOptOut,
 		},
 	}}
 	err := r.Create(ctx, ns)

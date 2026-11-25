@@ -79,23 +79,41 @@ ns_labels() {
     _ns_table | awk -v n="${name}" '$1 == n { printf "gentianos.io/tier=%s gentianos.io/function=%s\n", $2, $NF }'
 }
 
+# On a Gardener shoot a webhook points every pod at the API server's public
+# name instead of the kubernetes Service, an address the kernel's egress rules
+# do not admit. This label, Gardener's own opt-out, keeps the pods of a
+# namespace on the Service. Elsewhere nothing reads it. Kernel namespaces
+# only: the platform's own are the platform's.
+NS_API_SERVICE_HOST_OPT_OUT="apiserver-proxy.networking.gardener.cloud/inject=disable"
+
+# _ns_own_labels <name> -- the labels beyond tier and function that a
+# namespace gentian-os creates carries.
+_ns_own_labels() {
+    [[ "${1:?}" == kernel-* ]] && echo "${NS_API_SERVICE_HOST_OPT_OUT}"
+    return 0
+}
+
 ns_ensure() {
     local name="${1:?ns_ensure <name>}" labels
     labels="$(ns_labels "${name}")"
     [[ -n "${labels}" ]] || { echo "namespace '${name}' is not in ${NAMESPACES_FILE}" >&2; return 1; }
+    labels="${labels} $(_ns_own_labels "${name}")"
     if ! kubectl get namespace "${name}" >/dev/null 2>&1; then
         kubectl create namespace "${name}" >/dev/null
     fi
-    # shellcheck disable=SC2086 # two key=value words, by construction
+    # shellcheck disable=SC2086 # key=value words, by construction
     kubectl label --overwrite namespace "${name}" ${labels} >/dev/null
 }
 
 ns_labelled_ok() {
-    local name="${1:?}" tier fn
+    local name="${1:?}" tier fn own
     read -r tier fn < <(_ns_table | awk -v n="${name}" '$1 == n { print $2, $NF }')
     [[ -n "${tier}" ]] || return 1
     [[ "$(kubectl get namespace "${name}" -o jsonpath='{.metadata.labels.gentianos\.io/tier}' 2>/dev/null)" == "${tier}" ]] &&
-    [[ "$(kubectl get namespace "${name}" -o jsonpath='{.metadata.labels.gentianos\.io/function}' 2>/dev/null)" == "${fn}" ]]
+    [[ "$(kubectl get namespace "${name}" -o jsonpath='{.metadata.labels.gentianos\.io/function}' 2>/dev/null)" == "${fn}" ]] || return 1
+    own="$(_ns_own_labels "${name}")"
+    [[ -z "${own}" ]] ||
+        [[ "$(kubectl get namespace "${name}" -o jsonpath='{.metadata.labels.apiserver-proxy\.networking\.gardener\.cloud/inject}' 2>/dev/null)" == "${own#*=}" ]]
 }
 
 ns_ensure_kernel() {

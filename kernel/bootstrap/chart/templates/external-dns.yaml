@@ -62,6 +62,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: external-dns
+  labels:
+    # Gardener's opt-out from pointing pods at the API server's public name;
+    # they use the kubernetes Service.
+    apiserver-proxy.networking.gardener.cloud/inject: disable
 {{- if $cred }}
 ---
 # The same credential cert-manager uses for DNS-01, from the same OpenBao path.

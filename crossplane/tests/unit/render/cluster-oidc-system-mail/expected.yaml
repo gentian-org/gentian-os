@@ -269,6 +269,7 @@ spec:
       kind: Namespace
       metadata:
         labels:
+          apiserver-proxy.networking.gardener.cloud/inject: disable
           gentianos.io/cluster: dev-cluster
           gentianos.io/function: cache
           gentianos.io/managed-by: crossplane
@@ -299,6 +300,7 @@ spec:
       kind: Namespace
       metadata:
         labels:
+          apiserver-proxy.networking.gardener.cloud/inject: disable
           gentianos.io/cluster: dev-cluster
           gentianos.io/function: mail
           gentianos.io/managed-by: crossplane
@@ -329,6 +331,7 @@ spec:
       kind: Namespace
       metadata:
         labels:
+          apiserver-proxy.networking.gardener.cloud/inject: disable
           gentianos.io/cluster: dev-cluster
           gentianos.io/function: mail-dmz
           gentianos.io/managed-by: crossplane
@@ -359,6 +362,7 @@ spec:
       kind: Namespace
       metadata:
         labels:
+          apiserver-proxy.networking.gardener.cloud/inject: disable
           gentianos.io/cluster: dev-cluster
           gentianos.io/function: mariadb
           gentianos.io/managed-by: crossplane
@@ -389,6 +393,7 @@ spec:
       kind: Namespace
       metadata:
         labels:
+          apiserver-proxy.networking.gardener.cloud/inject: disable
           gentianos.io/cluster: dev-cluster
           gentianos.io/function: postgresql
           gentianos.io/managed-by: crossplane
@@ -419,6 +424,7 @@ spec:
       kind: Namespace
       metadata:
         labels:
+          apiserver-proxy.networking.gardener.cloud/inject: disable
           gentianos.io/cluster: dev-cluster
           gentianos.io/function: s3
           gentianos.io/managed-by: crossplane

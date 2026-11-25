@@ -31,6 +31,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/componentkeys"
 	"github.com/gentian-org/gentian-os/internal/dispatcher"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 const (
@@ -348,7 +349,8 @@ func TestTheNamespaceForRunsAndItsRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ns.Labels["gentianos.io/tier"] != "tenant-runs" || ns.Labels["gentianos.io/tenant"] != "acme" ||
-		ns.Labels["pod-security.kubernetes.io/enforce"] != "restricted" {
+		ns.Labels["pod-security.kubernetes.io/enforce"] != "restricted" ||
+		ns.Labels[layout.LabelAPIServiceHostOptOut] != layout.APIServiceHostOptOut {
 		t.Fatalf("namespace labels = %v", ns.Labels)
 	}
 	account := &corev1.ServiceAccount{}

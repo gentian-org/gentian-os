@@ -172,6 +172,10 @@ spec:
                            perimeter `system` would place it inside. */}}
                       gentianos.io/tier: {{ ternary "system-dmz" "system" (hasSuffix "-dmz" $fn) }}
                       gentianos.io/function: {{ $fn }}
+                      {{- /* Gardener's opt-out from pointing pods at the API
+                           server's public name, which the egress rules do
+                           not admit; they use the kubernetes Service. */}}
+                      apiserver-proxy.networking.gardener.cloud/inject: disable
               providerConfigRef:
                 name: kubernetes
             {{- end }}
