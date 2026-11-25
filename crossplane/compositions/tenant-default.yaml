@@ -188,6 +188,10 @@ spec:
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/managed-by: crossplane
                       app.kubernetes.io/managed-by: gentian-os
+                      # Gardener's opt-out from pointing pods at the API
+                      # server's public name, which the egress rules do not
+                      # admit; they use the kubernetes Service.
+                      apiserver-proxy.networking.gardener.cloud/inject: disable
 
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2

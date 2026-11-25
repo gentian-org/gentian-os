@@ -105,6 +105,16 @@ func TenantRuns(name string) string { return "tenant-" + name + "-runs" }
 // System returns a system function's namespace.
 func System(fn string) string { return "system-" + fn }
 
+// LabelAPIServiceHostOptOut is Gardener's opt-out from its webhook that
+// points every pod at the API server's public name rather than the kubernetes
+// Service. The kernel's egress rules admit the API server by the Service's
+// endpoints, so a namespace gentian-os creates carries it, set to
+// APIServiceHostOptOut. Clusters without Gardener do not read it.
+const (
+	LabelAPIServiceHostOptOut = "apiserver-proxy.networking.gardener.cloud/inject"
+	APIServiceHostOptOut      = "disable"
+)
+
 // TenantLabels returns the labels of a tenant namespace, or its DMZ.
 func TenantLabels(tenant string, dmz bool) map[string]string {
 	tier := TierTenant

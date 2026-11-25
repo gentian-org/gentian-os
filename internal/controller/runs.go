@@ -569,6 +569,7 @@ func (r *RunsReconciler) ensureRunNamespace(ctx context.Context, runs *tenantRun
 		// A run is somebody's code started on somebody's word: it runs
 		// under the strictest standard, and no profile can ask for less.
 		"pod-security.kubernetes.io/enforce": "restricted",
+		layout.LabelAPIServiceHostOptOut:     layout.APIServiceHostOptOut,
 	}}}
 	if err := r.Create(ctx, ns); err != nil && !errors.IsAlreadyExists(err) {
 		return err

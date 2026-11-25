@@ -347,6 +347,9 @@ func TestAnEnabledSurfaceIsPublishedFromTheDMZ(t *testing.T) {
 	if nsObj.Labels["gentianos.io/tier"] != string(layout.TierTenantDMZ) {
 		t.Fatalf("DMZ tier = %q", nsObj.Labels["gentianos.io/tier"])
 	}
+	if nsObj.Labels[layout.LabelAPIServiceHostOptOut] != layout.APIServiceHostOptOut {
+		t.Fatalf("DMZ labels = %v: no opt-out from the API server's public name", nsObj.Labels)
+	}
 
 	// The proxy runs there, not in the tenant's namespace.
 	deploy := &appsv1.Deployment{}
