@@ -80,6 +80,9 @@ spec:
             - --leader-election-namespace={{ .Values.leaderElectionNamespace }}
             {{- end }}
             - --zap-log-level={{ .Values.logLevel }}
+            {{- if .Values.profiling.enabled }}
+            - --pprof-bind-address=127.0.0.1:6060
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "gentian-os.fullname" . }}-config

@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"runtime/debug"
@@ -168,6 +169,7 @@ func main() {
 	var probeAddr string
 	var enableLeaderElection bool
 	var enableWebhook bool
+	var pprofAddr string
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -175,9 +177,16 @@ func main() {
 		"Enable leader election for controller manager. Ensures only one active controller when scaled.")
 	flag.BoolVar(&enableWebhook, "enable-webhook", false,
 		"Enable the validating webhook server. Requires TLS certs in the webhook cert dir.")
+	flag.StringVar(&pprofAddr, "pprof-bind-address", "",
+		"Serve Go's profiles (/debug/pprof) at this loopback address, for example 127.0.0.1:6060. "+
+			"Empty, the default, serves none. Read through kubectl port-forward.")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+	if err := loopbackOnly(pprofAddr); err != nil {
+		fmt.Fprintf(os.Stderr, "--pprof-bind-address: %v\n", err)
+		os.Exit(2)
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
@@ -187,6 +196,7 @@ func main() {
 			BindAddress: metricsAddr,
 		},
 		HealthProbeBindAddress: probeAddr,
+		PprofBindAddress:       pprofAddr,
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "gentianos.io",
 	})

@@ -794,6 +794,12 @@ sent, for a platform admin to read
 - Calls: the Kubernetes API, Keycloak, the vault, OpenFGA, the arbiter, the
   platform's release index, and the usage statistics address when reporting
   is on.
+- Profiles: with the chart value `profiling.enabled`, off by default, the
+  operator serves Go's profiles (`/debug/pprof`) on the pod's loopback,
+  `127.0.0.1:6060`, and refuses any other address. Only an administrator's
+  `kubectl port-forward` reaches them, for example
+  `kubectl -n kernel-control port-forward deploy/gentian-os 6060` and then
+  `go tool pprof http://127.0.0.1:6060/debug/pprof/profile?seconds=30`.
 
 **If it is unavailable**
 
