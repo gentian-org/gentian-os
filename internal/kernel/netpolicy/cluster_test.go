@@ -143,7 +143,7 @@ func TestDNSEgressIsTheDNSServicesPodsAndClusterAddress(t *testing.T) {
 		servicePort(53, corev1.ProtocolUDP, dns53),
 		servicePort(53, corev1.ProtocolTCP, dns53),
 		servicePort(9153, corev1.ProtocolTCP, intstr.FromInt32(9153)))
-	rules := netpolicy.DNSEgress([]corev1.Service{svc})
+	rules := netpolicy.DNSEgress(netpolicy.ClusterDNS{Services: []corev1.Service{svc}})
 
 	everyRuleNamesAPeer(t, rules)
 	for _, protocol := range []corev1.Protocol{corev1.ProtocolUDP, corev1.ProtocolTCP} {
@@ -167,7 +167,7 @@ func TestDNSEgressFollowsTheServicesTargetPort(t *testing.T) {
 	svc := dnsService("kube-dns", selector, "10.152.183.10",
 		servicePort(53, corev1.ProtocolUDP, intstr.FromString("dns")),
 		servicePort(53, corev1.ProtocolTCP, intstr.FromInt32(1053)))
-	rules := netpolicy.DNSEgress([]corev1.Service{svc})
+	rules := netpolicy.DNSEgress(netpolicy.ClusterDNS{Services: []corev1.Service{svc}})
 
 	if !admits(rules, corev1.ProtocolUDP, intstr.FromString("dns"), pods("kube-system", selector)) {
 		t.Errorf("the pods are not admitted on the named target port: %+v", rules)
@@ -197,12 +197,12 @@ func TestDNSEgressFallsBackToOpen53WithoutADNSService(t *testing.T) {
 		"no selector": {noSelector},
 		"not port 53": {headlessOther},
 	} {
-		rules := netpolicy.DNSEgress(dns)
+		rules := netpolicy.DNSEgress(netpolicy.ClusterDNS{Services: dns})
 		if len(rules) != 1 || len(rules[0].To) != 0 ||
 			!admits(rules, corev1.ProtocolUDP, dns53, nil) || !admits(rules, corev1.ProtocolTCP, dns53, nil) {
 			t.Errorf("%s: rules = %+v, want 53 over UDP and TCP to every address", name, rules)
 		}
-		if (netpolicy.ClusterServices{DNS: dns}).HasDNS() {
+		if (netpolicy.ClusterServices{DNS: netpolicy.ClusterDNS{Services: dns}}).HasDNS() {
 			t.Errorf("%s: counted as the cluster's DNS", name)
 		}
 	}
@@ -255,7 +255,7 @@ func TestAPIServerEgressFallsBackToTheRangeWithoutAnAddress(t *testing.T) {
 func TestClusterAddressesOfIPv6AreSingleHostBlocks(t *testing.T) {
 	svc := dnsService("kube-dns", map[string]string{"k8s-app": "kube-dns"}, "fd00::a",
 		servicePort(53, corev1.ProtocolUDP, dns53))
-	rules := netpolicy.DNSEgress([]corev1.Service{svc})
+	rules := netpolicy.DNSEgress(netpolicy.ClusterDNS{Services: []corev1.Service{svc}})
 	if !admits(rules, corev1.ProtocolUDP, dns53, block("fd00::a/128")) {
 		t.Errorf("rules = %+v, want fd00::a/128", rules)
 	}
@@ -273,8 +273,8 @@ func TestClusterAddressesOfIPv6AreSingleHostBlocks(t *testing.T) {
 func TestBaselineEgressNamesThePeersOfTheClustersServices(t *testing.T) {
 	selector := map[string]string{"k8s-app": "kube-dns"}
 	cluster := netpolicy.ClusterServices{
-		DNS: []corev1.Service{dnsService("kube-dns", selector, "10.152.183.10",
-			servicePort(53, corev1.ProtocolUDP, dns53), servicePort(53, corev1.ProtocolTCP, dns53))},
+		DNS: netpolicy.ClusterDNS{Services: []corev1.Service{dnsService("kube-dns", selector, "10.152.183.10",
+			servicePort(53, corev1.ProtocolUDP, dns53), servicePort(53, corev1.ProtocolTCP, dns53))}},
 		APIService:   apiService("10.152.183.1"),
 		APIEndpoints: []discoveryv1.EndpointSlice{apiSlice(16443, "192.168.0.100")},
 	}
