@@ -22,6 +22,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -1538,14 +1539,15 @@ func TestAnAppThePlatformDeploysNothingForIsCapturedWithoutAPause(t *testing.T) 
 }
 
 // The refusal stays wherever something of the app may run unseen: its release
-// was rendered or taken over, its inventory cannot be read, or there is no
-// Component to ask.
+// was rendered or taken over and exists, its inventory cannot be read, or there
+// is no Component to ask.
 func TestAPauseThatFindsNoWorkloadIsStillRefusedWhereTheAppMayRun(t *testing.T) {
 	ctx := context.Background()
 	release := `["helm.crossplane.io/v1beta1|Release||tenant-demo-notify-me"]`
+	live := liveRelease("tenant-demo-notify-me")
 	for name, objs := range map[string][]client.Object{
-		"a rendered release":   {componentOf("notify-me", map[string]string{renderedAnnotation: release})},
-		"a taken-over release": {componentOf("notify-me", map[string]string{takenAnnotation: release})},
+		"a rendered release":   {componentOf("notify-me", map[string]string{renderedAnnotation: release}), live},
+		"a taken-over release": {componentOf("notify-me", map[string]string{takenAnnotation: release}), live},
 		"an unreadable list":   {componentOf("notify-me", map[string]string{renderedAnnotation: "not json"})},
 		"no component":         nil,
 	} {
@@ -1554,5 +1556,31 @@ func TestAPauseThatFindsNoWorkloadIsStillRefusedWhereTheAppMayRun(t *testing.T) 
 		if !errors.Is(err, errNoWorkload) {
 			t.Errorf("%s: err = %v, want the refusal", name, err)
 		}
+	}
+}
+
+// liveRelease is a provider-helm Release as it stands on the cluster.
+func liveRelease(name string) *unstructured.Unstructured {
+	r := &unstructured.Unstructured{}
+	r.SetGroupVersionKind(helmReleaseGVK)
+	r.SetName(name)
+	return r
+}
+
+// The inventory records what is about to be written. A component held back on
+// values it waits for named its release and never created it: nothing of the
+// app runs, so a tenant's backup captures it unpaused instead of failing on it.
+func TestAnAppWhoseReleaseWasNeverCreatedIsCapturedWithoutAPause(t *testing.T) {
+	ctx := context.Background()
+	comp := componentOf("audit", map[string]string{
+		renderedAnnotation: `["external-secrets.io/v1|ExternalSecret|kernel-control|credreq","helm.crossplane.io/v1beta1|Release||tenant-demo-audit"]`,
+	})
+	r := quiesceReconciler(comp)
+	mode, err := r.quiesceApp(ctx, "demo", "audit", nil)
+	if err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+	if mode != gentianov1alpha1.BackupQuiesceNone {
+		t.Errorf("mode = %q, want none", mode)
 	}
 }
