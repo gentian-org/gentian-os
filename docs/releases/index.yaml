@@ -53,3 +53,15 @@ releases:
       adminConsole: 0.1.1-v0.5.1
       concierge: 0.1.0-v0.5.1
     catalogue: https://gentian-org.github.io/gentian-apps
+  - version: v0.5.2
+    line: "0.5"
+    date: 2026-11-25
+    notes: https://github.com/gentian-org/gentian-os/releases/tag/v0.5.2
+    # One installer run with D-03 forced moves a v0.5.1 cluster (notes,
+    # Upgrade notes): never taken by the mover.
+    upgradesFrom: []
+    ui:
+      desktop: 0.1.0-v0.5.2
+      adminConsole: 0.1.1-v0.5.2
+      concierge: 0.1.0-v0.5.2
+    catalogue: https://gentian-org.github.io/gentian-apps
