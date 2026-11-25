@@ -21,7 +21,9 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -93,8 +95,11 @@ var errNoWorkload = errors.New("no Deployment or StatefulSet to scale down")
 
 // appDeploysNothing reports whether the platform deployed nothing that runs
 // for an app: its Component's inventory, rendered and taken over, names no Helm
-// release. An inventory that cannot be read, or no Component at all, is not
-// taken as nothing: the pause is refused then, as before.
+// release that exists. The inventory records what is about to be written, so a
+// release it names may never have been created -- a component held back on
+// values it waits for -- and such a release runs nothing. An inventory that
+// cannot be read, a release that cannot be looked up, or no Component at all,
+// is not taken as nothing: the pause is refused then, as before.
 func (r *TenantReconciler) appDeploysNothing(ctx context.Context, tenantName, appName string) (bool, error) {
 	ns, err := tenantNamespaceByName(ctx, r.Client, tenantName)
 	if err != nil {
@@ -115,9 +120,18 @@ func (r *TenantReconciler) appDeploysNothing(ctx context.Context, tenantName, ap
 		}
 		for _, key := range keys {
 			// "apiVersion|kind|namespace|name"
-			if parts := strings.Split(key, "|"); len(parts) == 4 && parts[1] == "Release" {
-				return false, nil
+			parts := strings.Split(key, "|")
+			if len(parts) != 4 || parts[1] != "Release" {
+				continue
 			}
+			release := &unstructured.Unstructured{}
+			release.SetAPIVersion(parts[0])
+			release.SetKind(parts[1])
+			err := r.Get(ctx, types.NamespacedName{Namespace: parts[2], Name: parts[3]}, release)
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return false, nil
 		}
 	}
 	return true, nil
