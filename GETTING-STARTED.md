@@ -84,38 +84,11 @@ until it is done.
 
 ## What you need before you start
 
-- **A Kubernetes cluster you are an admin on, version 1.33 or newer.** The
-  installer does not create one, and pre-flight refuses an older one: the
-  edge it installs, Envoy Gateway 1.9, is tested on Kubernetes 1.33 to 1.36.
-  `kubectl version` shows the server's. It runs 100+ pods, so a laptop-sized
-  node pool will be tight.
-
-  - It needs cluster DNS, RBAC and a default StorageClass. On MicroK8s those
-    are the add-ons `dns`, `rbac` and `hostpath-storage` (or a StorageClass
-    of your own, named at the `storageClass` question in step 4). The
-    installer raises MicroK8s's limit of 110 pods per node to 220 itself,
-    which restarts MicroK8s once and asks for `sudo`.
-  - **An older MicroK8s is upgraded one minor version at a time**, never
-    across several — Kubernetes supports no other way. From 1.31, for
-    example, wait for the node to be `Ready` after each of:
-
-    ```bash
-    sudo snap refresh microk8s --channel=1.32/stable && microk8s status --wait-ready
-    sudo snap refresh microk8s --channel=1.33/stable && microk8s status --wait-ready
-    kubectl get nodes        # VERSION reads v1.33.x
-    ```
-  - Use a `kubectl` no more than one minor version away from the cluster's.
-    An older one still works for most things and prints a warning about
-    version skew on every call.
-  - **Secrets encrypted at rest.** Kubernetes stores every Secret in etcd,
-    and without an encryption provider at the API server that is plain
-    base64 for anyone who holds an etcd snapshot. On your own control plane,
-    give the API server an `EncryptionConfiguration` before installing; on a
-    managed one, ask the provider and record the answer when step 0 asks for
-    `controlPlane.secretsAtRest`. Pre-flight warns until the claim says
-    `provider` or `cluster`, or the API server's flags show it. Switched on
-    after the fact, run `scripts/tools/rewrite-secrets.sh --apply` once: a
-    Secret written before stays plain until it is written again.
+- **A Kubernetes cluster you are an admin on, version 1.33 or newer, with
+  room for about 100 pods before any app.** What it needs (cluster DNS, RBAC,
+  a default StorageClass, Secrets encrypted at rest), how big it has to be,
+  and how the platform learns where it runs and who hosts its DNS:
+  [cluster-requirements.md](docs/guides/cluster-requirements.md).
 - **These tools on your `PATH`:** `kubectl helm jq yq openssl curl git gpg
   crossplane python3 age age-keygen`. Pre-flight checks and names any that are
   missing, and refuses to start without them. `bao` (the OpenBao CLI) is the
@@ -355,6 +328,11 @@ not want to supply one. On a tunnel cluster the installer asks for the tunnel
 token as well. One Cloudflare token may hold both permissions; it is then
 entered twice, once at each question — see
 [routing.md](docs/concepts/routing.md) §3a for what to grant it.
+
+Whichever the provider, the DNS credential has to be allowed to write every
+record the cluster publishes, not only the certificate challenges:
+[cluster-requirements.md §4.1](docs/guides/cluster-requirements.md#41-what-the-credential-must-be-allowed-to-write)
+lists them.
 
 If a value is rejected, the installer names where it came from and asks for a
 replacement rather than aborting.

@@ -39,6 +39,7 @@ How to do one thing, for operators, tenant administrators and app authors.
 | [tenant-backup.md](guides/tenant-backup.md) | Backing up and recovering a workspace, as a tenant administrator |
 | [recovery.md](guides/recovery.md) | Recovering after a loss of a cluster, a tenant or a key |
 | [node-pool-migration.md](guides/node-pool-migration.md) | Moving a cluster to a new node flavor |
+| [cluster-requirements.md](guides/cluster-requirements.md) | What a cluster needs before the install, its size, and its platform and DNS provider entries |
 
 ## Reference
 

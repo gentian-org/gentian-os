@@ -14,6 +14,7 @@
 ## Guides
 
 - [App Customization Framework — the Gentian Customization Ladder](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/app-customization.md): Gentian has customization mechanisms — `extraValues`, `Tenant.spec.apps[].config`, profile annotations, `composition.yaml`, the `gentian-sidecar-git-modules` addon sync, the `ocb` Odoo fork — and…
+- [Preparing a cluster: requirements, platform and DNS provider](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/cluster-requirements.md): What the Kubernetes cluster has to offer before the install, how big it has to be, and how the platform learns where the cluster runs and who hosts its DNS.
 - [Custom catalogs](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/custom-catalogs.md): How to publish your own apps to a Gentian OS cluster: what a catalog is, how to build one from an empty git repository, how to add it to a cluster or to one tenant, and what the platform checks.
 - [Deployment Environments and Promotion](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/deployment.md): This guide describes how Gentian OS clusters are configured, how a new cluster gets bootstrapped, and how releases promote from development to production.
 - [Using the edge: ways in and ways out](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/edge.md): Every way traffic enters or leaves the cluster: which one to choose, what a profile declares, who approves it, and how to check it.
