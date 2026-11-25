@@ -603,36 +603,30 @@ func (r *ComponentReconciler) applyObject(ctx context.Context, comp *gentianov1a
 // still report the revision before as ready.
 const releaseRevisionBeforeAnnotation = "gentianos.io/helm-revision-before"
 
-// releaseDeployedFields are what provider-helm deploys a release from: a
-// change to any of them is a Helm upgrade, a new revision. The chart is
-// compared one way, as the provider fills in beside what is rendered there;
-// the values are the render's own and compared both ways, so a value the
-// render stopped saying counts.
+// What a Helm upgrade is known to follow from: a change of the chart, or of
+// the inline values. provider-helm compares the values it resolves, not the
+// spec, so a change of set or valuesFrom alone may resolve to the same values
+// -- a value moved from a set entry into a valuesFrom document -- and makes no
+// new revision: waiting for one would wait for ever. The chart is compared one
+// way, as the provider fills in beside what is rendered there; the inline
+// values are the render's own and compared both ways, so a value the render
+// stopped saying counts.
 var (
 	releaseChartPath  = []string{"spec", "forProvider", "chart"}
-	releaseValuePaths = [][]string{
-		{"spec", "forProvider", "values"},
-		{"spec", "forProvider", "set"},
-		{"spec", "forProvider", "valuesFrom"},
-	}
+	releaseValuesPath = []string{"spec", "forProvider", "values"}
 )
 
-// releaseDeploysChange reports whether writing desired over live changes
-// what Helm deploys.
+// releaseDeploysChange reports whether writing desired over live is known to
+// make Helm deploy a new revision.
 func releaseDeploysChange(live, desired *unstructured.Unstructured) bool {
 	have, _, _ := unstructured.NestedFieldNoCopy(live.Object, releaseChartPath...)
 	want, _, _ := unstructured.NestedFieldNoCopy(desired.Object, releaseChartPath...)
 	if !covers(have, want) {
 		return true
 	}
-	for _, path := range releaseValuePaths {
-		have, _, _ := unstructured.NestedFieldNoCopy(live.Object, path...)
-		want, _, _ := unstructured.NestedFieldNoCopy(desired.Object, path...)
-		if !covers(have, want) || !covers(want, have) {
-			return true
-		}
-	}
-	return false
+	have, _, _ = unstructured.NestedFieldNoCopy(live.Object, releaseValuesPath...)
+	want, _, _ = unstructured.NestedFieldNoCopy(desired.Object, releaseValuesPath...)
+	return !covers(have, want) || !covers(want, have)
 }
 
 // releaseAwaitsRevision says what a release still waits for when the
@@ -822,12 +816,15 @@ func (r *ComponentReconciler) renderedReady(ctx context.Context, objs []*unstruc
 		if live == nil {
 			return false, fmt.Sprintf("waiting for %s %s", obj.GetKind(), obj.GetName()), nil
 		}
-		if isRelease(obj) {
-			if waiting := releaseAwaitsRevision(live); waiting != "" {
-				return false, waiting, nil
-			}
-		}
 		if crossplaneObjectReady(live) {
+			// A Ready release may still report the revision before the
+			// change last written to it; one that is not Ready says why
+			// first, below, a Helm error before any revision among it.
+			if isRelease(obj) {
+				if waiting := releaseAwaitsRevision(live); waiting != "" {
+					return false, waiting, nil
+				}
+			}
 			continue
 		}
 		if isRelease(obj) {
