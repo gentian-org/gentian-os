@@ -817,7 +817,9 @@ spec:
                     Extra annotations for the edge LoadBalancer Service, as
                     comma-separated key=value pairs. The escape hatch for a
                     platform the table has no entry for, applied on top of
-                    whatever that entry contributes.
+                    whatever that entry contributes. A piece without "="
+                    continues the value before it, so a value may hold a
+                    comma (dns.gardener.cloud/dnsnames=a.example,*.a.example).
                 storageClass:
                   type: string
                   description: >

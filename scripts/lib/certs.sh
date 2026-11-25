@@ -159,16 +159,33 @@ gentian_platforms_values() { echo "${SCRIPT_DIR}/kernel/platforms.yaml"; }
 # One parser, three callers: platformParams, dnsParams and the free-form
 # lbAnnotations all arrive in the same shape, and each having its own loop is
 # how the third one came to skip the malformed-entry warning.
+#
+# A piece without "=" continues the value before it, so a value may hold a
+# comma (dns.gardener.cloud/dnsnames=a.example,*.a.example). Helm reads a dot
+# in a --set key as nesting and a comma in a value as the next assignment, so
+# both are escaped: an annotation key (loadbalancer.openstack.org/...) reaches
+# the map as one key.
 gentian_set_args_from_pairs() {
-    local prefix="$1" pairs="${2:-}" pair
-    while IFS= read -r pair; do
-        [[ -z "${pair}" ]] && continue
-        if [[ "${pair}" != *=* ]]; then
-            warn "Ignoring malformed ${prefix} entry: ${pair}"
-            continue
+    local prefix="$1" pairs="${2:-}" piece key="" value=""
+    local -a keys=() values=()
+    while IFS= read -r piece; do
+        [[ -z "${piece}" ]] && continue
+        if [[ "${piece}" == *=* ]]; then
+            keys+=("${piece%%=*}")
+            values+=("${piece#*=}")
+        elif ((${#keys[@]} > 0)); then
+            values[${#values[@]}-1]+=",${piece}"
+        else
+            warn "Ignoring malformed ${prefix} entry: ${piece}"
         fi
-        printf -- '--set-string\n%s.%s=%s\n' "${prefix}" "${pair%%=*}" "${pair#*=}"
     done < <(printf '%s\n' "${pairs}" | tr ',' '\n')
+    local i
+    for i in "${!keys[@]}"; do
+        key="${keys[i]//./\\.}"
+        value="${values[i]//\\/\\\\}"
+        value="${value//,/\\,}"
+        printf -- '--set-string\n%s.%s=%s\n' "${prefix}" "${key}" "${value}"
+    done
 }
 
 gentian_cluster_issuers_manifest() {
