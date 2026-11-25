@@ -261,7 +261,7 @@ func (r *TenantExportReconciler) stageFor(
 		}
 	}
 	// And the way out to an external destination, for units in the
-	// tenant's namespace only.
+	// tenant's namespace and in kernel namespaces that keep their pods in.
 	return ensureRunDestinationEgress(ctx, r.Client, r.Scheme, export, runKindExport, export.Status.Bundle, units)
 }
 
