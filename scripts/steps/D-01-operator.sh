@@ -32,7 +32,12 @@ _d01_deployments() { local release="gentian-os"; echo "${release} ${release}-dir
 check() {
     local ns d want="${GENTIAN_OS_IMAGE_TAG:-}"
     ns="$(ns_kernel control)"
-    _v5_delivered "$(ns_kernel gitops)" gentian-os || return 1
+    # Synced, not Healthy. The release also carries the bouncer, which is
+    # ready only once it holds the kernel realm's signing keys, and that realm
+    # is D-03's to create: on a fresh cluster the Application cannot be
+    # Healthy here. What this step is about is the two Deployments below, and
+    # D-03 waits for the Application to be Healthy once the realm exists.
+    _v5_delivered "$(ns_kernel gitops)" gentian-os synced || return 1
     # The build this run renders is the one pinned, and the one running. B-01
     # may have moved the pin a moment ago: the Application then reads Synced
     # and Healthy on what it had, and both Deployments are ready on the build
@@ -53,18 +58,17 @@ apply() {
     V5_APPSETS=true V5_OPERATOR=true _v5_render | kubectl apply -f - >/dev/null
     local ns t
     ns="$(ns_kernel gitops)"
-    info "waiting for gentian-os to be Synced and Healthy"
+    info "waiting for gentian-os to be Synced and the operator and the director ready"
     t=$((SECONDS + 900))
-    # check, not only "Synced and Healthy": after a move to a newer build the
-    # Application reads both on the build before, until Argo CD has compared
-    # again.
+    # check, not only "Synced": after a move to a newer build the Application
+    # reads Synced on the build before, until Argo CD has compared again.
     until check; do
         # As C-02: an Application whose retries are spent is asked again,
         # not waited on.
         unstick_argo_hook_job "${ns}" gentian-os
         request_argo_sync_if_stalled "${ns}" gentian-os
         if (( SECONDS > t )); then
-            error "gentian-os is not Synced and Healthy after 15m:"
+            error "gentian-os is not Synced with the operator and the director ready after 15m:"
             kubectl get application gentian-os -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
             return 1
         fi
