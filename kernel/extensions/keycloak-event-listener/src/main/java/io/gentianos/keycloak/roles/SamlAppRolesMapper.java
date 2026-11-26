@@ -41,6 +41,7 @@ public final class SamlAppRolesMapper extends AbstractSAMLProtocolMapper impleme
     public static final String PROVIDER_ID = "gentian-saml-app-roles";
 
     static final String ATTRIBUTE_NAME = "attribute.name";
+    static final String DEFAULT_ATTRIBUTE = "GentianAppRole";
 
     private static final Logger LOG = Logger.getLogger(SamlAppRolesMapper.class);
     private static final List<ProviderConfigProperty> CONFIG = new ArrayList<>();
@@ -48,7 +49,7 @@ public final class SamlAppRolesMapper extends AbstractSAMLProtocolMapper impleme
 
     static {
         CONFIG.add(new ProviderConfigProperty(ATTRIBUTE_NAME, "Attribute", "The attribute the roles are listed in.",
-                ProviderConfigProperty.STRING_TYPE, "Role"));
+                ProviderConfigProperty.STRING_TYPE, DEFAULT_ATTRIBUTE));
         CONFIG.add(new ProviderConfigProperty(AppRolesMapper.TENANT, "Tenant", "The tenant the app is installed in.",
                 ProviderConfigProperty.STRING_TYPE, null));
         CONFIG.add(new ProviderConfigProperty(AppRolesMapper.APP, "App", "The app's profile name.",
@@ -88,7 +89,7 @@ public final class SamlAppRolesMapper extends AbstractSAMLProtocolMapper impleme
                                             KeycloakSession session, UserSessionModel userSession,
                                             AuthenticatedClientSessionModel clientSession) {
         Map<String, String> config = mappingModel.getConfig();
-        String attribute = config.getOrDefault(ATTRIBUTE_NAME, "Role");
+        String attribute = config.getOrDefault(ATTRIBUTE_NAME, DEFAULT_ATTRIBUTE);
         String tenant = config.get(AppRolesMapper.TENANT);
         String app = config.get(AppRolesMapper.APP);
         RolesClient client = RolesClient.configured();

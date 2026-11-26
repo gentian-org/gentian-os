@@ -19,8 +19,12 @@ import (
 )
 
 // SignInAdminRole is the name the sign-in sidecar knows the app's
-// administrator by, in the Role attribute of the realm's answer.
+// administrator by, in the GentianAppRole attribute of the realm's answer.
 const SignInAdminRole = "gentian-app-admin"
+
+// signInRoleAttribute is the attribute the platform's mapper lists the
+// person's roles on the app in, and the one the sidecar reads them from.
+const signInRoleAttribute = "GentianAppRole"
 
 // signInSidecar is the sign-in sidecar's registration at the realm
 // (requires.services.identity.sidecar), for an app that can do neither OIDC
@@ -102,9 +106,10 @@ func (id *identityScope) signInSidecar() []*unstructured.Unstructured {
 	// Who administers the app. An app signed in to this way has no claim of
 	// its own to read, so the realm tells the sidecar in the signed answer
 	// which roles the person holds on it: the platform's mapper asks the
-	// rights store and lists them as Role, in the names the profile gives
-	// them. A profile that names none gets the one name the sidecar knows
-	// for the app's administrator.
+	// rights store and lists them as GentianAppRole, in the names the profile
+	// gives them. A profile that names none gets the one name the sidecar
+	// knows for the app's administrator. The attribute's name is one only
+	// this mapper writes, and the only one the sidecar reads.
 	inApp := map[string]map[string][]string{id.in.ProfileName: {"admin": {SignInAdminRole}}}
 	if id.in.Roles != nil && len(id.in.Roles.InApp) > 0 {
 		inApp = id.in.Roles.InApp
@@ -122,7 +127,7 @@ func (id *identityScope) signInSidecar() []*unstructured.Unstructured {
 				"protocol":        "saml",
 				"protocolMapper":  "gentian-saml-app-roles",
 				"config": map[string]interface{}{
-					"attribute.name": "Role",
+					"attribute.name": signInRoleAttribute,
 					"gentian.tenant": id.tenant,
 					"gentian.app":    id.in.ProfileName,
 					"gentian.roles":  string(rolesJSON),

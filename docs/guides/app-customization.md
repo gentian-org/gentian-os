@@ -839,7 +839,7 @@ The handler is the ConfigMap `<profile>.sign-in-handler` of the profile's bundle
 | | By | |
 |---|---|---|
 | Registers the sidecar at the tenant's realm | the operator | a SAML client named `https://<app host>/sso`, with one address its answer may be posted to, `https://<app host>/sso/acs`; the response and the assertion both signed; the person named by e-mail address |
-| Has the realm say who administers the app | the operator | the platform's mapper on that client, which asks the rights store which roles the person holds on the app and lists them in the signed assertion as `Role`, in the names the profile gives them (`spec.roles`). A profile that names none gets `gentian-app-admin` for the app's administrator |
+| Has the realm say who administers the app | the operator | the platform's mapper on that client, which asks the rights store which roles the person holds on the app and lists them in the signed assertion as `GentianAppRole`, in the names the profile gives them (`spec.roles`). A profile that names none gets `gentian-app-admin` for the app's administrator |
 | Runs the sidecar beside the app | the operator | one pod, with the handler from the bundle, told where the realm is. No service-account token, read-only, not root |
 | Hands the handler what was declared | the operator | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; `SECRET_<NAME>`; `APP_URL`. From this app's own vault paths; a profile names which, never where |
 | Routes two paths of the app's host to it | the operator | `/sso/login` as a rule of the app's own route, behind the session and the bouncer; `/sso/acs` on a route of its own with no session ([routing.md §4.1](../concepts/routing.md)) |
