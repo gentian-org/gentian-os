@@ -86,6 +86,15 @@ spec:
         # where its entry in kernel/platforms.yaml names one, cert-manager
         # otherwise.
         edgeCertificates: {{ dig (.Values.dnsProvider | default "none") "certificates" "" (.Values.dnsProviders | default dict) | quote }}
+        {{- if and (ne (.Values.dnsProvider | default "none") "cloudflare") (ne (toString .Values.networkMode) "tunnel") }}
+        # No Cloudflare here: neither the zone nor a tunnel. The chart's
+        # default would read a Cloudflare token from the vault that no step
+        # writes on this cluster, and the ExternalSecret held the operator
+        # Degraded for good.
+        cloudflare:
+          apiTokenSecretRef:
+            name: ""
+        {{- end }}
         # How traffic reaches this cluster, the claim's networkMode. The
         # operator chooses its edge ingress by it, and whether a TURN edge can
         # be reached; left out, every cluster reads as a tunnel.
