@@ -485,6 +485,12 @@ func (r *RunsReconciler) Reconcile(ctx context.Context, _ ctrl.Request) (ctrl.Re
 		if len(runs.callers) == 0 {
 			continue
 		}
+		// A tenant that is asleep starts no run: it is not in the table, so
+		// the dispatcher refuses one asked for instead of making a pod its
+		// namespace would not admit (hibernation.go).
+		if sleeps(tenant) {
+			continue
+		}
 		entry := dispatcher.Tenant{Tenant: tenant.Name, Namespace: namespace}
 		for _, action := range runs.actions {
 			// What a run takes and returns goes into the table as the

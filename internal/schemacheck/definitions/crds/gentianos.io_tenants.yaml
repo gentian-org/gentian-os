@@ -792,6 +792,25 @@ spec:
                 x-kubernetes-list-map-keys:
                 - app
                 x-kubernetes-list-type: map
+              hibernation:
+                description: |-
+                  Hibernation puts the tenant to sleep: no pod of it runs, and its
+                  namespaces, volumes, databases, buckets, realm and routes are kept, so
+                  that waking it is a matter of its pods starting.
+                properties:
+                  asleep:
+                    description: |-
+                      Asleep puts the tenant to sleep. The platform tenant is never asleep,
+                      whatever it says here.
+                    type: boolean
+                  awakeUntil:
+                    description: |-
+                      AwakeUntil keeps a tenant that is asleep awake until this time; when
+                      it has passed the tenant sleeps again, with nothing written. Without
+                      asleep it says nothing.
+                    format: date-time
+                    type: string
+                type: object
               homes:
                 additionalProperties:
                   type: string
@@ -1875,6 +1894,21 @@ spec:
                   here by the operator so every consumer of EffectiveDomain reads it from
                   the tenant itself. Empty when no TenantDomain names this tenant.
                 type: string
+              hibernation:
+                description: |-
+                  Hibernation is what the operator last did about the tenant's sleep;
+                  absent for a tenant that never slept.
+                properties:
+                  asleep:
+                    description: |-
+                      Asleep is true from when the tenant was put to sleep until it has
+                      been woken.
+                    type: boolean
+                  since:
+                    description: Since is when it was put to sleep, or woken.
+                    format: date-time
+                    type: string
+                type: object
               mail:
                 description: |-
                   Mail holds the observed DNS record data produced by the mail reconciler.
@@ -1917,6 +1951,7 @@ spec:
                 - Provisioning
                 - Ready
                 - Degraded
+                - Hibernated
                 - Deleting
                 type: string
               provisionedApps:

@@ -19,6 +19,8 @@ SPDX-License-Identifier: Apache-2.0
 package v1alpha1
 
 import (
+	"time"
+
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -340,6 +342,55 @@ func (t *Tenant) SignUpHome() string {
 	return t.Spec.SignUp.Home
 }
 
+// TenantHibernation says whether a tenant sleeps, and until when it does not.
+type TenantHibernation struct {
+	// Asleep puts the tenant to sleep. The platform tenant is never asleep,
+	// whatever it says here.
+	// +optional
+	Asleep bool `json:"asleep,omitempty"`
+
+	// AwakeUntil keeps a tenant that is asleep awake until this time; when
+	// it has passed the tenant sleeps again, with nothing written. Without
+	// asleep it says nothing.
+	// +optional
+	AwakeUntil *metav1.Time `json:"awakeUntil,omitempty"`
+}
+
+// Asleep reports whether the tenant sleeps at a given time: it is asleep
+// (spec.hibernation.asleep) and not kept awake until later
+// (spec.hibernation.awakeUntil). The platform tenant never sleeps: the
+// cluster is administered through it.
+func (t *Tenant) Asleep(now time.Time) bool {
+	h := t.Spec.Hibernation
+	if h == nil || !h.Asleep || t.Name == PlatformTenantName {
+		return false
+	}
+	return h.AwakeUntil == nil || !now.Before(h.AwakeUntil.Time)
+}
+
+// FallsAsleepAt is when a tenant that is kept awake sleeps again, and whether
+// it is kept awake at all at the given time.
+func (t *Tenant) FallsAsleepAt(now time.Time) (time.Time, bool) {
+	h := t.Spec.Hibernation
+	if h == nil || !h.Asleep || h.AwakeUntil == nil || t.Name == PlatformTenantName || !now.Before(h.AwakeUntil.Time) {
+		return time.Time{}, false
+	}
+	return h.AwakeUntil.Time, true
+}
+
+// TenantHibernationStatus is what the operator last did about a tenant's
+// sleep.
+type TenantHibernationStatus struct {
+	// Asleep is true from when the tenant was put to sleep until it has
+	// been woken.
+	// +optional
+	Asleep bool `json:"asleep,omitempty"`
+
+	// Since is when it was put to sleep, or woken.
+	// +optional
+	Since *metav1.Time `json:"since,omitempty"`
+}
+
 // TenantDeletion is what a purge (deletionPolicy: Delete) leaves behind.
 type TenantDeletion struct {
 	// KeepBundles keeps the tenant's backup bucket and the bundles in it
@@ -491,6 +542,12 @@ type TenantSpec struct {
 	// Deletion refines what a Delete leaves behind.
 	// +optional
 	Deletion *TenantDeletion `json:"deletion,omitempty"`
+
+	// Hibernation puts the tenant to sleep: no pod of it runs, and its
+	// namespaces, volumes, databases, buckets, realm and routes are kept, so
+	// that waking it is a matter of its pods starting.
+	// +optional
+	Hibernation *TenantHibernation `json:"hibernation,omitempty"`
 
 	// Apps lists the applications to install for this tenant.
 	// +optional
@@ -1632,6 +1689,11 @@ type TenantStatus struct {
 	// +listType=map
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Hibernation is what the operator last did about the tenant's sleep;
+	// absent for a tenant that never slept.
+	// +optional
+	Hibernation *TenantHibernationStatus `json:"hibernation,omitempty"`
 
 	// ProvisionedApps lists apps that have been successfully provisioned.
 	// +optional

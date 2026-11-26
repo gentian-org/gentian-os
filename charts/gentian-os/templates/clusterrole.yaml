@@ -193,6 +193,15 @@ rules:
   - apiGroups:
     - batch
     resources:
+    - cronjobs
+    verbs:
+    - get
+    - list
+    - update
+    - patch
+  - apiGroups:
+    - batch
+    resources:
     - jobs
     verbs:
     - get

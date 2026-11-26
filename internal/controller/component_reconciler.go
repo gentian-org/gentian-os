@@ -265,9 +265,22 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	// The restore hold before anything else: whatever below ends this pass
 	// early, a route is held while a restore puts the app back and is not
 	// once the restore has ended (restore_hold.go).
-	held, err := r.restoreHold(ctx, comp)
+	held, wait, err := r.restoreHold(ctx, comp)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("restore hold: %w", err)
+	}
+	// A tenant that is asleep has nothing rolled out: what it would start
+	// its namespaces do not admit. Its components are told when it wakes
+	// (sleepChanged), and one whose pods are coming back is looked at again
+	// until they are (hibernation.go).
+	if wait != nil {
+		if wait.asleep {
+			return r.status(ctx, comp, metav1.ConditionFalse, reasonHibernated,
+				"the tenant is asleep: nothing of this component runs, and nothing of it is rolled out", 0)
+		}
+		return r.status(ctx, comp, metav1.ConditionFalse, reasonHibernated,
+			"the tenant has been woken, and this component is served when its pods are back: "+
+				strings.Join(wait.pending, ", "), componentRequeue)
 	}
 
 	profile := &gentianov1alpha1.ComponentProfile{}
@@ -2265,6 +2278,10 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// at once: the hold is read from the restore (restore_hold.go).
 		Watches(&gentianov1alpha1.TenantRestore{}, componentsOfRestore(mgr.GetClient()),
 			builder.WithPredicates(restoreHoldChanged())).
+		// A tenant put to sleep or woken: every component of it holds its
+		// routes, or gives them back (hibernation.go).
+		Watches(&gentianov1alpha1.Tenant{}, componentsOfSleepingTenant(mgr.GetClient()),
+			builder.WithPredicates(sleepChanged())).
 		// Who holds the cluster's main address turns on the user tenant: what
 		// it published and whether it is Ready. The components on that
 		// address -- the website's, and the platform's page, which steps back

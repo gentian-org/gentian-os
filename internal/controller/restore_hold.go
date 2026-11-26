@@ -64,6 +64,12 @@ const (
 	// seconds.
 	restoreHoldRetryAfter = "60"
 	restoreHoldBody       = "This app is being restored and is back when the restore has finished.\n"
+
+	// hibernationHoldFilterName is the filter the routes of a tenant that
+	// is asleep point at (hibernation.go). The same hold with another
+	// answer: nobody is told to come back in a minute.
+	hibernationHoldFilterName = "hibernation-hold"
+	hibernationHoldBody       = "This workspace is asleep. The operator of this platform can wake it.\n"
 )
 
 var httpRouteFilterGVK = schema.GroupVersionKind{
@@ -74,30 +80,38 @@ var httpRouteFilterGVK = schema.GroupVersionKind{
 
 // +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=httproutefilters,verbs=get;list;watch;create;update;patch
 
-// restoreHoldFilterSpec is the answer of a held route.
+// restoreHoldFilterSpec is the answer of a route held for a restore.
 func restoreHoldFilterSpec() map[string]interface{} {
+	return holdFilterSpec(restoreHoldFilterName)
+}
+
+// holdFilterSpec is the answer of a held route, by the name of its filter.
+func holdFilterSpec(filter string) map[string]interface{} {
+	body := restoreHoldBody
+	headers := []interface{}{
+		map[string]interface{}{"name": "Retry-After", "value": restoreHoldRetryAfter},
+		map[string]interface{}{"name": "Cache-Control", "value": "no-store"},
+	}
+	if filter == hibernationHoldFilterName {
+		body, headers = hibernationHoldBody, headers[1:]
+	}
 	return map[string]interface{}{
 		"directResponse": map[string]interface{}{
 			"statusCode":  int64(503),
 			"contentType": "text/plain; charset=utf-8",
-			"body":        map[string]interface{}{"type": "Inline", "inline": restoreHoldBody},
-			"header": map[string]interface{}{
-				"set": []interface{}{
-					map[string]interface{}{"name": "Retry-After", "value": restoreHoldRetryAfter},
-					map[string]interface{}{"name": "Cache-Control", "value": "no-store"},
-				},
-			},
+			"body":        map[string]interface{}{"type": "Inline", "inline": body},
+			"header":      map[string]interface{}{"set": headers},
 		},
 	}
 }
 
-func buildRestoreHoldFilter(namespace string) *unstructured.Unstructured {
+func buildHoldFilter(namespace, filter string) *unstructured.Unstructured {
 	f := &unstructured.Unstructured{}
 	f.SetGroupVersionKind(httpRouteFilterGVK)
-	f.SetName(restoreHoldFilterName)
+	f.SetName(filter)
 	f.SetNamespace(namespace)
 	f.SetLabels(map[string]string{managedByLabel: managedByValue})
-	_ = unstructured.SetNestedField(f.Object, restoreHoldFilterSpec(), "spec")
+	_ = unstructured.SetNestedField(f.Object, holdFilterSpec(filter), "spec")
 	return f
 }
 
@@ -105,12 +119,17 @@ func buildRestoreHoldFilter(namespace string) *unstructured.Unstructured {
 // there once made: it does nothing unless a route points at it, and goes with
 // the namespace.
 func ensureRestoreHoldFilter(ctx context.Context, c client.Client, namespace string) error {
-	return ensureSpec(ctx, c, buildRestoreHoldFilter(namespace))
+	return ensureSpec(ctx, c, buildHoldFilter(namespace, restoreHoldFilterName))
 }
 
-// heldRules are a route's rules as the hold has them: the same matches, each
-// answered by the hold's filter and sent nowhere.
+// heldRules are a route's rules as the restore hold has them.
 func heldRules(rules []gatewayv1.HTTPRouteRule) []gatewayv1.HTTPRouteRule {
+	return heldRulesBy(rules, restoreHoldFilterName)
+}
+
+// heldRulesBy are a route's rules as a hold has them: the same matches, each
+// answered by the hold's filter and sent nowhere.
+func heldRulesBy(rules []gatewayv1.HTTPRouteRule, filter string) []gatewayv1.HTTPRouteRule {
 	held := make([]gatewayv1.HTTPRouteRule, 0, len(rules))
 	for _, rule := range rules {
 		held = append(held, gatewayv1.HTTPRouteRule{
@@ -121,7 +140,7 @@ func heldRules(rules []gatewayv1.HTTPRouteRule) []gatewayv1.HTTPRouteRule {
 				ExtensionRef: &gatewayv1.LocalObjectReference{
 					Group: gatewayv1.Group(httpRouteFilterGVK.Group),
 					Kind:  gatewayv1.Kind(httpRouteFilterGVK.Kind),
-					Name:  restoreHoldFilterName,
+					Name:  gatewayv1.ObjectName(filter),
 				},
 			}},
 		})
@@ -135,9 +154,30 @@ func routeHeld(route *gatewayv1.HTTPRoute) bool {
 	return held
 }
 
-// holdRoute turns a route that is not held into a held one, keeping the
-// rules it had. A held route is left as it is.
+// routeHeldBy names the filter a held route's rules point at, "" for a route
+// that is not held.
+func routeHeldBy(route *gatewayv1.HTTPRoute) string {
+	if !routeHeld(route) {
+		return ""
+	}
+	for _, rule := range route.Spec.Rules {
+		for _, f := range rule.Filters {
+			if f.ExtensionRef != nil && string(f.ExtensionRef.Kind) == httpRouteFilterGVK.Kind {
+				return string(f.ExtensionRef.Name)
+			}
+		}
+	}
+	return restoreHoldFilterName
+}
+
+// holdRoute turns a route that is not held into one held for a restore,
+// keeping the rules it had. A held route is left as it is.
 func holdRoute(route *gatewayv1.HTTPRoute) error {
+	return holdRouteBy(route, restoreHoldFilterName)
+}
+
+// holdRouteBy is holdRoute for the hold of the filter named.
+func holdRouteBy(route *gatewayv1.HTTPRoute, filter string) error {
 	if routeHeld(route) {
 		return nil
 	}
@@ -149,7 +189,7 @@ func holdRoute(route *gatewayv1.HTTPRoute) error {
 		route.Annotations = map[string]string{}
 	}
 	route.Annotations[restoreHoldAnnotation] = string(kept)
-	route.Spec.Rules = heldRules(route.Spec.Rules)
+	route.Spec.Rules = heldRulesBy(route.Spec.Rules, filter)
 	return nil
 }
 
@@ -231,49 +271,160 @@ func (r *ComponentReconciler) applyRestoreHold(ctx context.Context, comp *gentia
 	if err != nil {
 		return false, err
 	}
+	hold := ""
+	if held {
+		hold = restoreHoldFilterName
+	}
+	return held, r.applyHold(ctx, comp, dmz, hold)
+}
+
+// applyHold brings the component's routes that exist to one hold, by the name
+// of its filter, or to none (""). A route held by another filter is given
+// back its rules first, so that what is kept on it is always what it has when
+// it is not held.
+func (r *ComponentReconciler) applyHold(ctx context.Context, comp *gentianov1alpha1.Component, dmz, hold string) error {
 	routes, err := componentRoutes(ctx, r.Client, comp, dmz)
 	if err != nil {
-		return false, err
+		return err
 	}
 	filtered := map[string]bool{}
 	for i := range routes {
 		route := &routes[i]
-		if routeHeld(route) == held {
+		if routeHeldBy(route) == hold {
 			continue
 		}
 		patch := client.MergeFrom(route.DeepCopy())
-		if held {
+		if err := releaseRoute(route); err != nil {
+			return err
+		}
+		if hold != "" {
 			if !filtered[route.Namespace] {
-				if err := ensureRestoreHoldFilter(ctx, r.Client, route.Namespace); err != nil {
-					return false, fmt.Errorf("restore hold in %s: %w", route.Namespace, err)
+				if err := ensureSpec(ctx, r.Client, buildHoldFilter(route.Namespace, hold)); err != nil {
+					return fmt.Errorf("hold in %s: %w", route.Namespace, err)
 				}
 				filtered[route.Namespace] = true
 			}
-			if err := holdRoute(route); err != nil {
-				return false, err
+			if err := holdRouteBy(route, hold); err != nil {
+				return err
 			}
-		} else if err := releaseRoute(route); err != nil {
-			return false, err
 		}
 		if err := r.Patch(ctx, route, patch); err != nil {
-			return false, err
+			return err
 		}
 	}
-	return held, nil
+	return nil
 }
 
 // restoreHold applies the hold to the component's routes, in its namespace
-// and in its tenant's DMZ, and reports whether the app is held.
-func (r *ComponentReconciler) restoreHold(ctx context.Context, comp *gentianov1alpha1.Component) (bool, error) {
+// and in its tenant's DMZ, and reports whether the app is held for a restore.
+//
+// wait is set while the tenant sleeps, or has been woken and this app's pods
+// are not back: the routes are then held with the answer of a tenant that is
+// asleep, and nothing of the component is reconciled further. A component is
+// not left waiting for pods longer than hibernationWakeHold: one that does
+// not come back is then served as it is, and reconciled, as any other app
+// that does not start.
+func (r *ComponentReconciler) restoreHold(ctx context.Context, comp *gentianov1alpha1.Component) (held bool, wait *sleepWait, err error) {
 	tenant, err := tenantInNamespace(ctx, r.Client, comp.Namespace)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 	dmz := ""
 	if tenant != nil {
 		dmz = layout.TenantDMZ(tenant.Name)
 	}
-	return r.applyRestoreHold(ctx, comp, dmz)
+	if sleeps(tenant) {
+		if err := r.applyHold(ctx, comp, dmz, hibernationHoldFilterName); err != nil {
+			return false, nil, err
+		}
+		return false, &sleepWait{asleep: true}, nil
+	}
+	if waking(tenant, time.Now()) {
+		asleepStill, err := r.heldForSleep(ctx, comp, dmz)
+		if err != nil {
+			return false, nil, err
+		}
+		if asleepStill {
+			pending, err := appRolloutPendingIn(ctx, r.Client, comp.Namespace, comp.Spec.ProfileRef.Name)
+			if err != nil {
+				return false, nil, err
+			}
+			if len(pending) > 0 {
+				return false, &sleepWait{pending: pending}, nil
+			}
+		}
+	}
+	held, err = r.applyRestoreHold(ctx, comp, dmz)
+	return held, nil, err
+}
+
+// hibernationWakeHold is how long after a tenant was woken an app's routes
+// stay held while its pods are not back.
+const hibernationWakeHold = 10 * time.Minute
+
+// sleepWait is why a component is not reconciled: its tenant is asleep, or
+// was woken and the workloads named are not back.
+type sleepWait struct {
+	asleep  bool
+	pending []string
+}
+
+// waking reports whether a tenant was woken less than hibernationWakeHold ago.
+func waking(tenant *gentianov1alpha1.Tenant, now time.Time) bool {
+	if tenant == nil || tenant.Status.Hibernation == nil || tenant.Status.Hibernation.Asleep {
+		return false
+	}
+	since := tenant.Status.Hibernation.Since
+	return since != nil && now.Sub(since.Time) < hibernationWakeHold
+}
+
+// heldForSleep reports whether a route of the component is still held with
+// the answer of a tenant that is asleep.
+func (r *ComponentReconciler) heldForSleep(ctx context.Context, comp *gentianov1alpha1.Component, dmz string) (bool, error) {
+	routes, err := componentRoutes(ctx, r.Client, comp, dmz)
+	if err != nil {
+		return false, err
+	}
+	for i := range routes {
+		if routeHeldBy(&routes[i]) == hibernationHoldFilterName {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// componentsOfSleepingTenant wakes every component of a tenant.
+func componentsOfSleepingTenant(c client.Reader) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		tenant, ok := obj.(*gentianov1alpha1.Tenant)
+		if !ok {
+			return nil
+		}
+		comps := &gentianov1alpha1.ComponentList{}
+		if err := c.List(ctx, comps, client.InNamespace(tenant.NamespaceName())); err != nil {
+			return nil
+		}
+		out := make([]reconcile.Request, 0, len(comps.Items))
+		for i := range comps.Items {
+			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&comps.Items[i])})
+		}
+		return out
+	})
+}
+
+// sleepChanged passes a tenant's events on when the operator has put it to
+// sleep or woken it.
+func sleepChanged() predicate.Funcs {
+	return predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			before, ok1 := e.ObjectOld.(*gentianov1alpha1.Tenant)
+			after, ok2 := e.ObjectNew.(*gentianov1alpha1.Tenant)
+			return ok1 && ok2 && sleeps(before) != sleeps(after)
+		},
+	}
 }
 
 // withRestoreHold makes a route the component reconciler is about to write

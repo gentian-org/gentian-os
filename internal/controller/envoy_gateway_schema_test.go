@@ -277,6 +277,7 @@ func TestWhatIsWrittenForEnvoyGatewayIsValidForThePinnedRelease(t *testing.T) {
 	// The restore hold's answer, and a route held for a restore: its rules
 	// point at that answer and send nowhere.
 	create("the restore hold's answer", httpRouteFilterGVK, restoreHoldFilterSpec())
+	create("the answer for a tenant that is asleep", httpRouteFilterGVK, holdFilterSpec(hibernationHoldFilterName))
 	held := buildExposureRoute(
 		&gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "files", Namespace: servicesNamespace}}, "acme",
 		"files-web", "files.acme.example", zone,
