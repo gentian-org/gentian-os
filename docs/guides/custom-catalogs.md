@@ -527,15 +527,17 @@ all the tenant's homes, and has the people who sign in to an app that declares `
 it: what the tenant's home sync acts with. The
 platform enters it in the tenant's realm as a trusted issuer under the alias `vouch-<profile>`,
 gives it a client of the same name to ask with, and tells it what it has to know in the Secret
-`vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_SIGNING_KEY`, `VOUCHING_KEY_ID`,
-`VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`, `VOUCHING_TOKEN_URL`). The signing key is the
-platform's to issue: one per component and tenant, ECDSA on P-256, its private half in the Secret
-as PKCS #8 in PEM and its public half given to the realm. The component makes no key and publishes
+`vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`,
+`VOUCHING_TOKEN_URL`). The signing key is the platform's to issue: one per component and tenant,
+ECDSA on P-256, its private half in a Secret of its own, `vouching-key-<profile>`
+(`VOUCHING_SIGNING_KEY` as PKCS #8 in PEM, `VOUCHING_KEY_ID`), and its public half given to the
+realm. A component mounts both Secrets into one directory (a projected volume, the key's source
+`optional`, so the pod starts before the key is there). The component makes no key and publishes
 none, and the realm fetches nothing from it. A statement is signed with ES256 and names the key by
-`VOUCHING_KEY_ID` (`kid`). The platform keeps that Secret current: the issuer and the key follow
-the profile's `keys`, a key taken out of the Secret is issued again and the realm told, and a
-Secret made again carries a new client secret, which the realm's client follows. So
-the component mounts the Secret as files (without `subPath`) and reads them each time it asks for a
+`VOUCHING_KEY_ID` (`kid`). The platform keeps both Secrets current: the issuer and the key follow
+the profile's `keys`, a key whose Secret is deleted is issued again and the realm told, and a
+client Secret made again carries a new client secret, which the realm's client follows. So
+the component mounts the Secrets as files (without `subPath`) and reads them each time it asks for a
 token; read once from the environment, a change reaches it only at its next start. The component signs a statement of at most a few minutes that names the
 issuer, the person's subject (their id in the realm), an id of its own, and as its audience the
 realm's issuer as the realm's discovery document names it, and posts it to the token address with the grant `urn:ietf:params:oauth:grant-type:jwt-bearer` and one scope,

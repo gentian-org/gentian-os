@@ -13,8 +13,10 @@ existingSecret:
   name: ""
 
 # The Secrets and the ConfigMap the platform writes for this component, by
-# their names (vouching-<profile>, rights-check-<profile>, and the plan).
+# their names (vouching-<profile>, vouching-key-<profile>,
+# rights-check-<profile>, and the plan).
 vouchingSecret: vouching-homesync
+vouchingKeySecret: vouching-key-homesync
 keySecret: rights-check-homesync
 planConfigMap: homesync-plan
 

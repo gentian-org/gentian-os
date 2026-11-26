@@ -57,7 +57,7 @@ spec:
               value: {{ .Values.interval | quote }}
             # The service's client in the tenant's realm, as files the
             # service reads when it asks for a token: the platform keeps the
-            # Secret current, and a mounted Secret follows it in place (no
+            # Secrets current, and a mounted Secret follows it in place (no
             # subPath), so a change reaches the running pod.
             - name: VOUCHING_DIR
               value: /etc/vouching
@@ -83,9 +83,18 @@ spec:
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:
+        # Two Secrets in one directory: the client the Composition made for
+        # the service, and the signing key the operator issued it. The key's
+        # is optional so that the pod starts before the key is there; the
+        # service signs nothing until it is.
         - name: vouching
-          secret:
-            secretName: {{ .Values.vouchingSecret }}
+          projected:
+            sources:
+              - secret:
+                  name: {{ .Values.vouchingSecret }}
+              - secret:
+                  name: {{ .Values.vouchingKeySecret }}
+                  optional: true
         # Absent until the platform writes it: the pod starts, and a round
         # with no plan syncs nothing.
         - name: plan

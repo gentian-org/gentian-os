@@ -664,8 +664,9 @@ type PersonSecretsRequirement struct{}
 //     audience);
 //   - delivers the client's secret and what the component has to know in the
 //     Secret vouching-<profile> of the tenant's namespace (VOUCHING_ISSUER,
-//     VOUCHING_SIGNING_KEY, VOUCHING_KEY_ID, VOUCHING_CLIENT_ID,
-//     VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL), kept current, which the
+//     VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL), and the
+//     signing key in the Secret vouching-key-<profile> beside it
+//     (VOUCHING_SIGNING_KEY, VOUCHING_KEY_ID), both kept current, which the
 //     component mounts as files and reads when it uses them;
 //   - gives it the component's own key (the Secret rights-check-<profile>),
 //     as for requires.services.rights.
@@ -762,7 +763,7 @@ const (
 // VouchingKeys declares that a component signs statements. It names nothing:
 // the platform issues the key, one per component and tenant, and gives its
 // public half to the tenant's realm. The component reads the private half
-// from its Secret vouching-<profile> (VOUCHING_SIGNING_KEY, PKCS #8 in PEM,
+// from its Secret vouching-key-<profile> (VOUCHING_SIGNING_KEY, PKCS #8 in PEM,
 // ECDSA on P-256), signs with ES256 and names the key by VOUCHING_KEY_ID. It
 // makes no key of its own and publishes none.
 type VouchingKeys struct{}
