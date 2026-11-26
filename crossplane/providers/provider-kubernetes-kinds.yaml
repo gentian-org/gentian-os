@@ -79,6 +79,12 @@ kinds:
     resources:
       - certificates     # Certificate
       - clusterissuers   # ClusterIssuer
+  # A tenant's edge certificate where the cluster's DNS provider issues them
+  # (certificates: gardener in kernel/platforms.yaml): the operator hands
+  # Crossplane a Certificate of this group in place of cert-manager's.
+  - group: cert.gardener.cloud
+    resources:
+      - certificates     # Certificate
   - group: external-secrets.io
     resources:
       - clusterexternalsecrets  # ClusterExternalSecret

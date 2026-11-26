@@ -179,4 +179,26 @@ check "nor on none with a fixed IP" '[[ "$(token_ref none static-ip)" == cleared
 check "a Cloudflare zone keeps it" '[[ "$(token_ref cloudflare static-ip)" == default ]]' "$(token_ref cloudflare static-ip)"
 check "a tunnel keeps it" '[[ "$(token_ref gardener tunnel)" == default ]]' "$(token_ref gardener tunnel)"
 
+# A tenant's certificate is the operator's to ask for and Crossplane's to
+# apply: the kind the operator asks for on gardener is one provider-kubernetes
+# may manage, in the list and in the role generated from it.
+provider_may() {
+    python3 - "$1" <<'PY'
+import sys, yaml
+group = sys.argv[1]
+kinds = yaml.safe_load(open("crossplane/providers/provider-kubernetes-kinds.yaml"))
+listed = any(k["group"] == group and "certificates" in k["resources"] for k in kinds["kinds"])
+role = any(
+    group in r.get("apiGroups", []) and "certificates" in r.get("resources", [])
+    for d in yaml.safe_load_all(open("crossplane/providers/provider-rbac.yaml"))
+    if d and d.get("kind") == "ClusterRole"
+    for r in d.get("rules", [])
+)
+sys.exit(0 if listed and role else 1)
+PY
+}
+check "the operator's Gardener certificate is the kind it says" 'grep -q "Group: \"cert.gardener.cloud\"" internal/controller/edge_certificates.go'
+check "Crossplane may manage the shoot's certificates" 'provider_may cert.gardener.cloud'
+check "and cert-manager's" 'provider_may cert-manager.io'
+
 finish
