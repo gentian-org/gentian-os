@@ -558,10 +558,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
 | `spec.extensions[].kernelRequirements.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
-| `spec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
-| `spec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
-| `spec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
-| `spec.extensions[].kernelRequirements.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `spec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says the component signs statements about people, with a key the platform issues it: written "keys: {}". |
 | `spec.extensions[].name` | string | yes | `Name` identifies the sidecar (e.g. |
 | `spec.extensions[].stableServiceName` | string |  | `StableServiceName` is the Kubernetes Service name the tenant ingress reconciler routes to (e.g. |
 | `spec.extensions[].stableServicePort` | integer (int32) |  | `StableServicePort` is the port on StableServiceName. |
@@ -876,10 +873,7 @@ ComponentProfile is a catalog entry for a system service, an app or an agent. Th
 | `spec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `spec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
 | `spec.requires.services.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
-| `spec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
-| `spec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
-| `spec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
-| `spec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `spec.requires.services.vouching.keys` | object |  | `Keys` says the component signs statements about people, with a key the platform issues it: written "keys: {}". |
 | `spec.roles` | object |  | `Roles` are the roles people hold on this app: user and admin, which every app has, and the further ones it declares, each with what it is called inside the app. |
 | `spec.roles.admin` | object |  | `Admin` is what the role admin is called inside the app. |
 | `spec.roles.admin.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |
@@ -1479,10 +1473,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.extensions[].kernelRequirements.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
 | `status.profileSpec.extensions[].kernelRequirements.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
-| `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
-| `status.profileSpec.extensions[].kernelRequirements.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
-| `status.profileSpec.extensions[].kernelRequirements.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
-| `status.profileSpec.extensions[].kernelRequirements.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `status.profileSpec.extensions[].kernelRequirements.vouching.keys` | object |  | `Keys` says the component signs statements about people, with a key the platform issues it: written "keys: {}". |
 | `status.profileSpec.extensions[].name` | string | yes | `Name` identifies the sidecar (e.g. |
 | `status.profileSpec.extensions[].stableServiceName` | string |  | `StableServiceName` is the Kubernetes Service name the tenant ingress reconciler routes to (e.g. |
 | `status.profileSpec.extensions[].stableServicePort` | integer (int32) |  | `StableServicePort` is the port on StableServiceName. |
@@ -1797,10 +1788,7 @@ ProfileBuild is one build of a profile, as a catalog published it: the bundle at
 | `status.profileSpec.requires.services.vouching.director` | []string |  | `Director` names what a token the component obtains for a person may do at the platform's own API, beside the apps: plans-read reads the cluster's plans, its… |
 | `status.profileSpec.requires.services.vouching.exchange` | boolean |  | `Exchange` lets the component's client also exchange a person's own token for one valid at a single app (RFC 8693), for the same scopes it may ask for when it… |
 | `status.profileSpec.requires.services.vouching.homes` | boolean |  | `Homes` gives the component's client the scopes of the tenant's homes (home-\<profile> for the provider of calendar-store, contacts-store and file-store), and… |
-| `status.profileSpec.requires.services.vouching.keys` | object |  | `Keys` says where the component publishes the keys its statements are signed with, as a JWKS. |
-| `status.profileSpec.requires.services.vouching.keys.path` | string |  | `Path` is where the JWKS is served. |
-| `status.profileSpec.requires.services.vouching.keys.port` | integer (int32) | yes | `Port` is the Service's port. |
-| `status.profileSpec.requires.services.vouching.keys.service` | string | yes | `Service` is the name of the component's Service. |
+| `status.profileSpec.requires.services.vouching.keys` | object |  | `Keys` says the component signs statements about people, with a key the platform issues it: written "keys: {}". |
 | `status.profileSpec.roles` | object |  | `Roles` are the roles people hold on this app: user and admin, which every app has, and the further ones it declares, each with what it is called inside the app. |
 | `status.profileSpec.roles.admin` | object |  | `Admin` is what the role admin is called inside the app. |
 | `status.profileSpec.roles.admin.inApp` | []string |  | `InApp` are the app's own names for the role: a group, a role, whatever the app reads from the claim. |

@@ -59,8 +59,8 @@ spec:
             # an exchanged token, for the same reason it names the hosts: the
             # operator composes the routes that ask, so it is what knows. And
             # it names the components that vouch for people at the realm, with
-            # where each publishes its keys, because the operator is what
-            # reads their profiles.
+            # the public half of the key each signs with, because the operator
+            # is what reads their profiles and issues their keys.
             - kind: ConfigMap
               into: zoneHosts
               apiVersion: v1
@@ -621,17 +621,22 @@ spec:
             {{- end }}
             {{- /* The components that vouch for people at this realm
                  (requires.services.vouching), from the same projection. One
-                 line each: the profile's name, then the Service, the port and
-                 the path its keys are published at, separated by spaces
-                 (zoneVouchingProfilesKey in the operator says why a space is
-                 safe), and, for a component of the platform tenant, what its
-                 tokens may do at the director, comma-separated. Among those
+                 line each: the profile's name, then "keys" for a component
+                 that signs statements and a hyphen for one that does not, a
+                 0, and the public half of the key the platform issued it (a
+                 JWKS in base64; a hyphen until it is issued), separated by
+                 spaces (zoneVouchingProfilesKey in the operator says why a
+                 space is safe), and, for a component of the platform tenant,
+                 what its tokens may do at the director, comma-separated. A
+                 key is read only from a line that says "keys": what an
+                 operator of an earlier build writes there is an address, and
+                 is no key. Among those
                  words, "narrow" marks a component below the platform's trust,
                  whose client is given no app scope, and each "home=<profile>"
                  names a home granted to it, which it calls as the person. A line that
                  is not four or five fields is not guessed at: it is left
                  out, and that component gets nothing rather than an issuer
-                 whose keys are fetched from somewhere half-read. A director
+                 made of something half-read. A director
                  scope this file does not know is dropped. */}}
             {{- $vouchingProfiles := list }}
             {{- $vouchingSeen     := list }}
@@ -655,7 +660,11 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "service" (index $f 1) "port" (index $f 2) "path" (index $f 3) "director" $director "exchange" $exchanges "narrow" $narrow "homes" $homes "keyless" (eq (index $f 1) "-")) }}
+            {{- $jwks := "" }}
+            {{- if and (eq (index $f 1) "keys") (ne (index $f 3) "-") }}
+            {{- $jwks = b64dec (index $f 3) }}
+            {{- end }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "jwks" $jwks "director" $director "exchange" $exchanges "narrow" $narrow "homes" $homes "keyless" (eq (index $f 1) "-")) }}
             {{- end }}
             {{- end }}
             {{- /* $presentCallers are the profiles among them that call a home
@@ -2110,12 +2119,15 @@ spec:
                  returns. It is a name no certificate can be had for, on
                  purpose: nothing could be served there.
 
-                 The keys are fetched, from the component's own Service in
-                 the tenant's namespace, at the address its profile gives.
-                 Over plain HTTP inside the cluster, as Keycloak reaches the
-                 kernel realm's keys further down. A component can therefore
-                 replace its keys by publishing new ones, and nothing here
-                 changes when it does.
+                 The key is given, not fetched: the platform issued it to
+                 the component, and its public half is written into the entry
+                 (publicKeySignatureVerifier, which takes a JWKS). The realm
+                 therefore asks the component nothing and reaches into no
+                 tenant's namespace, and whether the cluster's Service
+                 addresses count as private to Keycloak does not matter. Until
+                 the key is issued the entry holds none, and the realm
+                 verifies nothing against it. A key the platform replaces
+                 arrives here on the same reconcile.
 
                  providerId jwt-authorization-grant, through the one field of
                  the OIDC resource that says which implementation an entry
@@ -2130,10 +2142,10 @@ spec:
                  they point nowhere new.
 
                  jwtAuthorizationGrantEnabled is the switch itself, and has no
-                 field on the provider, so it is carried in extraConfig.
-                 useJwksUrl is not stated, for the reason given at the kernel
-                 realm's broker further down: the provider sets it from
-                 jwksUrl.
+                 field on the provider, so it is carried in extraConfig, as
+                 the key is. jwksUrl is left out, and the provider then sets
+                 useJwksUrl to false itself: the realm reads the key from the
+                 entry.
 
                  No tokens stored, no email trusted, nobody signed in by
                  default: nothing of a person comes from this issuer except
@@ -2173,11 +2185,13 @@ spec:
                 syncMode: IMPORT
                 validateSignature: true
                 issuer: {{ $vouchIssuer }}
-                jwksUrl: {{ printf "http://%s.%s.svc.cluster.local:%s%s" $v.service $ns $v.port $v.path | quote }}
                 authorizationUrl: {{ $vouchIssuer }}
                 tokenUrl: {{ $vouchIssuer }}
                 extraConfig:
                   jwtAuthorizationGrantEnabled: "true"
+                  {{- if $v.jwks }}
+                  publicKeySignatureVerifier: {{ $v.jwks | quote }}
+                  {{- end }}
                   {{- /* A component granted a home to call as the person has
                        the people who sign in to it linked here by the
                        platform's sign-in extension, which reads this mark
@@ -2237,7 +2251,8 @@ spec:
 
             {{- /* What the component is told: the Secret VouchingSecretName
                  names, in the tenant's namespace, under the four keys
-                 vouching.go lists. The generated secret, and beside it the
+                 written here; vouching.go lists them, and the two of the
+                 signing key the operator adds. The generated secret, and beside it the
                  three things that are not secret and that the component
                  would otherwise have to work out the way this file does --
                  what to call itself in a statement, which client to ask as,
@@ -2254,9 +2269,10 @@ spec:
                  which is why the one value it fills in is written inside a
                  raw string.
 
-                 Written once, like the secret in it. The issuer alone is
-                 kept current afterwards, by the operator (keepVouchingIssuer),
-                 for a profile that starts or stops naming keys. Anything else
+                 Written once, like the secret in it. The issuer is kept
+                 current afterwards by the operator (keepVouchingIdentity),
+                 for a profile that starts or stops naming keys, and the
+                 operator puts the signing key it issues beside it. Anything else
                  that changes later -- a cluster that moves its Keycloak -- is
                  not followed: the Secret is deleted and made again, which is
                  also a new client secret, and the client below follows it.

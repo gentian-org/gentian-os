@@ -31,8 +31,8 @@ data:
     wiki
   vouchingProfiles: |
     notes - 0 - exchange,narrow,home=files
-    scribe scribe 8080 /.well-known/jwks.json narrow,home=files,home=contacts
-    steward steward-keys 8443 /keys/current.json exchange,home=files
+    scribe keys 0 eyJrZXlzIjpbeyJ1c2UiOiJzaWciLCJrdHkiOiJFQyIsImtpZCI6InNjcmliZS1rZXkiLCJjcnYiOiJQLTI1NiIsImFsZyI6IkVTMjU2IiwieCI6ImY4M09KM0QyeEYxQmc4dnViOXRMZTFnSE16Vjc2ZThUdXM5dVBIdlJWRVUiLCJ5IjoieF9GRXpSdTltMzZITE5fdHVlNjU5TE5wWFc2cEN5U3Rpa1lqS0lXSTVhMCJ9XX0= narrow,home=files,home=contacts
+    steward keys 0 - exchange,home=files
     warden - 0 - exchange
   homeScopes: |
     {

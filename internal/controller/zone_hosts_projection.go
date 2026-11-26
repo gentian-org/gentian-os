@@ -12,8 +12,8 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"sort"
-	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -68,30 +68,31 @@ const (
 	zoneExchangeProfilesKey = "exchangeProfiles"
 	// zoneVouchingProfilesKey is the third: the components that vouch for
 	// people at the realm (requires.services.vouching), and for each of them
-	// where the realm fetches the keys its statements are signed with. One
-	// line per profile, sorted, four or five fields separated by single
-	// spaces:
+	// the key its statements are signed with. One line per profile, sorted,
+	// four or five fields separated by single spaces:
 	//
-	//	<profile> <service> <port> <path> [<what else its client may do>]
+	//	<profile> <keys|-> 0 <the key's public half|-> [<what else its client may do>]
 	//
-	// for example "scribe scribe-keys 8443 /.well-known/jwks.json", or
-	// "steward - 0 - exchange" for a profile that names no keys. A space is
-	// a safe separator because none of them can hold one: the first two
-	// are DNS labels, the third is a number, the fourth is held to the
-	// characters of a URL path by the profile's schema, and the fifth is a
-	// list of words joined by commas: "exchange" where the profile says
-	// requires.services.vouching.exchange, then the profile's
-	// requires.services.vouching.director. The
-	// path is always written out, the default included, so the Composition
-	// does not have to know what the default is. The director's scopes are
-	// written only in the platform tenant's projection: a token for the director is the cluster's administrators', who
-	// sign in at that tenant's realm, and in another tenant's realm the
-	// scopes are never made.
+	// for example "scribe keys 0 eyJrZXlzIjpb..." for a profile that signs
+	// statements, or "steward - 0 - exchange" for one that names no keys.
+	// The second field says whether the profile signs. The fourth is the
+	// public half of the key the platform issued it, a JWKS in base64, and a
+	// hyphen until the key is issued: the component's Secret is the
+	// Composition's to make, and the key is put into it on the reconcile
+	// after. The third is always 0 and keeps the others where a Composition
+	// of an earlier build reads them. A space is a safe separator because
+	// none of the fields can hold one: the first is a DNS label, base64 has
+	// none, and the fifth is a list of words joined by commas: "exchange"
+	// where the profile says requires.services.vouching.exchange, then the
+	// profile's requires.services.vouching.director. The director's scopes
+	// are written only in the platform tenant's projection: a token for the
+	// director is the cluster's administrators', who sign in at that
+	// tenant's realm, and in another tenant's realm the scopes are never
+	// made.
 	//
 	// The Composition makes, per line, the identity provider entry and the
-	// client VouchingAlias names, and the Secret VouchingSecretName names. It
-	// puts the service's address together itself, because the namespace in it
-	// is the tenant's and that is the Composition's to say.
+	// client VouchingAlias names, and the Secret VouchingSecretName names.
+	// It gives the entry the key, so the realm fetches nothing.
 	//
 	// Here for the reason the exchange profiles are: a component every tenant
 	// is given may vouch as well as an installed one may.
@@ -126,16 +127,13 @@ const (
 	// granted to the component, which it calls as the person: "home=" and
 	// the home's profile. Its client is given HomeTokenScope of it.
 	vouchingHomePrefix = "home="
-	// vouchingNoKeys stands where a service and a path would, in the line of
-	// a profile that names no keys. Neither a DNS label nor a path can be a
-	// lone hyphen, so it is never mistaken for one.
+	// vouchingNoKeys stands where the mark and the key would, in the line of
+	// a profile that names no keys, and where the key would until it is
+	// issued. Base64 never is a lone hyphen.
 	vouchingNoKeys = "-"
-
-	// vouchingKeysDefaultPath is where a component's keys are fetched from
-	// when its profile names no path: the default the profile's schema
-	// states, repeated for a profile that was never defaulted by an API
-	// server.
-	vouchingKeysDefaultPath = "/.well-known/jwks.json"
+	// vouchingSigns is, in the second field, the mark of a profile that
+	// signs statements.
+	vouchingSigns = "keys"
 )
 
 // zoneHostsConfigMapName is one ConfigMap per tenant, in the control
@@ -178,7 +176,7 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	exchange := map[string]map[string]bool{}
 	vouching := map[string]map[string]string{}
 	// Per tenant namespace, the profiles that vouch, and whether each signs
-	// statements (names keys): what keepVouchingIssuer is told.
+	// statements (names keys): what keepVouchingIdentity is told.
 	issuers := map[string]map[string]bool{}
 	partners := map[string]map[string]string{}
 	// The components that call a home as the person (integrations[].asPerson)
@@ -329,8 +327,12 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 
 	for ns, profiles := range issuers {
 		for profile, signs := range profiles {
-			if err := r.keepVouchingIssuer(ctx, ns, profile, signs); err != nil {
+			jwks, err := r.keepVouchingIdentity(ctx, ns, profile, signs)
+			if err != nil {
 				return err
+			}
+			if line, ok := vouching[byNamespace[ns]][profile]; ok && jwks != "" {
+				vouching[byNamespace[ns]][profile] = withVouchingKey(line, jwks)
 			}
 		}
 	}
@@ -396,20 +398,29 @@ func asksForExchangedToken(profile *gentianov1alpha1.ComponentProfile) bool {
 	return false
 }
 
-// vouchingLine is a vouching profile's entry in the projection: its name and
-// where its keys are published, in the form zoneVouchingProfilesKey
-// describes. Only called for a profile wantsVouching says yes to.
+// withVouchingKey is a signing profile's line with the public half of its
+// key in the fourth field. A line of a profile that does not sign is
+// returned as it is.
+func withVouchingKey(line, jwks string) string {
+	fields := strings.Split(line, " ")
+	if len(fields) < 4 || fields[1] != vouchingSigns {
+		return line
+	}
+	fields[3] = base64.StdEncoding.EncodeToString([]byte(jwks))
+	return strings.Join(fields, " ")
+}
+
+// vouchingLine is a vouching profile's entry in the projection, in the form
+// zoneVouchingProfilesKey describes, without its key: withVouchingKey puts
+// that in once it is known. Only called for a profile wantsVouching says yes
+// to.
 func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string, homes []string) string {
 	vouching := profile.Services().Vouching
-	// A profile that names no keys exchanges and does not vouch: the three
-	// fields say so, and the Composition makes no issuer of it.
+	// A profile that names no keys exchanges and does not vouch: the second
+	// field says so, and the Composition makes no issuer of it.
 	fields := []string{profile.Name, vouchingNoKeys, "0", vouchingNoKeys}
-	if keys := vouching.Keys; keys != nil {
-		path := keys.Path
-		if path == "" {
-			path = vouchingKeysDefaultPath
-		}
-		fields = []string{profile.Name, keys.Service, strconv.Itoa(int(keys.Port)), path}
+	if vouching.Keys != nil {
+		fields[1] = vouchingSigns
 	}
 	// The fifth field: what the client may do beside vouching.
 	var extra []string

@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/vouchingkey"
 )
 
 func exposeAt(name, sub string, surface gentianov1alpha1.SurfaceKind) gentianov1alpha1.ExposureSpec {
@@ -280,10 +282,9 @@ func vouchingProfilesOf(t *testing.T, r *TileProjectionReconciler, tenant string
 }
 
 // The tenant's realm believes one issuer per component that vouches for
-// people, and the Composition makes them from this list: the profile's name
-// and where its keys are published. It follows the Components, as the
-// exchange profiles do, and says the path out in full so that nothing
-// downstream has to know the default.
+// people, and the Composition makes them from this list: the profile's name,
+// whether it signs statements, and the key the platform issued it. It
+// follows the Components, as the exchange profiles do.
 //
 // The profiles here are the ones the tenant-default render fixture's
 // projection lists, and what is projected for them is compared with that
@@ -294,11 +295,11 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	_ = corev1.AddToScheme(scheme)
 
 	tenant := platformTenantFixture()
-	vouching := func(name, service string, port int32, path string) *gentianov1alpha1.ComponentProfile {
+	vouching := func(name string) *gentianov1alpha1.ComponentProfile {
 		p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
 		p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 			Vouching: &gentianov1alpha1.VouchingRequirement{
-				Keys: &gentianov1alpha1.VouchingKeys{Service: service, Port: port, Path: path},
+				Keys: &gentianov1alpha1.VouchingKeys{},
 			},
 		}}
 		return p
@@ -315,16 +316,16 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(),
-		// No path: a profile no API server defaulted. The default is
-		// written out.
-		vouching("scribe", "scribe", 8080, ""),
+		// Signs statements. Its Secret is not made yet, so no key is
+		// issued and the line holds none.
+		vouching("scribe"),
 		// Exchanges as well: the word that says so follows its line.
-		exchanging(vouching("steward", "steward-keys", 8443, "/keys/current.json")),
+		exchanging(vouching("steward")),
 		plain,
 		// Exchanges and names no keys: the line says there are none.
 		keyless("warden"),
 		// Vouches, and no component of this tenant is of it.
-		vouching("elsewhere", "elsewhere", 8080, ""),
+		vouching("elsewhere"),
 		// Two components of one profile are one issuer with one set of keys.
 		comp("scribe-a", "scribe", tenant.NamespaceName()),
 		comp("scribe-b", "scribe", tenant.NamespaceName()),
@@ -341,8 +342,8 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 
 	got := vouchingProfilesOf(t, r, tenant.Name)
 	want := []string{
-		"scribe scribe 8080 " + vouchingKeysDefaultPath,
-		"steward steward-keys 8443 /keys/current.json exchange",
+		"scribe keys 0 -",
+		"steward keys 0 - exchange",
 		"warden - 0 - exchange",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -350,7 +351,8 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	}
 
 	// What the Composition is rendered from in the fixture is what this
-	// writes, key and lines.
+	// writes, key and lines. The fixture's scribe has its key issued; here
+	// no Secret is made yet, so the lines are compared without the keys.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "tests", "unit", "render", "tenant-default", "required-resources", "zone-hosts.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -359,7 +361,17 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	if err := yaml.Unmarshal(raw, fixture); err != nil {
 		t.Fatal(err)
 	}
-	if lines := strings.TrimSpace(fixture.Data[zoneVouchingProfilesKey]); lines != strings.Join(got, "\n") {
+	keyless := func(lines string) string {
+		out := strings.Split(lines, "\n")
+		for i, line := range out {
+			if f := strings.Split(line, " "); len(f) >= 4 {
+				f[3] = vouchingNoKeys
+				out[i] = strings.Join(f, " ")
+			}
+		}
+		return strings.Join(out, "\n")
+	}
+	if lines := keyless(strings.TrimSpace(fixture.Data[zoneVouchingProfilesKey])); lines != strings.Join(got, "\n") {
 		t.Fatalf("the render fixture's %s is\n%s\nand the projection writes\n%s", zoneVouchingProfilesKey, lines, strings.Join(got, "\n"))
 	}
 
@@ -393,7 +405,7 @@ func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
 	syncer := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "syncer"}}
 	syncer.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 		Vouching: &gentianov1alpha1.VouchingRequirement{
-			Keys:     &gentianov1alpha1.VouchingKeys{Service: "syncer", Port: 8080},
+			Keys:     &gentianov1alpha1.VouchingKeys{},
 			Director: []gentianov1alpha1.DirectorScope{gentianov1alpha1.DirectorScopePlansApply, gentianov1alpha1.DirectorScopePlansRead},
 		},
 	}}
@@ -411,10 +423,10 @@ func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, platform.Name); len(got) != 1 || got[0] != "syncer syncer 8080 "+vouchingKeysDefaultPath+" plans-apply,plans-read" {
+	if got := vouchingProfilesOf(t, r, platform.Name); len(got) != 1 || got[0] != "syncer keys 0 - plans-apply,plans-read" {
 		t.Fatalf("platform: %q", got)
 	}
-	if got := vouchingProfilesOf(t, r, acme.Name); len(got) != 1 || got[0] != "syncer syncer 8080 "+vouchingKeysDefaultPath {
+	if got := vouchingProfilesOf(t, r, acme.Name); len(got) != 1 || got[0] != "syncer keys 0 -" {
 		t.Fatalf("another tenant was given director scopes: %q", got)
 	}
 }
@@ -455,7 +467,7 @@ func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
 		{Contract: "file-store"},
 	}
 	odoo.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
-		Vouching: &gentianov1alpha1.VouchingRequirement{Keys: &gentianov1alpha1.VouchingKeys{Service: "odoo-keys", Port: 8069, Path: "/jwks"}},
+		Vouching: &gentianov1alpha1.VouchingRequirement{Keys: &gentianov1alpha1.VouchingKeys{}},
 	}}
 	home := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "nextcloud"}}
 	comp := func(name string) *gentianov1alpha1.Component {
@@ -488,7 +500,7 @@ func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo odoo-keys 8069 /jwks narrow,home=nextcloud" {
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo keys 0 - narrow,home=nextcloud" {
 		t.Fatalf("vouching profiles = %q", got)
 	}
 
@@ -504,7 +516,7 @@ func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo odoo-keys 8069 /jwks narrow" {
+	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo keys 0 - narrow" {
 		t.Fatalf("vouching profiles after the grant was taken back = %q", got)
 	}
 }
@@ -575,11 +587,14 @@ func TestHomeTokenScopeIsNamedForTheHome(t *testing.T) {
 	}
 }
 
-// The Secret the Composition wrote once follows the profile: a component
-// that starts to publish keys is told its issuer, one that stops is no
-// longer, and the client secret beside it is never touched. A Secret not
+// The Secret the Composition wrote once follows the profile. A component
+// that signs statements is told its issuer and is issued a key, once: the
+// key stays what it is on the next reconcile, and its public half is what
+// the projection hands the Composition. A value that is not a key the
+// platform issues is replaced. A component that stops signing loses issuer
+// and key, and the client secret beside them is never touched. A Secret not
 // made yet is left to the Composition.
-func TestTheVouchingIssuerFollowsTheProfile(t *testing.T) {
+func TestTheVouchingIdentityFollowsTheProfile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
@@ -599,18 +614,32 @@ func TestTheVouchingIssuerFollowsTheProfile(t *testing.T) {
 		}
 		return s
 	}
-	signer := keyless("signer")
-	signer.Spec.Requires.Services.Vouching.Keys = &gentianov1alpha1.VouchingKeys{Service: "signer", Port: 8080}
+	signs := func(name string) *gentianov1alpha1.ComponentProfile {
+		p := keyless(name)
+		p.Spec.Requires.Services.Vouching.Keys = &gentianov1alpha1.VouchingKeys{}
+		return p
+	}
+	issued, err := vouchingkey.Generate()
+	if err != nil {
+		t.Fatal(err)
+	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(),
 		// Wrote no issuer when it was made: the profile named no keys then.
-		signer, comp("signer"),
+		signs("signer"), comp("signer"),
 		secret("signer", map[string]string{VouchingClientSecretKey: "s1", VouchingClientIDKey: "vouch-signer"}),
+		// Holds something under the key's name that the platform did not
+		// issue.
+		signs("forged"), comp("forged"),
+		secret("forged", map[string]string{VouchingClientSecretKey: "s3", VouchingSigningKeyKey: "not a key", VouchingKeyIDKey: "x"}),
 		// Named keys once and no longer does.
 		keyless("stopped"), comp("stopped"),
-		secret("stopped", map[string]string{VouchingClientSecretKey: "s2", VouchingIssuerKey: VouchingIssuer(ns, "stopped")}),
+		secret("stopped", map[string]string{
+			VouchingClientSecretKey: "s2", VouchingIssuerKey: VouchingIssuer(ns, "stopped"),
+			VouchingSigningKeyKey: string(issued), VouchingKeyIDKey: "k",
+		}),
 		// Its Secret is not made yet.
-		keyless("new"), comp("new"),
+		signs("new"), comp("new"),
 	).Build()
 	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
 	if err := r.projectZoneHosts(context.Background()); err != nil {
@@ -623,16 +652,74 @@ func TestTheVouchingIssuerFollowsTheProfile(t *testing.T) {
 		}
 		return s.Data
 	}
+	// keyOf is the key a Secret holds, checked against the id beside it.
+	keyOf := func(name string) *vouchingkey.Key {
+		got := read(name)
+		key, err := vouchingkey.Parse(got[VouchingSigningKeyKey])
+		if err != nil {
+			t.Fatalf("%s holds no key the platform issues: %v", name, err)
+		}
+		if string(got[VouchingKeyIDKey]) != key.ID() {
+			t.Fatalf("%s names its key %q, and the key is %q", name, got[VouchingKeyIDKey], key.ID())
+		}
+		return key
+	}
+	// lineKey is the public half the projection hands on for a profile.
+	lineKey := func(name string) string {
+		for _, line := range vouchingProfilesOf(t, r, tenant.Name) {
+			f := strings.Split(line, " ")
+			if f[0] != name {
+				continue
+			}
+			if f[1] != "keys" || f[3] == "-" {
+				return ""
+			}
+			raw, err := base64.StdEncoding.DecodeString(f[3])
+			if err != nil {
+				t.Fatalf("%s: the key in the line is not base64: %v", name, err)
+			}
+			return string(raw)
+		}
+		t.Fatalf("no line for %s", name)
+		return ""
+	}
+
 	got := read("signer")
 	if string(got[VouchingIssuerKey]) != VouchingIssuer(ns, "signer") || string(got[VouchingClientSecretKey]) != "s1" || string(got[VouchingClientIDKey]) != "vouch-signer" {
 		t.Fatalf("signer's Secret = %q", got)
 	}
+	first := keyOf("signer")
+	want, _ := first.JWKS()
+	if lineKey("signer") != string(want) {
+		t.Fatalf("the projection hands on %q, and signer's key is %q", lineKey("signer"), want)
+	}
+	if string(read("forged")[VouchingClientSecretKey]) != "s3" {
+		t.Fatal("forged's client secret was touched")
+	}
+	forged, _ := keyOf("forged").JWKS()
+	if lineKey("forged") != string(forged) {
+		t.Fatalf("forged's replaced key is not what the projection hands on")
+	}
 	got = read("stopped")
-	if _, ok := got[VouchingIssuerKey]; ok || string(got[VouchingClientSecretKey]) != "s2" {
+	_, issuer := got[VouchingIssuerKey]
+	_, key := got[VouchingSigningKeyKey]
+	_, id := got[VouchingKeyIDKey]
+	if issuer || key || id || string(got[VouchingClientSecretKey]) != "s2" {
 		t.Fatalf("stopped's Secret = %q", got)
 	}
 	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: VouchingSecretName("new")}, &corev1.Secret{}); !errors.IsNotFound(err) {
 		t.Fatalf("a Secret not made yet was made: %v", err)
+	}
+	if lineKey("new") != "" {
+		t.Fatalf("a key was handed on for a component that has none: %q", lineKey("new"))
+	}
+
+	// Again: nothing is made twice.
+	if err := r.projectZoneHosts(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if again := keyOf("signer"); again.ID() != first.ID() {
+		t.Fatalf("signer's key was made again: %q then %q", first.ID(), again.ID())
 	}
 }
 

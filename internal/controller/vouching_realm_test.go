@@ -11,12 +11,14 @@ SPDX-License-Identifier: MPL-2.0
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/go-jose/go-jose/v4"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/gentian-org/gentian-os/internal/keycloak"
@@ -31,9 +33,9 @@ import (
 // Secret, so a name made differently here is a grant that never succeeds.
 type vouchingComponent struct {
 	profile string
-	// jwks is where the realm fetches the component's keys, put together by
-	// the Composition from the projection's line and the tenant's namespace.
-	jwks string
+	// kid is the id of the key the platform issued the component, as the
+	// fixture's projection hands it on; empty where no key is issued yet.
+	kid string
 	// keyless says the profile names no keys: it exchanges a present
 	// person's token and is no issuer.
 	keyless bool
@@ -54,10 +56,10 @@ var vouchingRealmFixtures = []struct {
 		internalURL: "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth",
 		components: []vouchingComponent{
 			// The default path, on a Service called what the profile is.
-			{profile: "scribe", jwks: "http://scribe.tenant-render-fixture.svc.cluster.local:8080/.well-known/jwks.json"},
+			{profile: "scribe", kid: "scribe-key"},
 			// Another Service name, port and path: none of the four fields of
 			// a line is taken from another.
-			{profile: "steward", jwks: "http://steward-keys.tenant-render-fixture.svc.cluster.local:8443/keys/current.json"},
+			{profile: "steward"},
 			// No keys: a client and a Secret, and no issuer.
 			{profile: "warden", keyless: true},
 		},
@@ -70,7 +72,7 @@ var vouchingRealmFixtures = []struct {
 		fixture: "tenant-platform", tenant: "platform", realm: "kernel", namespace: "tenant-platform",
 		internalURL: "http://gentian-idp-keycloak-keycloakx-http.kernel-authentication.svc.cluster.local:8080/auth",
 		components: []vouchingComponent{
-			{profile: "herald", jwks: "http://herald.tenant-platform.svc.cluster.local:8080/.well-known/jwks.json"},
+			{profile: "herald", kid: "herald-key"},
 		},
 	},
 }
@@ -129,7 +131,7 @@ func scopesOfClient(objs []map[string]interface{}, kind, field string, client ma
 }
 
 // The component as an issuer the realm believes: found by the name its
-// statements carry, verified with keys fetched from its own Service, and good
+// statements carry, verified with the key the platform issued it, and good
 // for the one grant -- nobody signs in through it.
 func TestTheVouchingIssuerAsRendered(t *testing.T) {
 	for _, c := range vouchingRealmFixtures {
@@ -175,8 +177,11 @@ func TestTheVouchingIssuerAsRendered(t *testing.T) {
 			if got, want := str("issuer"), VouchingIssuer(c.namespace, comp.profile); got != want {
 				t.Errorf("%s: %s has issuer %q, and the component is told %q", c.fixture, alias, got, want)
 			}
-			if got := str("jwksUrl"); got != comp.jwks {
-				t.Errorf("%s: %s fetches its keys from %q, want %q", c.fixture, alias, got, comp.jwks)
+			// The realm is given the key and fetches nothing: an address
+			// here is one Keycloak refuses on a cluster whose Services it
+			// does not count as private.
+			if got := str("jwksUrl"); got != "" {
+				t.Errorf("%s: %s fetches its keys from %q, and the realm is to fetch nothing", c.fixture, alias, got)
 			}
 			if on, _, _ := unstructured.NestedBool(idp, "spec", "forProvider", "validateSignature"); !on {
 				t.Errorf("%s: %s does not verify signatures", c.fixture, alias)
@@ -186,11 +191,25 @@ func TestTheVouchingIssuerAsRendered(t *testing.T) {
 			if got := str("providerId"); got != "jwt-authorization-grant" {
 				t.Errorf("%s: %s is a %q", c.fixture, alias, got)
 			}
-			// The switch itself, and nothing else carried on the side: a key
-			// the provider writes and does not read back never converges.
+			// The switch itself and the key the platform issued, and nothing
+			// else carried on the side: a key the provider writes and does
+			// not read back never converges. Until a key is issued the entry
+			// holds none.
 			extra, _, _ := unstructured.NestedStringMap(idp, "spec", "forProvider", "extraConfig")
+			verifier, has := extra["publicKeySignatureVerifier"]
+			delete(extra, "publicKeySignatureVerifier")
 			if want := map[string]string{"jwtAuthorizationGrantEnabled": "true"}; !reflect.DeepEqual(extra, want) {
-				t.Errorf("%s: %s has extraConfig %v, want %v", c.fixture, alias, extra, want)
+				t.Errorf("%s: %s has extraConfig %v beside its key, want %v", c.fixture, alias, extra, want)
+			}
+			if comp.kid == "" {
+				if has {
+					t.Errorf("%s: %s holds a key and none is issued: %s", c.fixture, alias, verifier)
+				}
+			} else {
+				var set jose.JSONWebKeySet
+				if err := json.Unmarshal([]byte(verifier), &set); err != nil || len(set.Keys) != 1 || set.Keys[0].KeyID != comp.kid || !set.Keys[0].IsPublic() {
+					t.Errorf("%s: %s does not hold the public half of %q: %q (%v)", c.fixture, alias, comp.kid, verifier, err)
+				}
 			}
 			for _, f := range []string{"enabled", "hideOnLoginPage", "linkOnly"} {
 				if on, _, _ := unstructured.NestedBool(idp, "spec", "forProvider", f); !on {

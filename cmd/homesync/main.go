@@ -19,12 +19,13 @@ SPDX-License-Identifier: MPL-2.0
 //	PLAN_FILE           what to sync, as the platform writes it
 //	DATABASE_URL        where the pairs are kept
 //	VOUCHING_DIR: the Secret vouching-<profile> mounted, one file per key
-//	(VOUCHING_ISSUER, VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET,
-//	VOUCHING_TOKEN_URL), read each time a token is asked for
+//	(VOUCHING_ISSUER, VOUCHING_SIGNING_KEY, VOUCHING_KEY_ID,
+//	VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL), read
+//	each time a token is asked for
 //	                    the client the platform gave it (vouching-<profile>)
 //	REGISTRAR_URL, REGISTRAR_KEY
 //	                    where it asks who is linked to it, and its key there
-//	LISTEN              where it publishes its keys (default :8080)
+//	LISTEN              where it answers the health check (default :8080)
 //	INTERVAL            the pause between rounds (default 5m)
 package main
 
@@ -88,14 +89,6 @@ func run(log *slog.Logger) error {
 		listen = ":8080"
 	}
 
-	keys, err := homesync.NewKeys()
-	if err != nil {
-		return err
-	}
-	jwks, err := keys.JWKS()
-	if err != nil {
-		return err
-	}
 	// The platform writes the address in the form a Python app reads it
 	// (postgresql+psycopg://); the driver here reads the plain one.
 	for _, prefix := range []string{"postgresql+psycopg://", "postgresql+psycopg2://"} {
@@ -103,8 +96,9 @@ func run(log *slog.Logger) error {
 			dsn = "postgresql://" + strings.TrimPrefix(dsn, prefix)
 		}
 	}
-	// Read when used, not here: the platform may add the issuer, or make
-	// the client's secret again, while the service runs.
+	// Read when used, not here: the platform may add the issuer and the
+	// signing key, or make the client's secret or the key again, while the
+	// service runs.
 	readVouching := func() (homesync.Vouching, error) { return homesync.ReadVouching(vouchingDir) }
 	if _, err := readVouching(); err != nil {
 		log.Warn("the service's client is not complete yet; no person's token is obtained until it is", "error", err.Error())
@@ -124,7 +118,7 @@ func run(log *slog.Logger) error {
 			return p, err
 		},
 		People:  (&homesync.Linked{Registrar: registrar, Key: key, Tenant: tenant, Profile: profile, Client: client}).People,
-		Tokens:  &homesync.Tokens{Keys: keys, Read: readVouching, Client: client},
+		Tokens:  &homesync.Tokens{Read: readVouching, Client: client},
 		Store:   store,
 		Drivers: homesync.Drivers(client, log),
 		Client:  client,
@@ -132,15 +126,11 @@ func run(log *slog.Logger) error {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /.well-known/jwks.json", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(jwks)
-	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	srv := &http.Server{Addr: listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("the keys are not published", "error", err.Error())
+			log.Error("the health check is not served", "error", err.Error())
 			stop()
 		}
 	}()

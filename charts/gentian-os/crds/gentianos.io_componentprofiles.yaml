@@ -2496,32 +2496,9 @@ spec:
                               type: boolean
                             keys:
                               description: |-
-                                Keys says where the component publishes the keys its statements are
-                                signed with, as a JWKS. The realm fetches them from there. Left out
-                                only by a component that exchanges and does not vouch.
-                              properties:
-                                path:
-                                  default: /.well-known/jwks.json
-                                  description: Path is where the JWKS is served.
-                                  maxLength: 256
-                                  pattern: ^/[A-Za-z0-9._~/-]*$
-                                  type: string
-                                port:
-                                  description: Port is the Service's port.
-                                  format: int32
-                                  maximum: 65535
-                                  minimum: 1
-                                  type: integer
-                                service:
-                                  description: Service is the name of the component's
-                                    Service.
-                                  maxLength: 63
-                                  minLength: 1
-                                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                                  type: string
-                              required:
-                              - port
-                              - service
+                                Keys says the component signs statements about people, with a key
+                                the platform issues it: written "keys: {}". Left out only by a
+                                component that exchanges and does not vouch.
                               type: object
                           type: object
                           x-kubernetes-validations:
@@ -5222,32 +5199,9 @@ spec:
                             type: boolean
                           keys:
                             description: |-
-                              Keys says where the component publishes the keys its statements are
-                              signed with, as a JWKS. The realm fetches them from there. Left out
-                              only by a component that exchanges and does not vouch.
-                            properties:
-                              path:
-                                default: /.well-known/jwks.json
-                                description: Path is where the JWKS is served.
-                                maxLength: 256
-                                pattern: ^/[A-Za-z0-9._~/-]*$
-                                type: string
-                              port:
-                                description: Port is the Service's port.
-                                format: int32
-                                maximum: 65535
-                                minimum: 1
-                                type: integer
-                              service:
-                                description: Service is the name of the component's
-                                  Service.
-                                maxLength: 63
-                                minLength: 1
-                                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
-                                type: string
-                            required:
-                            - port
-                            - service
+                              Keys says the component signs statements about people, with a key
+                              the platform issues it: written "keys: {}". Left out only by a
+                              component that exchanges and does not vouch.
                             type: object
                         type: object
                         x-kubernetes-validations:

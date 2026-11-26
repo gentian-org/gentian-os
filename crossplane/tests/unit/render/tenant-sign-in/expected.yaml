@@ -2180,9 +2180,9 @@ spec:
     enabled: true
     extraConfig:
       jwtAuthorizationGrantEnabled: "true"
+      publicKeySignatureVerifier: '{"keys":[{"use":"sig","kty":"EC","kid":"scribe-key","crv":"P-256","alg":"ES256","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}]}'
     hideOnLoginPage: true
     issuer: https://vouch-scribe.tenant-render-fixture.svc
-    jwksUrl: http://scribe.tenant-render-fixture.svc.cluster.local:8080/.well-known/jwks.json
     linkOnly: true
     providerId: jwt-authorization-grant
     realm: render-fixture
@@ -2238,7 +2238,6 @@ spec:
       jwtAuthorizationGrantEnabled: "true"
     hideOnLoginPage: true
     issuer: https://vouch-steward.tenant-render-fixture.svc
-    jwksUrl: http://steward-keys.tenant-render-fixture.svc.cluster.local:8443/keys/current.json
     linkOnly: true
     providerId: jwt-authorization-grant
     realm: render-fixture

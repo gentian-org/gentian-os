@@ -27,7 +27,7 @@ func TestAProfileThatHoldsNothingForPeopleSaysSo(t *testing.T) {
 }
 
 func TestWhatAProfileHoldsForPeople(t *testing.T) {
-	keys := &gentianov1alpha1.VouchingKeys{Service: "svc", Port: 8443}
+	keys := &gentianov1alpha1.VouchingKeys{}
 	for _, tc := range []struct {
 		name string
 		spec gentianov1alpha1.ComponentProfileSpec

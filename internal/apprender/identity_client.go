@@ -397,7 +397,7 @@ func (id *identityScope) scopeMapper(mapper string, tmpl gentianov1alpha1.OIDCMa
 	})
 }
 
-// signsStatements reports whether a profile vouches with keys of its own
+// signsStatements reports whether a profile signs statements about people
 // (requires.services.vouching.keys): the kind of component people are linked
 // to.
 func signsStatements(profile *gentianov1alpha1.ComponentProfileSpec) bool {

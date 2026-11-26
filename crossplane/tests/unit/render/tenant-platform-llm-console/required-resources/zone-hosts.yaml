@@ -29,4 +29,4 @@ data:
     desktop
     wiki
   vouchingProfiles: |
-    herald herald 8080 /.well-known/jwks.json
+    herald keys 0 eyJrZXlzIjpbeyJ1c2UiOiJzaWciLCJrdHkiOiJFQyIsImtpZCI6ImhlcmFsZC1rZXkiLCJjcnYiOiJQLTI1NiIsImFsZyI6IkVTMjU2IiwieCI6ImY4M09KM0QyeEYxQmc4dnViOXRMZTFnSE16Vjc2ZThUdXM5dVBIdlJWRVUiLCJ5IjoieF9GRXpSdTltMzZITE5fdHVlNjU5TE5wWFc2cEN5U3Rpa1lqS0lXSTVhMCJ9XX0=
