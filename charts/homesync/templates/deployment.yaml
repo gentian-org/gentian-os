@@ -62,12 +62,12 @@ spec:
             - name: VOUCHING_DIR
               value: /etc/vouching
           ports:
-            - name: keys
+            - name: health
               containerPort: {{ .Values.port }}
           readinessProbe:
             httpGet:
               path: /healthz
-              port: keys
+              port: health
           volumeMounts:
             - name: plan
               mountPath: /etc/homesync

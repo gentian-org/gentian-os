@@ -13,7 +13,6 @@ package homesync
 import (
 	"context"
 	"crypto/rand"
-	"crypto/rsa"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -26,59 +25,33 @@ import (
 	"sync"
 	"time"
 
-	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+
+	"github.com/gentian-org/gentian-os/internal/vouchingkey"
 )
 
 // The service vouches for people (requires.services.vouching): it signs a
 // statement of a few minutes that names a person, and the tenant's realm
 // answers with a token of that person for the one app the scope names. The
-// realm reads the keys the statements are signed with from the service
-// (Keys.JWKS), and answers only for a person linked to the service.
-
-// Keys are the service's signing keys: one, made when the process starts. A
-// statement names it by its id, and the realm fetches the set again when it
-// meets an id it does not know, so a restart costs one fetch.
-type Keys struct {
-	private *rsa.PrivateKey
-	id      string
-}
-
-// NewKeys makes the process's key.
-func NewKeys() (*Keys, error) {
-	k, err := rsa.GenerateKey(rand.Reader, 3072)
-	if err != nil {
-		return nil, err
-	}
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return nil, err
-	}
-	return &Keys{private: k, id: hex.EncodeToString(b)}, nil
-}
-
-// JWKS is the public half, as the realm reads it.
-func (k *Keys) JWKS() ([]byte, error) {
-	set := jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{
-		Key: &k.private.PublicKey, KeyID: k.id, Algorithm: string(jose.RS256), Use: "sig",
-	}}}
-	return json.Marshal(set)
-}
+// statements are signed with the key the platform issued the service
+// (internal/vouchingkey), whose public half the platform gave the realm, and
+// the realm answers only for a person linked to the service.
 
 // Vouching is what the platform tells the service about its client in the
 // tenant's realm (the Secret vouching-<profile>).
 type Vouching struct {
-	Issuer       string // VOUCHING_ISSUER: what the statements name as issuer
-	ClientID     string // VOUCHING_CLIENT_ID
-	ClientSecret string // VOUCHING_CLIENT_SECRET
-	TokenURL     string // VOUCHING_TOKEN_URL
+	Issuer       string           // VOUCHING_ISSUER: what the statements name as issuer
+	Key          *vouchingkey.Key // VOUCHING_SIGNING_KEY: what they are signed with
+	ClientID     string           // VOUCHING_CLIENT_ID
+	ClientSecret string           // VOUCHING_CLIENT_SECRET
+	TokenURL     string           // VOUCHING_TOKEN_URL
 }
 
 // ReadVouching reads the Secret vouching-<profile> mounted as files in dir,
 // one per key. The platform keeps it current, and a mounted Secret follows
 // it in place, so a value read when it is used is the value of now: an
-// issuer the platform adds later, or a client secret it makes again,
-// reaches the service without a restart.
+// issuer or a signing key the platform adds later, or a client secret or a
+// key it makes again, reaches the service without a restart.
 func ReadVouching(dir string) (Vouching, error) {
 	read := func(name string) (string, error) {
 		b, err := os.ReadFile(filepath.Join(dir, name))
@@ -104,6 +77,13 @@ func ReadVouching(dir string) (Vouching, error) {
 			return Vouching{}, err
 		}
 	}
+	signingKey, err := read("VOUCHING_SIGNING_KEY")
+	if err != nil {
+		return Vouching{}, err
+	}
+	if v.Key, err = vouchingkey.Parse([]byte(signingKey)); err != nil {
+		return Vouching{}, fmt.Errorf("VOUCHING_SIGNING_KEY: %w", err)
+	}
 	return v, nil
 }
 
@@ -121,7 +101,6 @@ var ErrRefused = errors.New("the realm refused a token of this person for this s
 // Tokens obtains a person's token for one scope, and keeps it until shortly
 // before it runs out.
 type Tokens struct {
-	Keys *Keys
 	// Vouching is the service's client, unless Read is set: then it is read
 	// each time a token is asked for (ReadVouching).
 	Vouching Vouching
@@ -173,7 +152,7 @@ func (t *Tokens) For(ctx context.Context, person, scope string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	statement, err := t.statement(v.Issuer, person, issuer)
+	statement, err := t.statement(v, person, issuer)
 	if err != nil {
 		return "", err
 	}
@@ -274,9 +253,11 @@ func (t *Tokens) settings() (Vouching, error) {
 
 // statement is a signed statement of the issuer naming the person, for the
 // realm.
-func (t *Tokens) statement(issuer, person, audience string) (string, error) {
-	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: jose.JSONWebKey{Key: t.Keys.private, KeyID: t.Keys.id}},
-		(&jose.SignerOptions{}).WithType("JWT"))
+func (t *Tokens) statement(v Vouching, person, audience string) (string, error) {
+	if v.Key == nil {
+		return "", errors.New("the service has no signing key")
+	}
+	signer, err := v.Key.Signer()
 	if err != nil {
 		return "", err
 	}
@@ -286,7 +267,7 @@ func (t *Tokens) statement(issuer, person, audience string) (string, error) {
 	}
 	now := t.now()
 	claims := jwt.Claims{
-		Issuer:   issuer,
+		Issuer:   v.Issuer,
 		Subject:  person,
 		Audience: jwt.Audience{audience},
 		ID:       hex.EncodeToString(id),

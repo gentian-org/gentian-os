@@ -335,7 +335,7 @@ func TestAnAppsClientNamesTheEntriesItsPeopleAreLinkedTo(t *testing.T) {
 		in.Profile.Requires.Services = &gentianov1alpha1.ServiceRequirements{}
 	}
 	in.Profile.Requires.Services.Vouching = &gentianov1alpha1.VouchingRequirement{
-		Keys: &gentianov1alpha1.VouchingKeys{Service: "keys", Port: 8080},
+		Keys: &gentianov1alpha1.VouchingKeys{},
 	}
 	want := "vouch-" + in.ProfileName + ",vouch-homesync"
 	found := false

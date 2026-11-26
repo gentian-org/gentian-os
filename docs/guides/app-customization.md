@@ -634,8 +634,9 @@ the provider of `file-store` (WebDAV), `calendar-store` (CalDAV) or `contacts-st
 that every consumer of the contract is bound to. Where several installed apps provide one, the
 tenant names its home in `spec.homes` (`{calendar-store: nextcloud-base-ce}`); otherwise the first
 provider by name is bound. A consumer that reads and writes there as the person it acts for marks
-the integration `asPerson: true` and publishes the keys it signs statements with
-(`requires.services.vouching.keys`, below). It needs no more than `trustTier: certified`:
+the integration `asPerson: true` and declares that it signs statements
+(`requires.services.vouching.keys`, below), with the key the platform issues it
+([custom-catalogs.md](custom-catalogs.md)). It needs no more than `trustTier: certified`:
 
 ```yaml
 spec:
@@ -645,7 +646,7 @@ spec:
   requires:
     services:
       vouching:
-        keys: {service: odoo-keys, port: 8069, path: /gentian/jwks}
+        keys: {}
 ```
 
 - **The token.** The component asks the tenant's realm for a person's token with the scope

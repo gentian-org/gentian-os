@@ -655,17 +655,18 @@ type PersonSecretsRequirement struct{}
 //
 // The platform then, for each install:
 //
-//   - enters the component in the tenant's realm as a trusted issuer, under
-//     the alias vouch-<profile>, with the address its keys are published at;
+//   - issues the component a signing key and enters it in the tenant's
+//     realm as a trusted issuer, under the alias vouch-<profile>, with the
+//     key's public half;
 //   - gives it a client of the realm to ask with, vouch-<profile>, which can
 //     do nothing else, and which may ask for the scope of any app of the
 //     tenant that has one (app-<profile>, which makes that app the token's
 //     audience);
 //   - delivers the client's secret and what the component has to know in the
 //     Secret vouching-<profile> of the tenant's namespace (VOUCHING_ISSUER,
-//     VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL), kept
-//     current, which the component mounts as files and reads when it uses
-//     them;
+//     VOUCHING_SIGNING_KEY, VOUCHING_KEY_ID, VOUCHING_CLIENT_ID,
+//     VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL), kept current, which the
+//     component mounts as files and reads when it uses them;
 //   - gives it the component's own key (the Secret rights-check-<profile>),
 //     as for requires.services.rights.
 //
@@ -680,16 +681,16 @@ type PersonSecretsRequirement struct{}
 //
 // A component that only exchanges the token of a person who is present
 // (exchange, below) signs no statements and names no keys. It is given the
-// client and the Secret, without VOUCHING_ISSUER, and is not entered as an
-// issuer: the realm believes nothing it says about anybody.
+// client and the Secret, without VOUCHING_ISSUER and without a key, and is
+// not entered as an issuer: the realm believes nothing it says about anybody.
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || (has(self.exchange) && self.exchange)",message="vouching.keys is required: only a component that does nothing but exchange a present person's token (exchange: true) may leave it out"
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.director) || size(self.director) == 0",message="vouching.director needs vouching.keys: a token for the director is obtained with a signed statement"
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.homes) || !self.homes",message="vouching.homes needs vouching.keys: a person's token for a home is obtained with a signed statement"
 // +kubebuilder:validation:XValidation:rule="has(self.keys) || !has(self.consent) || self.consent == ''",message="vouching.consent needs vouching.keys: a person is linked to a component that signs statements"
 type VouchingRequirement struct {
-	// Keys says where the component publishes the keys its statements are
-	// signed with, as a JWKS. The realm fetches them from there. Left out
-	// only by a component that exchanges and does not vouch.
+	// Keys says the component signs statements about people, with a key
+	// the platform issues it: written "keys: {}". Left out only by a
+	// component that exchanges and does not vouch.
 	// +optional
 	Keys *VouchingKeys `json:"keys,omitempty"`
 
@@ -758,27 +759,13 @@ const (
 	DirectorScopePlansApply DirectorScope = "plans-apply"
 )
 
-// VouchingKeys is the address of a component's signing keys: a Service of the
-// component, in the tenant's namespace.
-type VouchingKeys struct {
-	// Service is the name of the component's Service.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=63
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	Service string `json:"service"`
-
-	// Port is the Service's port.
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port"`
-
-	// Path is where the JWKS is served.
-	// +optional
-	// +kubebuilder:default="/.well-known/jwks.json"
-	// +kubebuilder:validation:Pattern=`^/[A-Za-z0-9._~/-]*$`
-	// +kubebuilder:validation:MaxLength=256
-	Path string `json:"path,omitempty"`
-}
+// VouchingKeys declares that a component signs statements. It names nothing:
+// the platform issues the key, one per component and tenant, and gives its
+// public half to the tenant's realm. The component reads the private half
+// from its Secret vouching-<profile> (VOUCHING_SIGNING_KEY, PKCS #8 in PEM,
+// ECDSA on P-256), signs with ES256 and names the key by VOUCHING_KEY_ID. It
+// makes no key of its own and publishes none.
+type VouchingKeys struct{}
 
 // RightsRequirement declares that a component asks the platform one question:
 // may this person use that app of the component's own tenant. Being present

@@ -1,3 +1,5 @@
+# A vouching line carries a key, which is one word and longer than a line.
+# yamllint disable rule:line-length
 # What the operator projects from the routes it composes: the host labels this
 # tenant's components are served at.
 #
@@ -31,4 +33,4 @@ data:
     desktop
     wiki
   vouchingProfiles: |
-    herald herald 8080 /.well-known/jwks.json plans-apply,plans-read
+    herald keys 0 eyJrZXlzIjpbeyJ1c2UiOiJzaWciLCJrdHkiOiJFQyIsImtpZCI6ImhlcmFsZC1rZXkiLCJjcnYiOiJQLTI1NiIsImFsZyI6IkVTMjU2IiwieCI6ImY4M09KM0QyeEYxQmc4dnViOXRMZTFnSE16Vjc2ZThUdXM5dVBIdlJWRVUiLCJ5IjoieF9GRXpSdTltMzZITE5fdHVlNjU5TE5wWFc2cEN5U3Rpa1lqS0lXSTVhMCJ9XX0= plans-apply,plans-read

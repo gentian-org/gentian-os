@@ -25,20 +25,26 @@ import (
 
 	jose "github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+
+	"github.com/gentian-org/gentian-os/internal/vouchingkey"
 )
 
-// The realm is asked with a statement it can verify against the keys the
-// service publishes, naming the person, the service as issuer and the realm
+// The realm is asked with a statement it can verify against the public half
+// of the key the platform issued the service, naming that key and the person, the service as issuer and the realm
 // as audience -- by the issuer its discovery document names, which is the
 // address a browser reaches it at, not the one the service asks it at --,
 // with the scope; the token is kept until shortly before it runs out; a
 // refusal is ErrRefused, with the realm's reason.
 func TestATokenIsAskedWithAStatementTheRealmCanVerify(t *testing.T) {
-	keys, err := NewKeys()
+	issued, err := vouchingkey.Generate()
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := keys.JWKS()
+	key, err := vouchingkey.Parse(issued)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := key.JWKS()
 	var set jose.JSONWebKeySet
 	if err := json.Unmarshal(raw, &set); err != nil {
 		t.Fatal(err)
@@ -52,13 +58,13 @@ func TestATokenIsAskedWithAStatementTheRealmCanVerify(t *testing.T) {
 		}
 		asked.Add(1)
 		_ = r.ParseForm()
-		tok, err := jwt.ParseSigned(r.Form.Get("assertion"), []jose.SignatureAlgorithm{jose.RS256})
+		tok, err := jwt.ParseSigned(r.Form.Get("assertion"), []jose.SignatureAlgorithm{jose.ES256})
 		if err != nil {
 			t.Errorf("statement: %v", err)
 		}
 		claims := jwt.Claims{}
 		if err := tok.Claims(set, &claims); err != nil {
-			t.Errorf("the statement does not verify against the published keys: %v", err)
+			t.Errorf("the statement does not verify against the issued key: %v", err)
 		}
 		if claims.Subject == "stranger" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -72,17 +78,23 @@ func TestATokenIsAskedWithAStatementTheRealmCanVerify(t *testing.T) {
 		_, _ = w.Write([]byte(`{"access_token":"tok","expires_in":300}`))
 	}))
 	defer realm.Close()
-	tokens := &Tokens{Keys: keys, Vouching: Vouching{
-		Issuer: "https://vouch-home-sync.tenant-acme.svc", ClientID: "vouch-home-sync", ClientSecret: "s",
+	tokens := &Tokens{Vouching: Vouching{
+		Issuer: "https://vouch-home-sync.tenant-acme.svc", Key: key, ClientID: "vouch-home-sync", ClientSecret: "s",
 		TokenURL: "http://kc/realms/acme/protocol/openid-connect/token",
 	}, Client: &http.Client{Transport: rewrite{to: realm.URL}}}
 	now := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
 	tokens.Now = func() time.Time { return now }
-	statement, err := tokens.statement("https://vouch-home-sync.tenant-acme.svc", "sub-1", "https://id.acme.example/auth/realms/acme")
+	statement, err := tokens.statement(tokens.Vouching, "sub-1", "https://id.acme.example/auth/realms/acme")
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, _ := jwt.ParseSigned(statement, []jose.SignatureAlgorithm{jose.RS256})
+	parsed, _ := jwt.ParseSigned(statement, []jose.SignatureAlgorithm{jose.ES256})
+	if kid := parsed.Headers[0].KeyID; kid != key.ID() {
+		t.Fatalf("the statement names the key %q, and the key is %q", kid, key.ID())
+	}
+	if _, err := tokens.statement(Vouching{Issuer: "i"}, "sub-1", "a"); err == nil {
+		t.Fatal("a statement was signed without a key")
+	}
 	claims := jwt.Claims{}
 	if err := parsed.Claims(set, &claims); err != nil || claims.Expiry.Time().Sub(claims.IssuedAt.Time()) != statementLife || claims.ID == "" {
 		t.Fatalf("statement claims %v (%v)", claims, err)
@@ -117,9 +129,10 @@ func (r rewrite) RoundTrip(req *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(target)
 }
 
-// The client is read from the mounted Secret each time a token is asked
-// for: a value the platform changes while the service runs is the one used
-// next, and a key not there yet stops only the asking.
+// The client and the signing key are read from the mounted Secret each time
+// a token is asked for: a value the platform changes while the service runs
+// is the one used next, an entry not there yet stops only the asking, and a
+// key the platform did not issue is not signed with.
 func TestTheClientIsReadWhenATokenIsAskedFor(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, value string) {
@@ -134,9 +147,23 @@ func TestTheClientIsReadWhenATokenIsAskedFor(t *testing.T) {
 		t.Fatalf("an issuer not there yet: %v", err)
 	}
 	write("VOUCHING_ISSUER", "https://vouch-home-sync.tenant-acme.svc\n")
+	if _, err := ReadVouching(dir); err == nil || !strings.Contains(err.Error(), "VOUCHING_SIGNING_KEY") {
+		t.Fatalf("a signing key not there yet: %v", err)
+	}
+	write("VOUCHING_SIGNING_KEY", "not a key")
+	if _, err := ReadVouching(dir); err == nil || !strings.Contains(err.Error(), "VOUCHING_SIGNING_KEY") {
+		t.Fatalf("a key the platform did not issue: %v", err)
+	}
+	first, _ := vouchingkey.Generate()
+	write("VOUCHING_SIGNING_KEY", string(first))
 	v, err := ReadVouching(dir)
-	if err != nil || v.Issuer != "https://vouch-home-sync.tenant-acme.svc" || v.ClientSecret != "s1" {
+	if err != nil || v.Issuer != "https://vouch-home-sync.tenant-acme.svc" || v.ClientSecret != "s1" || v.Key == nil {
 		t.Fatalf("read %+v (%v)", v, err)
+	}
+	second, _ := vouchingkey.Generate()
+	write("VOUCHING_SIGNING_KEY", string(second))
+	if again, err := ReadVouching(dir); err != nil || again.Key.ID() == v.Key.ID() {
+		t.Fatalf("a key the platform made again is not the one read next (%v)", err)
 	}
 	write("VOUCHING_CLIENT_SECRET", "s2")
 	tokens := &Tokens{Read: func() (Vouching, error) { return ReadVouching(dir) }}

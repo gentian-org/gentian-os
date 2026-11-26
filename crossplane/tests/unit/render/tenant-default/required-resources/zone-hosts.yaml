@@ -1,3 +1,5 @@
+# A vouching line carries a key, which is one word and longer than a line.
+# yamllint disable rule:line-length
 # What the operator projects from this tenant's components: the host labels
 # they are served at, and the profiles among them that ask for an exchanged
 # token (exposure exchangeToken).
@@ -8,10 +10,10 @@
 # audience, and no other profile gets one.
 #
 # vouchingProfiles is the components that vouch for people at the realm
-# (requires.services.vouching), one line each: profile, Service, port, path.
-# "scribe" publishes its keys at the default path on a Service called what it
-# is; "steward" on a Service of another name, another port and a path of its
-# own, so that none of the four is taken from another. Each gets an identity
+# (requires.services.vouching), one line each: profile, "keys" for one that
+# signs statements, 0, and the public half of the key the platform issued it.
+# "scribe" has its key; "steward" signs and has none yet, so that an entry is
+# made either way and only the first carries a key. Each gets an identity
 # provider entry, a client and a Secret of the tenant's namespace, and both
 # clients may ask for the two app scopes above.
 # "warden" names no keys: it exchanges a present person's token and vouches
@@ -33,6 +35,6 @@ data:
     notes
     wiki
   vouchingProfiles: |
-    scribe scribe 8080 /.well-known/jwks.json
-    steward steward-keys 8443 /keys/current.json exchange
+    scribe keys 0 eyJrZXlzIjpbeyJ1c2UiOiJzaWciLCJrdHkiOiJFQyIsImtpZCI6InNjcmliZS1rZXkiLCJjcnYiOiJQLTI1NiIsImFsZyI6IkVTMjU2IiwieCI6ImY4M09KM0QyeEYxQmc4dnViOXRMZTFnSE16Vjc2ZThUdXM5dVBIdlJWRVUiLCJ5IjoieF9GRXpSdTltMzZITE5fdHVlNjU5TE5wWFc2cEN5U3Rpa1lqS0lXSTVhMCJ9XX0=
+    steward keys 0 - exchange
     warden - 0 - exchange

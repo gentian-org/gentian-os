@@ -516,8 +516,8 @@ does not keep it in its own database: it asks the confidant
 - A value is at most 16 KiB, and one version is kept.
 
 **A component that obtains a person's token while the person is away** declares vouching
-(`spec.requires.services.vouching`, with `keys.service`, `keys.port` and optionally `keys.path`:
-where the component publishes its signing keys as a JWKS). It needs `trustTier: platform`, or
+(`spec.requires.services.vouching`, with `keys: {}`: the component signs statements, with a key
+the platform issues it). It needs `trustTier: platform`, or
 `trustTier: certified` for a component that only calls the tenant's homes as the person
 (`integrations[].asPerson`, [app-customization.md §2.3](app-customization.md)): such a component
 names no `director`, and its client is given the scopes of the homes granted to it and no app
@@ -527,9 +527,14 @@ all the tenant's homes, and has the people who sign in to an app that declares `
 it: what the tenant's home sync acts with. The
 platform enters it in the tenant's realm as a trusted issuer under the alias `vouch-<profile>`,
 gives it a client of the same name to ask with, and tells it what it has to know in the Secret
-`vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`,
-`VOUCHING_TOKEN_URL`). The platform keeps that Secret current: the issuer follows the profile's
-`keys`, and a Secret made again carries a new client secret, which the realm's client follows. So
+`vouching-<profile>` (`VOUCHING_ISSUER`, `VOUCHING_SIGNING_KEY`, `VOUCHING_KEY_ID`,
+`VOUCHING_CLIENT_ID`, `VOUCHING_CLIENT_SECRET`, `VOUCHING_TOKEN_URL`). The signing key is the
+platform's to issue: one per component and tenant, ECDSA on P-256, its private half in the Secret
+as PKCS #8 in PEM and its public half given to the realm. The component makes no key and publishes
+none, and the realm fetches nothing from it. A statement is signed with ES256 and names the key by
+`VOUCHING_KEY_ID` (`kid`). The platform keeps that Secret current: the issuer and the key follow
+the profile's `keys`, a key taken out of the Secret is issued again and the realm told, and a
+Secret made again carries a new client secret, which the realm's client follows. So
 the component mounts the Secret as files (without `subPath`) and reads them each time it asks for a
 token; read once from the environment, a change reaches it only at its next start. The component signs a statement of at most a few minutes that names the
 issuer, the person's subject (their id in the realm), an id of its own, and as its audience the
