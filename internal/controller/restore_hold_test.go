@@ -122,7 +122,7 @@ func (w *holdWorld) setPhase(t *testing.T, restore *gentianov1alpha1.TenantResto
 
 func (w *holdWorld) applyHold(t *testing.T) bool {
 	t.Helper()
-	held, err := w.r.restoreHold(context.Background(), w.comp)
+	held, _, err := w.r.restoreHold(context.Background(), w.comp)
 	if err != nil {
 		t.Fatal(err)
 	}

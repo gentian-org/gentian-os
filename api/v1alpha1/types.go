@@ -124,14 +124,17 @@ const (
 )
 
 // TenantPhase represents the overall lifecycle phase of a Tenant.
-// +kubebuilder:validation:Enum=Provisioning;Ready;Degraded;Deleting
+// +kubebuilder:validation:Enum=Provisioning;Ready;Degraded;Hibernated;Deleting
 type TenantPhase string
 
 const (
 	TenantPhaseProvisioning TenantPhase = "Provisioning"
 	TenantPhaseReady        TenantPhase = "Ready"
 	TenantPhaseDegraded     TenantPhase = "Degraded"
-	TenantPhaseDeleting     TenantPhase = "Deleting"
+	// TenantPhaseHibernated is a tenant that is asleep (spec.hibernation):
+	// nothing of it runs, and everything it holds is kept.
+	TenantPhaseHibernated TenantPhase = "Hibernated"
+	TenantPhaseDeleting   TenantPhase = "Deleting"
 )
 
 // IntegrationBindingState represents the overall state of a binding.

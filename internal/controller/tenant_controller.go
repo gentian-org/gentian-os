@@ -666,12 +666,28 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
+	// A tenant that is asleep is reconciled no further: what it has is kept
+	// as it is until it wakes (hibernation.go).
+	sleep, err := r.reconcileHibernation(ctx, tenant)
+	if err != nil {
+		reconcileErrors.WithLabelValues("tenant").Inc()
+		return ctrl.Result{}, err
+	}
+	if sleep.asleep {
+		return sooner(ctrl.Result{}, sleep.within), nil
+	}
+
 	r.resolveTenantDomain(ctx, tenant)
 
-	return r.runTenantReconcileStages(ctx, &tenantReconcileState{
+	result, err := r.runTenantReconcileStages(ctx, &tenantReconcileState{
 		tenant: tenant,
 		start:  start,
 	})
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	// A tenant kept awake until a time is looked at again when it has come.
+	return sooner(result, sleep.within), nil
 }
 
 // validateTenantPrerequisites checks that all requested ComponentProfiles exist.
@@ -720,6 +736,14 @@ func (r *TenantReconciler) tenantGoneFromAPI(ctx context.Context, name types.Nam
 // reconcileDelete handles Tenant deletion based on deletionPolicy.
 func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+
+	// A tenant deleted in its sleep: the Jobs that take its stores away are
+	// admitted again. Nothing is scaled back up; the workloads go first.
+	if sleeps(tenant) {
+		if err := r.admitPods(ctx, tenant); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 
 	// awaitJob wraps each delete helper: if the helper returns errDeleteJobPending
 	// the reconciler requeues rather than treating it as a hard error.
