@@ -61,7 +61,7 @@ func TestGeneratedKeySignsWhatItsPublicHalfVerifies(t *testing.T) {
 	if len(set.Keys) != 1 || set.Keys[0].KeyID != key.ID() || set.Keys[0].Algorithm != "ES256" || set.Keys[0].Use != "sig" || !set.Keys[0].IsPublic() {
 		t.Fatalf("the set is not this key's public half: %s", raw)
 	}
-	parsed, err := jose.ParseSigned(compact, []jose.SignatureAlgorithm{jose.ES256})
+	parsed, err := jose.ParseSignedCompact(compact, []jose.SignatureAlgorithm{jose.ES256})
 	if err != nil {
 		t.Fatal(err)
 	}
