@@ -589,8 +589,8 @@ spec:
                     type: string
                   startedAt:
                     description: |-
-                      StartedAt is when the pinned build began rolling out; FinishedAt when
-                      the move ended, either way.
+                      StartedAt is when the pinned build began rolling out, absent while it
+                      waits for an approval; FinishedAt when the move ended, either way.
                     format: date-time
                     type: string
                   target:

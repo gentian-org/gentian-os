@@ -240,7 +240,12 @@ func (r *ComponentReconciler) finishMove(
 	logger := log.FromContext(ctx)
 	switch {
 	case ro.Phase == gentianov1alpha1.RolloutRolling && effective == requested:
-		late := ro.StartedAt != nil && time.Since(ro.StartedAt.Time) > moveDeadline
+		if ro.StartedAt == nil {
+			// Held back until now (holdMove): the build begins rolling out
+			// with this pass.
+			ro.StartedAt = &now
+		}
+		late := time.Since(ro.StartedAt.Time) > moveDeadline
 		if !releaseReady {
 			if late {
 				return r.rollBack(ctx, comp, rolloutReasonNotReadyInTime,
@@ -292,6 +297,17 @@ func (r *ComponentReconciler) finishMove(
 		return true, res, err
 	}
 	return false, ctrl.Result{}, nil
+}
+
+// holdMove stops the clock of a build that is rolling out, on a pass that
+// ends before anything of the build is rendered because a person's answer is
+// awaited: the deadline measures how long the build takes to come up, not
+// how long an approval took. The clock starts afresh on the first pass that
+// gets as far as finishMove.
+func holdMove(comp *gentianov1alpha1.Component) {
+	if ro := comp.Status.Rollout; ro != nil && ro.Phase == gentianov1alpha1.RolloutRolling {
+		ro.StartedAt = nil
+	}
 }
 
 // awaitMove looks at a rolling build again shortly, until it is up or the

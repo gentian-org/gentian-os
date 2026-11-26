@@ -244,6 +244,8 @@ and the operator carries the move out (`internal/controller/component_move.go`):
    not come up within fifteen minutes, or does not verify, is rolled back:
    the instance is rendered from the build it ran, which the cluster still
    holds as a `ProfileBuild`, and the reason is recorded.
+   The fifteen minutes do not run while the build waits for an approval of
+   a privilege it asks for: they start when it is let through.
 5. **Record** who or what moved it. The Component's `status.rollout` says the
    build the instance runs, the target, the phase and why; the pin says what
    was asked.

@@ -536,6 +536,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant, models.delivered); err != nil {
 			return ctrl.Result{}, fmt.Errorf("network policy while waiting: %w", err)
 		}
+		holdMove(comp)
 		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
 			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
 			componentRequeue)

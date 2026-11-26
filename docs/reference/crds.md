@@ -293,7 +293,7 @@ Component is an installed instance of a ComponentProfile.
 | `status.rollout.phase` | string |  | `Phase` is where the move to Target stands. |
 | `status.rollout.previous` | string |  | `Previous` is the build the instance ran before the last move to Digest. |
 | `status.rollout.reason` | string |  | `Reason` and Message say why a move was rolled back or failed. |
-| `status.rollout.startedAt` | string (date-time) |  | `StartedAt` is when the pinned build began rolling out; FinishedAt when the move ended, either way. |
+| `status.rollout.startedAt` | string (date-time) |  | `StartedAt` is when the pinned build began rolling out, absent while it waits for an approval; FinishedAt when the move ended, either way. |
 | `status.rollout.target` | string |  | `Target` is the build the move under way, or the last move, was to. |
 
 ## 8. ComponentProfile
