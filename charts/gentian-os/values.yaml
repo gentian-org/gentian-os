@@ -558,6 +558,12 @@ leaderElectionNamespace: ""
 # Log level: debug, info, warn, error
 logLevel: info
 
+# Go's profiles (/debug/pprof) of the operator, served on the pod's loopback
+# (127.0.0.1:6060) and nowhere else: an administrator reads them with
+# kubectl port-forward. Off by default; the endpoint has no sign-in.
+profiling:
+  enabled: false
+
 # Which edge ingress this cluster runs — a key in kernel/platforms.yaml's
 # edgeIngress table ("cf-tunnel", "none"). Empty follows networkMode below,
 # which is what every existing cluster relies on.
