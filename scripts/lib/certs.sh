@@ -403,11 +403,11 @@ apply_envoy_gateway_crds() {
         error "Applying the CRDs of Envoy Gateway ${version} failed."
         return "${rc}"
     fi
-    kubectl wait --for=condition=Established --timeout=120s \
-        crd/securitypolicies.gateway.envoyproxy.io \
-        crd/envoyproxies.gateway.envoyproxy.io \
-        crd/gateways.gateway.networking.k8s.io \
-        crd/httproutes.gateway.networking.k8s.io >/dev/null
+    wait_crds_established 120 \
+        securitypolicies.gateway.envoyproxy.io \
+        envoyproxies.gateway.envoyproxy.io \
+        gateways.gateway.networking.k8s.io \
+        httproutes.gateway.networking.k8s.io
 }
 
 # envoy_gateway_crds_current — check() half: the cluster's SecurityPolicy
