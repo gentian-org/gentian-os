@@ -162,4 +162,21 @@ operator_value() {
 check "the operator is told the shoot issues on gardener" '[[ "$(operator_value gardener)" == "\"gardener\"" ]]' "$(operator_value gardener)"
 check "and cert-manager elsewhere" '[[ "$(operator_value cloudflare)" == "\"\"" ]]' "$(operator_value cloudflare)"
 
+# token_ref <dnsProvider> <networkMode> — the Cloudflare token Secret the bootstrap chart hands the
+# operator: "cleared" when it sets the name empty, "default" when it leaves the chart's own.
+token_ref() {
+    local t out; t="$(mktemp -d)"
+    python3 -c 'import yaml; print(yaml.safe_dump({"namespaces": yaml.safe_load(open("kernel/namespaces.yaml"))}))' > "${t}/ns.yaml"
+    out="$(helm template x kernel/bootstrap/chart -f kernel/platforms.yaml -f "${t}/ns.yaml" -f versions.yaml \
+        --set operator.enabled=true --set-string operator.image=x --set-string operator.tag=develop-abc1234 \
+        --set-string "dnsProvider=$1" --set-string "networkMode=$2" --set-string kernelDomain=k.example --set-string cluster=c \
+        -s templates/gentian-os.yaml 2>&1)"
+    rm -rf "${t}"
+    if grep -A2 '^ *apiTokenSecretRef:' <<<"${out}" | grep -q 'name: ""'; then echo cleared; else echo default; fi
+}
+check "no Cloudflare token on gardener with a fixed IP" '[[ "$(token_ref gardener static-ip)" == cleared ]]' "$(token_ref gardener static-ip)"
+check "nor on none with a fixed IP" '[[ "$(token_ref none static-ip)" == cleared ]]' "$(token_ref none static-ip)"
+check "a Cloudflare zone keeps it" '[[ "$(token_ref cloudflare static-ip)" == default ]]' "$(token_ref cloudflare static-ip)"
+check "a tunnel keeps it" '[[ "$(token_ref gardener tunnel)" == default ]]' "$(token_ref gardener tunnel)"
+
 finish
