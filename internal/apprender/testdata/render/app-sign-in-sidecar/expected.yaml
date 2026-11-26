@@ -392,7 +392,7 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     config:
-      attribute.name: Role
+      attribute.name: GentianAppRole
       gentian.app: demo-app
       gentian.roles: '{"demo-app":{"admin":["gentian-app-admin"]}}'
       gentian.tenant: demo

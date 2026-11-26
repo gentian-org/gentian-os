@@ -57,7 +57,7 @@ const (
 	// It is built by gentian-apps, from images/gentian-sidecar-sso-saml. A
 	// build of that repository's develop branch is develop-<commit>; a
 	// release is its version.
-	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-13056ec@sha256:fdaf2e3941ae77b2095e00dc2e149f14e027c76b5e8b144047f06f605e4662cf"
+	DefaultSignInSidecarImage = "ghcr.io/gentian-org/sidecar-sso-saml:develop-64c6cef@sha256:3be304d7ba7e5118f8c4dd00b2936c60cd85ee95e90d5afae23567dd6f9ee074"
 
 	// DefaultStorageToolsImage is what every Job that moves a tenant's
 	// objects, packs an archive or talks to the identity provider's

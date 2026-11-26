@@ -400,10 +400,11 @@ one, and an answer they obtain elsewhere answers no request of theirs.
 
 **Who administers the app** is the rights store's answer, in the assertion the realm signs: the
 platform's mapper asks the store which roles the person holds on the app. The sidecar reads it from the signed
-assertion — the assertion's own attribute `Role` with the value `gentian-app-admin` — and from
-nothing a request says about itself; an answer changed after signing is refused whole. The client
-has no other role in scope (`fullScopeAllowed` is off), so a role of that name elsewhere in the
-realm, or at another app's client, is not listed. The handler gives the app's administrator role
+assertion — the assertion's own attribute `GentianAppRole` with the value `gentian-app-admin` —
+and from nothing a request says about itself; an answer changed after signing is refused whole.
+Only the platform's mapper writes that attribute; what the realm lists of its own accord, such as
+its role list under `Role`, is not read, so a role of that name anywhere in the realm makes nobody
+the app's administrator. The handler gives the app's administrator role
 to that person and takes it from anybody else at every sign-in, so a withdrawal is in force
 within the hour a session lasts.
 
