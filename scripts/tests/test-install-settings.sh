@@ -212,4 +212,37 @@ is "rfc2136's credential is collected at install, where the wildcard needs it" \
 is "and a malformed one fails its requirement" \
     "$(run DNS_PROVIDER=rfc2136 GENTIAN_DNS_TSIG_SECRET=not-a-key -- '_validate_requirement acme-dns-rfc2136 >/dev/null 2>&1; echo "rc=$?"')" "rc=1"
 
+# --- the TSIG key against its nameserver -------------------------------------
+# dig and nsupdate stand in for the server: each prints what a real one
+# answered (recorded against PowerDNS 4.9) and the validator has to name it.
+STUBS="${SANDBOX}/stubs"; mkdir -p "${STUBS}"
+stub() { # <dig output file> <nsupdate output> <nsupdate rc>
+    printf '#!/usr/bin/env bash\ncat "%s"\n' "$1" > "${STUBS}/dig"
+    printf '#!/usr/bin/env bash\ncat >/dev/null\nprintf "%%s" "%s"\nexit %s\n' "$2" "$3" > "${STUBS}/nsupdate"
+    chmod +x "${STUBS}/dig" "${STUBS}/nsupdate"
+}
+printf 'example.test.\t3600\tIN\tSOA\tns1. h. 1 2 3 4 5\nexample.test.\t3600\tIN\tNS\tns1.\nexample.test.\t3600\tIN\tSOA\tns1. h. 1 2 3 4 5\n' > "${SANDBOX}/axfr-ok"
+printf ';; Couldn'"'"'t verify signature: expected a TSIG or SIG(0)\n; Transfer failed.\n' > "${SANDBOX}/axfr-refused"
+printf ';; communications error to 192.0.2.1#53: timed out\n;; no servers could be reached\n' > "${SANDBOX}/axfr-down"
+printf ';; tsig verify failure (BADKEY)\n; Transfer failed.\n' > "${SANDBOX}/axfr-badkey"
+KEY="$(head -c 64 /dev/zero | openssl base64 -A)"
+probe() { # <what> <want> [extra env]
+    local out
+    out="$(run PATH="${STUBS}:${PATH}" "${@:3}" -- "validate_tsig_secret '${KEY}' 192.0.2.1:53 example.test gentian-key HMACSHA512; echo \"rc=\$?\"" | sed 's/\x1b\[[0-9;]*m//g')"
+    has "$1" "${out}" "$2"
+}
+stub "${SANDBOX}/axfr-ok" "" 0
+probe "the server transfers the zone and takes the update: accepted" "zone transfer and dynamic update accepted"
+stub "${SANDBOX}/axfr-refused" "" 0
+probe "a refused transfer is named, with what to set on the zone" "zone transfer refused"
+probe "and the run says it can be skipped when only the cluster is admitted" "GENTIAN_TSIG_PROBE=0"
+stub "${SANDBOX}/axfr-badkey" "" 0
+probe "a server that says BADKEY: the key is named as the problem" "TSIG key rejected"
+stub "${SANDBOX}/axfr-down" "" 0
+probe "no answer: the server is unreachable, not the key wrong" "nameserver unreachable"
+stub "${SANDBOX}/axfr-ok" "update failed: REFUSED" 2
+probe "transfer allowed, update refused: the update is named" "dynamic update refused"
+stub "${SANDBOX}/axfr-refused" "" 0
+probe "GENTIAN_TSIG_PROBE=0: the server is not asked" "rc=0" GENTIAN_TSIG_PROBE=0
+
 finish
