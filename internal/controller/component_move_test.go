@@ -380,6 +380,68 @@ func TestAMoveThatDoesNotComeUpInTimeIsRolledBack(t *testing.T) {
 	}
 }
 
+// A build that asks for something new waits for a person's answer, for as
+// long as that takes: the deadline starts when the build is let through, so
+// an approval that came late does not roll back a build that is coming up.
+func TestTheDeadlineOfAMoveDoesNotRunWhileItWaitsForAnApproval(t *testing.T) {
+	newer := strings.ReplaceAll(wikiWithData, `version: "1.0.0"`, `version: "2.0.0"`) + `  requires:
+    privileges:
+      egress:
+        - name: relay
+          reason: sends mail through the customer's relay
+          rule:
+            to:
+              - ipBlock:
+                  cidr: 203.0.113.0/24
+`
+	h, oldDigest, _ := startMove(t, wikiWithData, newer)
+	// A catalog brought the newer build: the platform does not answer its
+	// requests itself.
+	h.editProfile(fromCatalogue)
+	got := h.reconcile()
+	h.endExport(got.Status.Rollout.Export, gentianov1alpha1.TenantExportPhaseReady)
+	got = h.reconcile()
+	if ready := componentReadyCondition(got); ready.Reason != "PrivilegesPending" {
+		t.Fatalf("not waiting for the approval: %+v", ready)
+	}
+	if ro := got.Status.Rollout; ro.Phase != gentianov1alpha1.RolloutRolling || ro.StartedAt != nil {
+		t.Fatalf("the clock runs while the build is held back: %+v", ro)
+	}
+	// Longer than the deadline goes by, as it would have been counted from
+	// when the export was ready.
+	comp := &gentianov1alpha1.Component{}
+	if err := h.c.Get(context.Background(), client.ObjectKeyFromObject(h.comp), comp); err != nil {
+		t.Fatal(err)
+	}
+	long := metav1.NewTime(time.Now().Add(-moveDeadline - time.Hour))
+	comp.Status.Rollout.StartedAt = &long
+	if err := h.c.Status().Update(context.Background(), comp); err != nil {
+		t.Fatal(err)
+	}
+	if got = h.reconcile(); got.Status.Rollout.StartedAt != nil {
+		t.Fatalf("the clock was not stopped: %+v", got.Status.Rollout)
+	}
+	// The answer comes; the build is not up yet.
+	if err := h.c.Get(context.Background(), client.ObjectKeyFromObject(h.comp), comp); err != nil {
+		t.Fatal(err)
+	}
+	comp.Spec.Privileges = []gentianov1alpha1.PrivilegeGrant{{
+		Privilege: "egress/relay", Approver: "u-tom", ApprovedAt: metav1.Now(), Reason: "agreed",
+	}}
+	if err := h.c.Update(context.Background(), comp); err != nil {
+		t.Fatal(err)
+	}
+	h.markReleaseNotReady()
+	got = h.reconcile()
+	ro := got.Status.Rollout
+	if ro.Phase != gentianov1alpha1.RolloutRolling || ro.Digest != oldDigest {
+		t.Fatalf("rolled back for the time the approval took: %+v", ro)
+	}
+	if ro.StartedAt == nil || time.Since(ro.StartedAt.Time) > time.Minute {
+		t.Fatalf("the clock did not start when the build was let through: %+v", ro.StartedAt)
+	}
+}
+
 // A release reported ready before the app's workloads have rolled out, or
 // with no pod running yet, is the build before: the move waits for the new
 // one instead of verifying in no pod and rolling back.

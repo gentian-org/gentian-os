@@ -354,8 +354,8 @@ type RolloutStatus struct {
 	MovedAt string `json:"movedAt,omitempty"`
 	// +optional
 	MovedBy string `json:"movedBy,omitempty"`
-	// StartedAt is when the pinned build began rolling out; FinishedAt when
-	// the move ended, either way.
+	// StartedAt is when the pinned build began rolling out, absent while it
+	// waits for an approval; FinishedAt when the move ended, either way.
 	// +optional
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
 	// +optional
