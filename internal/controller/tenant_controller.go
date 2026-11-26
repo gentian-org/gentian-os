@@ -684,7 +684,7 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		start:  start,
 	})
 	if err != nil {
-		return result, err
+		return ctrl.Result{}, err
 	}
 	// A tenant kept awake until a time is looked at again when it has come.
 	return sooner(result, sleep.within), nil
