@@ -281,7 +281,7 @@ apply() {
     # Release stuck on a ProviderConfig that was never created.
     for crd in "${_V5_PROVIDER_CRDS[@]}"; do
         info "waiting for ${crd} to be Established"
-        kubectl wait crd "${crd}" --for=condition=Established --timeout=300s >/dev/null
+        wait_crds_established 300 "${crd}" || return 1
     done
     _b05_wait_activated_types || return 1
     _v5_providers_apply provider-rbac.yaml

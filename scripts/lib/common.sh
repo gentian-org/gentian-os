@@ -377,6 +377,33 @@ _kubectl_retry() {
         "transient API error" "$@"
 }
 
+# wait_crds_established <timeout-seconds> <crd-name...> -- every named CRD
+# Established, polled rather than left to `kubectl wait`.
+#
+# `kubectl wait --for=condition=Established` right after an apply fails at
+# once when it reads a CRD the API server has not yet given a status:
+#
+#   error: .status.conditions accessor error: <nil> is of the type <nil>,
+#   expected []interface{}
+#
+# That stopped a fresh install in A-05. Here a CRD that is missing or has no
+# status yet is simply not Established yet.
+wait_crds_established() {
+    local timeout="$1" crd deadline
+    shift
+    deadline=$((SECONDS + timeout))
+    for crd in "$@"; do
+        crd="${crd#crd/}"
+        until [[ "$(kubectl get crd "${crd}" -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' 2>/dev/null)" == "True" ]]; do
+            if (( SECONDS > deadline )); then
+                error "CRD ${crd} is not Established after ${timeout}s."
+                return 1
+            fi
+            sleep 2
+        done
+    done
+}
+
 # _bao_retry <bao args...> -- bao, retried over a transient connection error.
 # The OpenBao Service resolved by gentian_service_addr answers a one-off
 # reachability probe and then, on this host at least, is not reliably

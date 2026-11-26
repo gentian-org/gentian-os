@@ -168,8 +168,7 @@ apply() {
     gentian_run kubectl apply --server-side --force-conflicts -f "${crd}"
     # Established, not merely created: the objects below are rejected by a CRD
     # the API server has not finished registering.
-    kubectl wait --for=condition=Established \
-        crd/credentialrequirements.gentianos.io --timeout=60s >/dev/null 2>&1 || true
+    wait_crds_established 60 credentialrequirements.gentianos.io 2>/dev/null || true
 
     # A placeholder that survived substitution would become a host nothing
     # can reach, and the probe would then report a good credential as bad --
