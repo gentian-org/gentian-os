@@ -1,3 +1,5 @@
+# A vouching line carries a key, which is one word and longer than a line.
+# yamllint disable rule:line-length
 # What the operator projects from the routes it composes: the host labels this
 # tenant's components are served at.
 #
