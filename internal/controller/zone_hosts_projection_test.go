@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/yaml"
 
@@ -316,8 +317,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(),
-		// Signs statements. Its Secret is not made yet, so no key is
-		// issued and the line holds none.
+		// Signs statements, and is issued a key.
 		vouching("scribe"),
 		// Exchanges as well: the word that says so follows its line.
 		exchanging(vouching("steward")),
@@ -340,7 +340,11 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := vouchingProfilesOf(t, r, tenant.Name)
+	issued := vouchingProfilesOf(t, r, tenant.Name)
+	if len(issued) != 3 || strings.Split(issued[0], " ")[3] == vouchingNoKeys || strings.Split(issued[2], " ")[3] != vouchingNoKeys {
+		t.Fatalf("vouching profiles = %q: a profile that signs carries its key, and one that does not carries none", issued)
+	}
+	got := withoutVouchingKeys(issued)
 	want := []string{
 		"scribe keys 0 -",
 		"steward keys 0 - exchange",
@@ -351,8 +355,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	}
 
 	// What the Composition is rendered from in the fixture is what this
-	// writes, key and lines. The fixture's scribe has its key issued; here
-	// no Secret is made yet, so the lines are compared without the keys.
+	// writes, key and lines, compared without the keys themselves.
 	raw, err := os.ReadFile(filepath.Join("..", "..", "crossplane", "tests", "unit", "render", "tenant-default", "required-resources", "zone-hosts.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -361,17 +364,7 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	if err := yaml.Unmarshal(raw, fixture); err != nil {
 		t.Fatal(err)
 	}
-	keyless := func(lines string) string {
-		out := strings.Split(lines, "\n")
-		for i, line := range out {
-			if f := strings.Split(line, " "); len(f) >= 4 {
-				f[3] = vouchingNoKeys
-				out[i] = strings.Join(f, " ")
-			}
-		}
-		return strings.Join(out, "\n")
-	}
-	if lines := keyless(strings.TrimSpace(fixture.Data[zoneVouchingProfilesKey])); lines != strings.Join(got, "\n") {
+	if lines := strings.Join(withoutVouchingKeys(strings.Split(strings.TrimSpace(fixture.Data[zoneVouchingProfilesKey]), "\n")), "\n"); lines != strings.Join(got, "\n") {
 		t.Fatalf("the render fixture's %s is\n%s\nand the projection writes\n%s", zoneVouchingProfilesKey, lines, strings.Join(got, "\n"))
 	}
 
@@ -387,8 +380,16 @@ func TestVouchingProfilesFollowTheComponentsThatVouch(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 2 || got[0] != want[0] || got[1] != want[2] {
+	if got := withoutVouchingKeys(vouchingProfilesOf(t, r, tenant.Name)); len(got) != 2 || got[0] != want[0] || got[1] != want[2] {
 		t.Fatalf("vouching profiles = %q after steward stopped vouching, want the other two", got)
+	}
+	// And its key goes with it, while the others keep theirs.
+	keys := &corev1.SecretList{}
+	if err := c.List(context.Background(), keys, client.HasLabels{vouchingKeyLabel}); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys.Items) != 1 || keys.Items[0].Name != VouchingKeySecretName("scribe") {
+		t.Fatalf("%d issued keys after steward stopped vouching, want scribe's alone", len(keys.Items))
 	}
 }
 
@@ -423,12 +424,26 @@ func TestDirectorScopesAreProjectedOnlyForThePlatformTenant(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, platform.Name); len(got) != 1 || got[0] != "syncer keys 0 - plans-apply,plans-read" {
+	if got := withoutVouchingKeys(vouchingProfilesOf(t, r, platform.Name)); len(got) != 1 || got[0] != "syncer keys 0 - plans-apply,plans-read" {
 		t.Fatalf("platform: %q", got)
 	}
-	if got := vouchingProfilesOf(t, r, acme.Name); len(got) != 1 || got[0] != "syncer keys 0 -" {
+	if got := withoutVouchingKeys(vouchingProfilesOf(t, r, acme.Name)); len(got) != 1 || got[0] != "syncer keys 0 -" {
 		t.Fatalf("another tenant was given director scopes: %q", got)
 	}
+}
+
+// withoutVouchingKeys are vouching lines with the key of each left out: a
+// key is made anew in every test, so lines are compared without it.
+func withoutVouchingKeys(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		f := strings.Split(line, " ")
+		if len(f) >= 4 {
+			f[3] = vouchingNoKeys
+		}
+		out[i] = strings.Join(f, " ")
+	}
+	return out
 }
 
 // keyless is a profile that exchanges a present person's token and vouches
@@ -500,7 +515,7 @@ func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo keys 0 - narrow,home=nextcloud" {
+	if got := withoutVouchingKeys(vouchingProfilesOf(t, r, tenant.Name)); len(got) != 1 || got[0] != "odoo keys 0 - narrow,home=nextcloud" {
 		t.Fatalf("vouching profiles = %q", got)
 	}
 
@@ -516,7 +531,7 @@ func TestHomesGrantedToAnAppThatCallsThemAsThePerson(t *testing.T) {
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := vouchingProfilesOf(t, r, tenant.Name); len(got) != 1 || got[0] != "odoo keys 0 - narrow" {
+	if got := withoutVouchingKeys(vouchingProfilesOf(t, r, tenant.Name)); len(got) != 1 || got[0] != "odoo keys 0 - narrow" {
 		t.Fatalf("vouching profiles after the grant was taken back = %q", got)
 	}
 }
@@ -587,13 +602,14 @@ func TestHomeTokenScopeIsNamedForTheHome(t *testing.T) {
 	}
 }
 
-// The Secret the Composition wrote once follows the profile. A component
-// that signs statements is told its issuer and is issued a key, once: the
-// key stays what it is on the next reconcile, and its public half is what
-// the projection hands the Composition. A value that is not a key the
-// platform issues is replaced. A component that stops signing loses issuer
-// and key, and the client secret beside them is never touched. A Secret not
-// made yet is left to the Composition.
+// A component that signs statements is issued a key, in a Secret of its own
+// that the operator alone writes: made once and as soon as the component
+// exists, kept what it is on the next reconcile, and its public half is what
+// the projection hands the Composition. Nothing of the key is put into the
+// Secret the Composition made, which External Secrets would write again. A
+// value that is not a key the platform issues is replaced. A component that
+// stops signing loses its key and its issuer, and the client secret is
+// never touched.
 func TestTheVouchingIdentityFollowsTheProfile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
@@ -608,7 +624,7 @@ func TestTheVouchingIdentityFollowsTheProfile(t *testing.T) {
 		return c
 	}
 	secret := func(name string, data map[string]string) *corev1.Secret {
-		s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: VouchingSecretName(name), Namespace: ns}, Data: map[string][]byte{}}
+		s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string][]byte{}}
 		for k, v := range data {
 			s.Data[k] = []byte(v)
 		}
@@ -627,40 +643,46 @@ func TestTheVouchingIdentityFollowsTheProfile(t *testing.T) {
 		tenant.DeepCopy(),
 		// Wrote no issuer when it was made: the profile named no keys then.
 		signs("signer"), comp("signer"),
-		secret("signer", map[string]string{VouchingClientSecretKey: "s1", VouchingClientIDKey: "vouch-signer"}),
+		secret(VouchingSecretName("signer"), map[string]string{VouchingClientSecretKey: "s1", VouchingClientIDKey: "vouch-signer"}),
 		// Holds something under the key's name that the platform did not
 		// issue.
 		signs("forged"), comp("forged"),
-		secret("forged", map[string]string{VouchingClientSecretKey: "s3", VouchingSigningKeyKey: "not a key", VouchingKeyIDKey: "x"}),
+		secret(VouchingKeySecretName("forged"), map[string]string{VouchingSigningKeyKey: "not a key", VouchingKeyIDKey: "x"}),
 		// Named keys once and no longer does.
 		keyless("stopped"), comp("stopped"),
-		secret("stopped", map[string]string{
-			VouchingClientSecretKey: "s2", VouchingIssuerKey: VouchingIssuer(ns, "stopped"),
-			VouchingSigningKeyKey: string(issued), VouchingKeyIDKey: "k",
-		}),
-		// Its Secret is not made yet.
+		secret(VouchingSecretName("stopped"), map[string]string{VouchingClientSecretKey: "s2", VouchingIssuerKey: VouchingIssuer(ns, "stopped")}),
+		secret(VouchingKeySecretName("stopped"), map[string]string{VouchingSigningKeyKey: string(issued), VouchingKeyIDKey: "k"}),
+		// The Composition has not made its Secret yet.
 		signs("new"), comp("new"),
 	).Build()
 	r := &TileProjectionReconciler{Client: c, Cluster: "c1"}
 	if err := r.projectZoneHosts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	read := func(name string) map[string][]byte {
+	read := func(name string) (map[string][]byte, bool) {
 		s := &corev1.Secret{}
-		if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: VouchingSecretName(name)}, s); err != nil {
+		err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: name}, s)
+		if errors.IsNotFound(err) {
+			return nil, false
+		}
+		if err != nil {
 			t.Fatal(err)
 		}
-		return s.Data
+		return s.Data, true
 	}
-	// keyOf is the key a Secret holds, checked against the id beside it.
-	keyOf := func(name string) *vouchingkey.Key {
-		got := read(name)
+	// keyOf is the key a component was issued, checked against the id
+	// beside it.
+	keyOf := func(profile string) *vouchingkey.Key {
+		got, ok := read(VouchingKeySecretName(profile))
+		if !ok {
+			t.Fatalf("%s was issued no key", profile)
+		}
 		key, err := vouchingkey.Parse(got[VouchingSigningKeyKey])
 		if err != nil {
-			t.Fatalf("%s holds no key the platform issues: %v", name, err)
+			t.Fatalf("%s holds no key the platform issues: %v", profile, err)
 		}
 		if string(got[VouchingKeyIDKey]) != key.ID() {
-			t.Fatalf("%s names its key %q, and the key is %q", name, got[VouchingKeyIDKey], key.ID())
+			t.Fatalf("%s names its key %q, and the key is %q", profile, got[VouchingKeyIDKey], key.ID())
 		}
 		return key
 	}
@@ -684,34 +706,31 @@ func TestTheVouchingIdentityFollowsTheProfile(t *testing.T) {
 		return ""
 	}
 
-	got := read("signer")
-	if string(got[VouchingIssuerKey]) != VouchingIssuer(ns, "signer") || string(got[VouchingClientSecretKey]) != "s1" || string(got[VouchingClientIDKey]) != "vouch-signer" {
-		t.Fatalf("signer's Secret = %q", got)
-	}
-	first := keyOf("signer")
-	want, _ := first.JWKS()
-	if lineKey("signer") != string(want) {
-		t.Fatalf("the projection hands on %q, and signer's key is %q", lineKey("signer"), want)
-	}
-	if string(read("forged")[VouchingClientSecretKey]) != "s3" {
-		t.Fatal("forged's client secret was touched")
-	}
-	forged, _ := keyOf("forged").JWKS()
-	if lineKey("forged") != string(forged) {
-		t.Fatalf("forged's replaced key is not what the projection hands on")
-	}
-	got = read("stopped")
-	_, issuer := got[VouchingIssuerKey]
+	got, _ := read(VouchingSecretName("signer"))
 	_, key := got[VouchingSigningKeyKey]
 	_, id := got[VouchingKeyIDKey]
-	if issuer || key || id || string(got[VouchingClientSecretKey]) != "s2" {
-		t.Fatalf("stopped's Secret = %q", got)
+	if string(got[VouchingIssuerKey]) != VouchingIssuer(ns, "signer") || string(got[VouchingClientSecretKey]) != "s1" || string(got[VouchingClientIDKey]) != "vouch-signer" || key || id {
+		t.Fatalf("signer's client Secret = %q: the issuer added, the client untouched, and no key in it", got)
 	}
-	if err := c.Get(context.Background(), types.NamespacedName{Namespace: ns, Name: VouchingSecretName("new")}, &corev1.Secret{}); !errors.IsNotFound(err) {
-		t.Fatalf("a Secret not made yet was made: %v", err)
+	first := keyOf("signer")
+	for _, profile := range []string{"signer", "forged", "new"} {
+		want, _ := keyOf(profile).JWKS()
+		if lineKey(profile) != string(want) {
+			t.Fatalf("the projection hands on %q, and %s's key is %q", lineKey(profile), profile, want)
+		}
 	}
-	if lineKey("new") != "" {
-		t.Fatalf("a key was handed on for a component that has none: %q", lineKey("new"))
+	got, _ = read(VouchingSecretName("stopped"))
+	if _, issuer := got[VouchingIssuerKey]; issuer || string(got[VouchingClientSecretKey]) != "s2" {
+		t.Fatalf("stopped's client Secret = %q", got)
+	}
+	if _, ok := read(VouchingKeySecretName("stopped")); ok {
+		t.Fatal("a component that stopped signing kept its key")
+	}
+	if lineKey("stopped") != "" {
+		t.Fatalf("a key was handed on for a component that does not sign: %q", lineKey("stopped"))
+	}
+	if _, ok := read(VouchingSecretName("new")); ok {
+		t.Fatal("the Composition's Secret was made by the operator")
 	}
 
 	// Again: nothing is made twice.

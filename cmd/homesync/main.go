@@ -18,7 +18,8 @@ SPDX-License-Identifier: MPL-2.0
 //	PROFILE             the service's own profile, as the realm knows it
 //	PLAN_FILE           what to sync, as the platform writes it
 //	DATABASE_URL        where the pairs are kept
-//	VOUCHING_DIR: the Secret vouching-<profile> mounted, one file per key
+//	VOUCHING_DIR: the Secrets vouching-<profile> and vouching-key-<profile>
+//	mounted into one directory, one file per key
 //	(VOUCHING_ISSUER, VOUCHING_SIGNING_KEY, VOUCHING_KEY_ID,
 //	VOUCHING_CLIENT_ID, VOUCHING_CLIENT_SECRET, VOUCHING_TOKEN_URL), read
 //	each time a token is asked for

@@ -2251,8 +2251,7 @@ spec:
 
             {{- /* What the component is told: the Secret VouchingSecretName
                  names, in the tenant's namespace, under the four keys
-                 written here; vouching.go lists them, and the two of the
-                 signing key the operator adds. The generated secret, and beside it the
+                 vouching.go lists. The generated secret, and beside it the
                  three things that are not secret and that the component
                  would otherwise have to work out the way this file does --
                  what to call itself in a statement, which client to ask as,
@@ -2269,10 +2268,13 @@ spec:
                  which is why the one value it fills in is written inside a
                  raw string.
 
-                 Written once, like the secret in it. The issuer is kept
-                 current afterwards by the operator (keepVouchingIdentity),
-                 for a profile that starts or stops naming keys, and the
-                 operator puts the signing key it issues beside it. Anything else
+                 Written once, like the secret in it. The issuer alone is
+                 kept current afterwards, by the operator (keepVouchingIssuer),
+                 for a profile that starts or stops naming keys. The signing
+                 key the operator issues is not here: External Secrets owns
+                 this Secret and writes it again when it holds what it did
+                 not put there, so the key has a Secret of its own
+                 (VouchingKeySecretName). Anything else
                  that changes later -- a cluster that moves its Keycloak -- is
                  not followed: the Secret is deleted and made again, which is
                  also a new client secret, and the client below follows it.

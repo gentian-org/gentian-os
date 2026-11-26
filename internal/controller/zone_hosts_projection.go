@@ -77,9 +77,7 @@ const (
 	// statements, or "steward - 0 - exchange" for one that names no keys.
 	// The second field says whether the profile signs. The fourth is the
 	// public half of the key the platform issued it, a JWKS in base64, and a
-	// hyphen until the key is issued: the component's Secret is the
-	// Composition's to make, and the key is put into it on the reconcile
-	// after. The third is always 0 and keeps the others where a Composition
+	// hyphen while it cannot be. The third is always 0 and keeps the others where a Composition
 	// of an earlier build reads them. A space is a safe separator because
 	// none of the fields can hold one: the first is a DNS label, base64 has
 	// none, and the fifth is a list of words joined by commas: "exchange"
@@ -327,7 +325,7 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 
 	for ns, profiles := range issuers {
 		for profile, signs := range profiles {
-			jwks, err := r.keepVouchingIdentity(ctx, ns, profile, signs)
+			jwks, err := r.keepVouchingIdentity(ctx, ns, byNamespace[ns], profile, signs)
 			if err != nil {
 				return err
 			}
@@ -335,6 +333,14 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 				vouching[byNamespace[ns]][profile] = withVouchingKey(line, jwks)
 			}
 		}
+	}
+	tenantNamespaces := make([]string, 0, len(byNamespace))
+	for ns := range byNamespace {
+		tenantNamespaces = append(tenantNamespaces, ns)
+	}
+	sort.Strings(tenantNamespaces)
+	if err := r.pruneVouchingKeys(ctx, tenantNamespaces, issuers); err != nil {
+		return err
 	}
 
 	for tenant, set := range hosts {

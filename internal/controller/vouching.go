@@ -15,7 +15,6 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -45,6 +44,15 @@ func VouchingIssuer(tenantNamespace, profile string) string {
 // is told what it has to know in.
 func VouchingSecretName(profile string) string { return "vouching-" + profile }
 
+// VouchingKeySecretName is the Secret of the tenant's namespace that holds
+// the key the platform issued a component that signs statements. The
+// operator alone writes it.
+func VouchingKeySecretName(profile string) string { return "vouching-key-" + profile }
+
+// vouchingKeyLabel marks a Secret that holds an issued key, and names the
+// profile it was issued to: what pruneVouchingKeys finds them by.
+const vouchingKeyLabel = "gentianos.io/vouching-key"
+
 // The entries of that Secret.
 const (
 	VouchingIssuerKey       = "VOUCHING_ISSUER"
@@ -52,7 +60,8 @@ const (
 	VouchingClientSecretKey = "VOUCHING_CLIENT_SECRET" //nolint:gosec // Secret key name, not a credential.
 	VouchingTokenURLKey     = "VOUCHING_TOKEN_URL"     //nolint:gosec // Secret key name, not a credential.
 	// The key the platform issues a component that signs statements
-	// (internal/vouchingkey), and the id its statements name it by.
+	// (internal/vouchingkey), and the id its statements name it by: the
+	// entries of the Secret VouchingKeySecretName names.
 	VouchingSigningKeyKey = "VOUCHING_SIGNING_KEY" //nolint:gosec // Secret key name, not a credential.
 	VouchingKeyIDKey      = "VOUCHING_KEY_ID"
 )
@@ -62,66 +71,130 @@ func wantsVouching(profile *gentianov1alpha1.ComponentProfile) bool {
 	return services != nil && services.Vouching != nil
 }
 
-// keepVouchingIdentity keeps what a signing component signs as and with in
-// its Secret equal to what its profile says now, and returns the public half
-// of its key as the realm takes it (a JWKS).
+// keepVouchingIdentity keeps what a signing component signs as and with
+// equal to what its profile says now, and returns the public half of its key
+// as the realm takes it (a JWKS).
 //
-// While the profile says the component signs statements (names keys), the
-// Secret holds the issuer, the key the platform issued and the key's id.
-// While it only exchanges, it holds none of the three.
+// The key is in a Secret of its own, VouchingKeySecretName, which the
+// operator alone writes. Not in the Secret the Composition makes: External
+// Secrets owns that one and writes it again whenever it holds anything it
+// did not put there, so a key added to it is gone a moment later. While the
+// profile says the component signs statements (names keys) the key's Secret
+// exists, made here as soon as the component does; while it only exchanges,
+// there is none.
 //
-// The Composition writes the Secret once and never again: the client secret
-// in it must not change. So what follows the profile afterwards is kept
-// here, and the key is made here: once, and again only when it is gone or is
-// not one the platform issues. Taking the two entries away is therefore how
-// a key is replaced; the realm is given the new public half on the same
-// reconcile. The component reads the Secret mounted, so a change reaches it
-// without a restart.
+// A key is made once, and again only when it is gone or is not one the
+// platform issues. Deleting the Secret is therefore how a key is replaced;
+// the realm is given the new public half on the same reconcile. The
+// component mounts both Secrets into one directory and reads them when it
+// signs, so a change reaches it without a restart.
 //
-// A Secret not made yet is left to the Composition; the answer is then
-// empty, and the key follows on a later reconcile.
-func (r *TileProjectionReconciler) keepVouchingIdentity(ctx context.Context, namespace, profile string, signs bool) (string, error) {
+// The issuer follows the profile in the Composition's Secret, as before.
+func (r *TileProjectionReconciler) keepVouchingIdentity(ctx context.Context, namespace, tenant, profile string, signs bool) (string, error) {
+	if err := r.keepVouchingIssuer(ctx, namespace, profile, signs); err != nil {
+		return "", err
+	}
+	name := types.NamespacedName{Namespace: namespace, Name: VouchingKeySecretName(profile)}
+	secret := &corev1.Secret{}
+	err := r.Get(ctx, name, secret)
+	found := err == nil
+	if err != nil && !errors.IsNotFound(err) {
+		return "", err
+	}
+	if !signs {
+		if !found {
+			return "", nil
+		}
+		if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
+			return "", fmt.Errorf("remove the signing key %s/%s: %w", namespace, name.Name, err)
+		}
+		return "", nil
+	}
+	key, err := vouchingkey.Parse(secret.Data[VouchingSigningKeyKey])
+	current := found && err == nil && string(secret.Data[VouchingKeyIDKey]) == key.ID()
+	if err != nil {
+		issued, genErr := vouchingkey.Generate()
+		if genErr != nil {
+			return "", fmt.Errorf("make the signing key %s/%s: %w", namespace, name.Name, genErr)
+		}
+		if key, err = vouchingkey.Parse(issued); err != nil {
+			return "", fmt.Errorf("read the signing key just made for %s/%s: %w", namespace, name.Name, err)
+		}
+		secret.Data = map[string][]byte{VouchingSigningKeyKey: issued}
+	}
+	if !current {
+		secret.Name, secret.Namespace = name.Name, name.Namespace
+		secret.Labels = map[string]string{managedByLabel: managedByValue, tenantLabel: tenant, vouchingKeyLabel: profile}
+		secret.Data[VouchingKeyIDKey] = []byte(key.ID())
+		if found {
+			err = r.Update(ctx, secret)
+		} else {
+			err = r.Create(ctx, secret)
+		}
+		if err != nil {
+			return "", fmt.Errorf("keep the signing key %s/%s: %w", namespace, name.Name, err)
+		}
+	}
+	set, err := key.JWKS()
+	if err != nil {
+		return "", fmt.Errorf("the public half of the signing key %s/%s: %w", namespace, name.Name, err)
+	}
+	return string(set), nil
+}
+
+// keepVouchingIssuer keeps VOUCHING_ISSUER in the component's Secret equal to
+// what its profile says now: present while it signs statements (names
+// keys), absent while it only exchanges. A Secret not made yet is left to
+// the Composition, whose template writes the issuer as this would.
+func (r *TileProjectionReconciler) keepVouchingIssuer(ctx context.Context, namespace, profile string, signs bool) error {
 	secret := &corev1.Secret{}
 	if err := r.Get(ctx, types.NamespacedName{Namespace: namespace, Name: VouchingSecretName(profile)}, secret); err != nil {
 		if errors.IsNotFound(err) {
-			return "", nil
+			return nil
 		}
-		return "", err
+		return err
+	}
+	current, present := secret.Data[VouchingIssuerKey]
+	want := VouchingIssuer(namespace, profile)
+	switch {
+	case signs && present && string(current) == want, !signs && !present:
+		return nil
 	}
 	before := secret.DeepCopy()
-	if secret.Data == nil {
-		secret.Data = map[string][]byte{}
-	}
-	var jwks string
 	if signs {
-		secret.Data[VouchingIssuerKey] = []byte(VouchingIssuer(namespace, profile))
-		key, err := vouchingkey.Parse(secret.Data[VouchingSigningKeyKey])
-		if err != nil {
-			issued, genErr := vouchingkey.Generate()
-			if genErr != nil {
-				return "", fmt.Errorf("make the signing key of %s/%s: %w", namespace, secret.Name, genErr)
-			}
-			if key, err = vouchingkey.Parse(issued); err != nil {
-				return "", fmt.Errorf("read the signing key just made for %s/%s: %w", namespace, secret.Name, err)
-			}
-			secret.Data[VouchingSigningKeyKey] = issued
+		if secret.Data == nil {
+			secret.Data = map[string][]byte{}
 		}
-		secret.Data[VouchingKeyIDKey] = []byte(key.ID())
-		set, err := key.JWKS()
-		if err != nil {
-			return "", fmt.Errorf("the public half of the signing key of %s/%s: %w", namespace, secret.Name, err)
-		}
-		jwks = string(set)
+		secret.Data[VouchingIssuerKey] = []byte(want)
 	} else {
 		delete(secret.Data, VouchingIssuerKey)
-		delete(secret.Data, VouchingSigningKeyKey)
-		delete(secret.Data, VouchingKeyIDKey)
-	}
-	if equality.Semantic.DeepEqual(before.Data, secret.Data) {
-		return jwks, nil
 	}
 	if err := r.Patch(ctx, secret, client.MergeFrom(before)); err != nil {
-		return "", fmt.Errorf("keep the signing identity in %s/%s: %w", namespace, secret.Name, err)
+		return fmt.Errorf("keep the issuer in %s/%s: %w", namespace, secret.Name, err)
 	}
-	return jwks, nil
+	return nil
+}
+
+// pruneVouchingKeys removes the issued keys nobody signs with any more: of a
+// profile that no longer vouches at all, or of a component that is gone.
+// Listed tenant namespace by tenant namespace, as the operator reads Secrets
+// everywhere. signers are, per namespace, the profiles that sign statements
+// now.
+func (r *TileProjectionReconciler) pruneVouchingKeys(ctx context.Context, namespaces []string, signers map[string]map[string]bool) error {
+	for _, ns := range namespaces {
+		keys := &corev1.SecretList{}
+		if err := r.List(ctx, keys, client.InNamespace(ns), client.HasLabels{vouchingKeyLabel}); err != nil {
+			return err
+		}
+		for i := range keys.Items {
+			secret := &keys.Items[i]
+			if secret.Labels[managedByLabel] != managedByValue || signers[ns][secret.Labels[vouchingKeyLabel]] {
+				continue
+			}
+			if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
+				return fmt.Errorf("remove the signing key %s/%s: %w", ns, secret.Name, err)
+			}
+		}
+	}
+	return nil
 }
