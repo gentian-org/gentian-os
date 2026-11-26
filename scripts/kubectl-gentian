@@ -40,6 +40,8 @@
 #   kubectl gentian tenants domain <name> --remove [--yes]     back to its default address
 #   kubectl gentian tenants mail-mode <name> [<mode>]          what the operator provisions for its mail:
 #                                                             selfhosted, external, transport-only, disabled
+#   kubectl gentian tenants hibernate <name>                   put it to sleep: it runs nothing and keeps its data
+#   kubectl gentian tenants wake <name> [--for <duration>]     wake it; with --for (5d, 36h) it sleeps again by itself
 #   kubectl gentian tenants sign-in <name> [--from <tenant> --positions <p>,... | --remove <tenant>]
 #                                                             people of another tenant of this cluster signing in here
 #   kubectl gentian tenants partners <name>                    realms of other clusters its realm links accounts with
@@ -601,7 +603,7 @@ cmd_whoami() {
 cmd_tenants_list() {
     _discover
     _call GET "/v1/clusters/${_CLUSTER}/tenants" |
-        jq -r '(["TENANT","NAME","APPS","STATE","ADMINS-ADD-CATALOGUES"] | @tsv), (.tenants[] | [.name, (.displayName // .name), ((.apps // []) | length | tostring), (if .purging then "purging" elif .protected then "protected" else "-" end), (if .cataloguesDelegated then "yes" else "no" end)] | @tsv)' |
+        jq -r '(["TENANT","NAME","APPS","STATE","ADMINS-ADD-CATALOGUES"] | @tsv), (.tenants[] | [.name, (.displayName // .name), ((.apps // []) | length | tostring), (if .purging then "purging" elif .protected then "protected" elif .asleep then "asleep" elif .awakeUntil then "awake until \(.awakeUntil)" else "-" end), (if .cataloguesDelegated then "yes" else "no" end)] | @tsv)' |
         column -t -s $'\t'
 }
 
@@ -623,7 +625,7 @@ cmd_tenants_show() {
         "Signs in under:  \(.loginDomain // "-")",
         "Own domain:      \(.customDomain // "none")",
         "Country:         \(.country // "none")",
-        "State:           \(if .purging then "purging" elif .protected then "protected" else "-" end)",
+        "State:           \(if .purging then "purging" elif .protected then "protected" elif .asleep then "asleep" elif .awakeUntil then "awake until \(.awakeUntil)" else "-" end)",
         "",
         "Its administrators may add catalogues:            \(if .cataloguesDelegated then "yes" else "no" end)",
         "Anybody may sign up (chosen when it was made):    \(if .signUp then "yes" else "no" end)"'
@@ -1787,6 +1789,56 @@ cmd_tenants_mail_mode() {
         return 0
     fi
     echo "Tenant ${name}: mail mode ${mode}, committed ($(_committed "${answer}")). The operator provisions accordingly."
+}
+
+# tenants hibernate and wake: a sleeping tenant runs nothing and keeps
+# everything it has; what that takes is the operator's. Each is one commit of
+# the tenant's manifest, the cluster administrator's to make.
+cmd_tenants_hibernate() {
+    local name="${1:-}" answer
+    [[ -n "${name}" && $# -eq 1 ]] || die "usage: kubectl gentian tenants hibernate <name>"
+    _tenant "The tenant" "${name}"
+    need jq
+    _discover
+    answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/${name}/actions/hibernate")" || exit 1
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+        echo "Tenant ${name} is asleep already; nothing was committed."
+        return 0
+    fi
+    echo "Tenant ${name}: put to sleep, committed ($(_committed "${answer}")). Its apps stop and its addresses"
+    echo "answer that it is asleep; its data stays. Wake it with: kubectl gentian tenants wake ${name} [--for 5d]"
+}
+
+cmd_tenants_wake() {
+    local usage_text="usage: kubectl gentian tenants wake <name> [--for <duration>]   (5d, 36h)"
+    local name="" awake="" answer until body=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --for) [[ $# -ge 2 ]] || die "${usage_text}"; awake="$2"; shift 2 ;;
+            --for=*) awake="${1#--for=}"; shift ;;
+            -*) die "${usage_text}" ;;
+            *) [[ -z "${name}" ]] || die "${usage_text}"; name="$1"; shift ;;
+        esac
+    done
+    [[ -n "${name}" ]] || die "${usage_text}"
+    _tenant "The tenant" "${name}"
+    need jq
+    if [[ -n "${awake}" ]]; then
+        [[ "${awake}" =~ ^[0-9]+(d|h|m)$ ]] || die "not a duration: ${awake} (5d, 36h)"
+        body="$(jq -n --arg f "${awake}" '{for: $f}')"
+    fi
+    _discover
+    answer="$(_call POST "/v1/clusters/${_CLUSTER}/tenants/${name}/actions/wake" ${body:+"${body}"})" || exit 1
+    until="$(printf '%s' "${answer}" | jq -r '.awakeUntil // ""')"
+    if [[ "$(printf '%s' "${answer}" | jq -r '.status // ""')" == "unchanged" ]]; then
+        echo "Tenant ${name} is awake already; nothing was committed."
+        return 0
+    fi
+    if [[ -n "${until}" ]]; then
+        echo "Tenant ${name}: awake until ${until}, committed ($(_committed "${answer}")). It sleeps again by itself then."
+    else
+        echo "Tenant ${name}: woken, committed ($(_committed "${answer}")). It stays awake until it is put to sleep."
+    fi
 }
 
 # tenants delegate-catalogues: whether a tenant's own administrators may add
@@ -3495,10 +3547,12 @@ main() {
                 delegate-trusted-domains) cmd_tenants_delegate_trusted_domains "$@" ;;
                 domain) cmd_tenants_domain "$@" ;;
                 mail-mode) cmd_tenants_mail_mode "$@" ;;
+                hibernate) cmd_tenants_hibernate "$@" ;;
+                wake) cmd_tenants_wake "$@" ;;
                 partners) cmd_tenants_partners "$@" ;;
                 sign-in) cmd_tenants_sign_in "$@" ;;
                 platform-access) cmd_tenants_platform_access "$@" ;;
-                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|delegate-trusted-domains|domain|mail-mode|partners|groups|sign-in|platform-access" ;;
+                *) die "usage: kubectl gentian tenants list|show|create|set|activate-admin|retire|import|delegate-catalogues|delegate-trusted-domains|domain|mail-mode|hibernate|wake|partners|groups|sign-in|platform-access" ;;
             esac
             ;;
         app|apps) cmd_apps "$@" ;;

@@ -274,6 +274,53 @@ reply PUT "${MAIL_ROUTE}" 200 '{"status":"unchanged"}'
 gentian tenants mail-mode globex disabled
 has "a tenant that has the mode already commits nothing" "${OUT}" "nothing was committed"
 
+echo ""
+echo "kubectl gentian tenants hibernate and wake"
+echo ""
+
+SLEEP_ROUTE="/v1/clusters/c1/tenants/globex/actions/hibernate"
+WAKE_ROUTE="/v1/clusters/c1/tenants/globex/actions/wake"
+
+fresh
+gentian tenants hibernate
+refused "hibernate without a tenant is a usage error"
+gentian tenants wake globex --for soon
+refused "a word that is not a duration is refused"
+gentian tenants wake globex acme
+refused "wake takes one tenant"
+is "... and none of them asks the director anything" "$(cat "${CALLS}")" ""
+
+fresh; reply POST "${SLEEP_ROUTE}" 202 '{"status":"updated","tenant":"globex","asleep":true,"commit":"0123456789abcdef"}'
+gentian tenants hibernate globex
+is "hibernate is one POST to the director's route, with no body" "$(writes)" "POST ${SLEEP_ROUTE} "
+has "... and names the commit" "${OUT}" "put to sleep, committed (01234567)"
+
+fresh; reply POST "${SLEEP_ROUTE}" 200 '{"status":"unchanged","tenant":"globex","asleep":true}'
+gentian tenants hibernate globex
+has "a tenant that sleeps already commits nothing" "${OUT}" "nothing was committed"
+
+fresh; reply POST "${SLEEP_ROUTE}" 422 '{"error":"the platform tenant is not put to sleep"}'
+gentian tenants hibernate globex
+refused "a refusal is a non-zero exit"
+has "... in the director's own words" "${OUT}" "the platform tenant is not put to sleep"
+
+fresh; reply POST "${WAKE_ROUTE}" 202 '{"status":"updated","tenant":"globex","asleep":false,"awakeUntil":"2026-12-01T10:00:00Z","commit":"0123456789abcdef"}'
+gentian tenants wake globex --for 5d
+is "wake --for sends the duration" "$(writes)" "POST ${WAKE_ROUTE} {
+  \"for\": \"5d\"
+}"
+has "... and says until when the tenant is awake" "${OUT}" "awake until 2026-12-01T10:00:00Z, committed (01234567)"
+
+fresh; reply POST "${WAKE_ROUTE}" 202 '{"status":"updated","tenant":"globex","asleep":false,"commit":"0123456789abcdef"}'
+gentian tenants wake globex
+is "wake alone sends no body" "$(writes)" "POST ${WAKE_ROUTE} "
+has "... and says the tenant stays awake" "${OUT}" "stays awake until it is put to sleep"
+
+fresh; reply GET /v1/clusters/c1/tenants 200 '{"cluster":"c1","tenants":[{"name":"globex","apps":[],"protected":false,"asleep":true},{"name":"acme","apps":[],"protected":false,"asleep":false,"awakeUntil":"2026-12-01T10:00:00Z"}]}'
+gentian tenants list
+has "the listing shows a sleeping tenant" "${OUT}" "asleep"
+has "... and until when one is kept awake" "${OUT}" "awake until 2026-12-01T10:00:00Z"
+
 fresh; reply GET /v1/clusters/c1/tenants 200 "${TENANTS}"
 reply PUT "${DOMAIN_ROUTE}" 202 '{"status":"updated","commit":"0123456789abcdef"}'
 gentian_typing "globex.example" tenants domain globex globex.example

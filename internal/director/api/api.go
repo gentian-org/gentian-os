@@ -81,6 +81,7 @@ type Repository interface {
 	PendingPurges(ctx context.Context) ([]string, error)
 	SetTenantDomain(ctx context.Context, tenant, domain string, meta gitops.Meta) (gitops.Result, error)
 	SetTenantMailMode(ctx context.Context, tenant, mode string, meta gitops.Meta) (gitops.Result, error)
+	SetTenantHibernation(ctx context.Context, tenant string, want gitops.Hibernation, meta gitops.Meta) (gitops.Result, error)
 	TenantStoreTerms(ctx context.Context, tenant string) (*gitops.StoreTerms, error)
 	SetTenantStoreTerms(ctx context.Context, tenant, version string, now time.Time, meta gitops.Meta) (gitops.Result, error)
 	CheckImportedDomain(ctx context.Context, tenant, domain string) (string, error)
@@ -650,6 +651,10 @@ func (s *Server) routes() {
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.setTenantDomain)
 		s.guarded("PUT /v1/clusters/{c}/tenants/{t}/mail-mode", "can_configure", s.clusterObject, s.setTenantMailMode)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}/domain", "can_configure", s.clusterObject, s.clearTenantDomain)
+		// Putting a tenant to sleep and waking it (hibernation.go):
+		// can_configure, because it decides what the cluster runs.
+		s.action("POST /v1/clusters/{c}/tenants/{t}/actions/hibernate", "can_configure", s.clusterObject, s.hibernateTenant)
+		s.action("POST /v1/clusters/{c}/tenants/{t}/actions/wake", "can_configure", s.clusterObject, s.wakeTenant)
 		// A tenant's own groups, and who signs in to it from another tenant
 		// (tenant_sign_in.go).
 		s.guarded("GET /v1/clusters/{c}/tenants/{t}/sign-in", "can_audit", s.clusterObject, s.tenantSignIn)
