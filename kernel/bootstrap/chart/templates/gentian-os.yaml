@@ -95,6 +95,14 @@ spec:
           apiTokenSecretRef:
             name: ""
         {{- end }}
+        # The branch of the deployments repository this cluster follows: the
+        # one Argo CD reads, so the one the director clones and writes to.
+        # Without it the director took the repository's default branch, read
+        # no claim of this cluster there, and pushed its commits onto a branch
+        # another cluster follows.
+        appLifecycle:
+          deployments:
+            branch: {{ .Values.deployments.revision | default "main" | quote }}
         # How traffic reaches this cluster, the claim's networkMode. The
         # operator chooses its edge ingress by it, and whether a TURN edge can
         # be reached; left out, every cluster reads as a tunnel.

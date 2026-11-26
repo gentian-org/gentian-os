@@ -936,6 +936,9 @@ appLifecycle:
   deployments:
     repo: https://git.example.domain/gentian-deployments
     cluster: default-cluster
+    # The branch the director clones and pushes: the one this cluster's
+    # Argo CD follows. Empty, the repository's default branch.
+    branch: ""
     # The Secret the director authenticates to the repository with, and what
     # it holds. Under basic it has one key, .git-credentials: the repository's
     # URL with the login in it. Under bearer it has one key, token, which git
