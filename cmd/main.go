@@ -309,6 +309,7 @@ func main() {
 		MailAliases:              os.Getenv("MAIL_ALIASES"),
 		MailRecipientPolicy:      os.Getenv("MAIL_RECIPIENT_POLICY"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
+		EdgeCertificates:         os.Getenv("EDGE_CERTIFICATES"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		Ingress:                  buildEdgeIngress(),
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
@@ -551,6 +552,7 @@ func main() {
 		Namespace:     envvar.Or("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
 		ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
+		Certificates:  os.Getenv("EDGE_CERTIFICATES"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TURNEdge")
 		os.Exit(1)

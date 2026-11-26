@@ -82,6 +82,10 @@ spec:
         # certificate is ever issued, and no tenant host ever answers.
         tenantDNS01ClusterIssuer: {{ . | quote }}
         {{- end }}
+        # Who issues the edge's certificates: the DNS provider's own service
+        # where its entry in kernel/platforms.yaml names one, cert-manager
+        # otherwise.
+        edgeCertificates: {{ dig (.Values.dnsProvider | default "none") "certificates" "" (.Values.dnsProviders | default dict) | quote }}
         # How traffic reaches this cluster, the claim's networkMode. The
         # operator chooses its edge ingress by it, and whether a TURN edge can
         # be reached; left out, every cluster reads as a tunnel.

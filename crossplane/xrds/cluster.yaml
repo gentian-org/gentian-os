@@ -1342,7 +1342,9 @@ spec:
                         answers DNS-01; under acme-http01 one that does not:
                         gardener (a Gardener shoot's DNS service publishes the
                         kernel domain and its wildcard from annotations on the
-                        edge's Service) or none (the records are kept by hand).
+                        edge's Service, and its certificate service issues the
+                        edge's certificates) or none (the records are kept by
+                        hand).
 
                         Separate from issuerMode because they answer different
                         questions — how control is proved, and by whom — and

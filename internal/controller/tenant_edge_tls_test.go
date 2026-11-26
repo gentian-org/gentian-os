@@ -37,7 +37,7 @@ func TestBuildTenantWildcardCertificate_OmitsApex(t *testing.T) {
 	tenant.Name = "demo"
 	obj := buildTenantWildcardCertificate(
 		tenant, "tenant-demo", "tenant-demo-wildcard",
-		"tenant-demo-wildcard-tls", "demo.example.test", "issuer",
+		"tenant-demo-wildcard-tls", "demo.example.test", "issuer", "",
 	)
 
 	names, found, err := unstructured.NestedStringSlice(obj.Object, "spec", "dnsNames")

@@ -10,7 +10,10 @@
 #     against the kernel domain;
 #   - an entry without a solver gets no DNS-01 ClusterIssuer and no wildcard;
 #   - the interview offers it under HTTP-01, as the default where the cluster
-#     serves its detectCRD, and refuses it under DNS-01.
+#     serves its detectCRD, and refuses it under DNS-01;
+#   - the edge's certificates come from the shoot's certificate service
+#     (#1376): the kernel wildcard is a cert.gardener.cloud Certificate, and
+#     the operator is told so.
 # =============================================================================
 # shellcheck disable=SC2016,SC2034 # the checks are strings the harness evaluates, and read rc there
 
@@ -26,10 +29,14 @@ export SCRIPT_DIR
 warn() { printf 'warn: %s\n' "$*" >&2; }
 # shellcheck disable=SC2317,SC2329 # called by the functions under test
 error() { printf 'error: %s\n' "$*" >&2; }
+# shellcheck source=scripts/lib/namespaces.sh
+source scripts/lib/namespaces.sh
 for fn in yq_get _dns_provider_names _detect_dns_provider _dns_provider_list check_dns_params _dns_param; do
     eval "$(sed -n "/^${fn}() {/,/^}/p" scripts/lib/common.sh)"
 done
-for fn in gentian_dns_provider gentian_dns_provider_solves gentian_platforms_values gentian_set_args_from_pairs; do
+for fn in gentian_dns_provider gentian_dns_provider_solves gentian_platforms_values gentian_set_args_from_pairs \
+    gentian_dns_provider_certificates gentian_kernel_wildcard_issued_by_gardener gentian_cert_manager_namespace \
+    kernel_wildcard_current; do
     eval "$(sed -n "/^${fn}() {/,/^}/p" scripts/lib/certs.sh)"
 done
 
@@ -120,5 +127,39 @@ out="$(CERT_ISSUER_MODE=acme-dns01 DNS_PROVIDER=gardener check_dns_params 2>&1)"
 check "acme-dns01 with gardener is refused" '(( rc != 0 )) && [[ "${out}" == *"needs a DNS provider that answers DNS-01"* ]]' "${out}"
 out="$(CERT_ISSUER_MODE=acme-http01 DNS_PROVIDER=gardener check_dns_params 2>&1)"; rc=$?
 check "acme-http01 with gardener passes" '(( rc == 0 ))' "${out}"
+
+check "gardener's certificates are the shoot's" 'DNS_PROVIDER=gardener gentian_kernel_wildcard_issued_by_gardener'
+check "cloudflare's are cert-manager's" '! DNS_PROVIDER=cloudflare gentian_kernel_wildcard_issued_by_gardener'
+check "none's are cert-manager's" '! DNS_PROVIDER=none gentian_kernel_wildcard_issued_by_gardener'
+
+# kernel_wildcard_current against a stand-in kubectl: Gardener's Certificate
+# state and commonName, and the Secret it writes.
+cat > "${STUB_DIR}/kubectl" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+    "get certificates.cert.gardener.cloud wildcard-kernel"*) echo "${STUB_CN} ${STUB_STATE}" ;;
+    "get secret wildcard-kernel-tls"*) printf '%s' "${STUB_CRT:-}" ;;
+    *) exit 1 ;;
+esac
+STUB
+# shellcheck disable=SC2329 # called by check
+current() { PATH="${STUB_DIR}:${PATH}" DNS_PROVIDER=gardener KERNEL_DOMAIN=k.example kernel_wildcard_current; }
+check "a Ready shoot certificate with its Secret is current" 'STUB_CN=k.example STUB_STATE=Ready STUB_CRT=Y3J0 current'
+check "one still Pending is not" '! STUB_CN=k.example STUB_STATE=Pending STUB_CRT=Y3J0 current'
+check "one for another domain is not" '! STUB_CN=old.example STUB_STATE=Ready STUB_CRT=Y3J0 current'
+check "one whose Secret is not written yet is not" '! STUB_CN=k.example STUB_STATE=Ready STUB_CRT= current'
+
+# operator_value <dnsProvider> — edgeCertificates as the bootstrap chart hands it to the operator.
+operator_value() {
+    local t; t="$(mktemp -d)"
+    python3 -c 'import yaml; print(yaml.safe_dump({"namespaces": yaml.safe_load(open("kernel/namespaces.yaml"))}))' > "${t}/ns.yaml"
+    helm template x kernel/bootstrap/chart -f kernel/platforms.yaml -f "${t}/ns.yaml" -f versions.yaml \
+        --set operator.enabled=true --set-string operator.image=x --set-string operator.tag=develop-abc1234 \
+        --set-string "dnsProvider=$1" --set-string kernelDomain=k.example --set-string cluster=c \
+        -s templates/gentian-os.yaml 2>&1 | sed -n 's/^ *edgeCertificates: //p'
+    rm -rf "${t}"
+}
+check "the operator is told the shoot issues on gardener" '[[ "$(operator_value gardener)" == "\"gardener\"" ]]' "$(operator_value gardener)"
+check "and cert-manager elsewhere" '[[ "$(operator_value cloudflare)" == "\"\"" ]]' "$(operator_value cloudflare)"
 
 finish

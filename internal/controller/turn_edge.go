@@ -136,6 +136,9 @@ type TURNEdgeReconciler struct {
 	// ClusterIssuer issues the edge's certificate, by DNS-01: the name has
 	// no HTTP behind it to answer a challenge on.
 	ClusterIssuer string
+	// Certificates is who issues it: EdgeCertificatesGardener for a
+	// Gardener shoot's certificate service, anything else cert-manager.
+	Certificates string
 }
 
 var turnEdgeRequest = reconcile.Request{NamespacedName: types.NamespacedName{Name: turnEdgeName}}
@@ -457,30 +460,22 @@ func dnsEgressRule() networkingv1.NetworkPolicyEgressRule {
 	}
 }
 
-// ensureCertificate asks cert-manager for the edge's certificate, by DNS-01.
+// ensureCertificate asks the cluster's certificate source for the edge's
+// certificate, by DNS-01.
 func (r *TURNEdgeReconciler) ensureCertificate(ctx context.Context) error {
 	issuer := r.ClusterIssuer
 	if issuer == "" {
 		issuer = defaultDNS01ClusterIssuer
 	}
-	desired := &unstructured.Unstructured{}
-	desired.SetGroupVersionKind(certManagerCertGVK)
-	desired.SetName(turnEdgeTLSSecret)
-	desired.SetNamespace(turnEdgeNamespace)
+	desired := buildEdgeCertificate(r.Certificates, turnEdgeTLSSecret, turnEdgeNamespace, turnEdgeTLSSecret,
+		[]string{turnEdgeHost(r.KernelDomain)}, issuer)
 	desired.SetLabels(map[string]string{managedByLabel: managedByValue})
-	spec := map[string]interface{}{
-		"secretName": turnEdgeTLSSecret,
-		"dnsNames":   []interface{}{turnEdgeHost(r.KernelDomain)},
-		"issuerRef":  map[string]interface{}{"name": issuer, "kind": "ClusterIssuer"},
-	}
-	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-		return err
-	}
 	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(certManagerCertGVK)
+	existing.SetGroupVersionKind(edgeCertificateGVK(r.Certificates))
 	err := r.Get(ctx, types.NamespacedName{Name: turnEdgeTLSSecret, Namespace: turnEdgeNamespace}, existing)
 	if runtimeMeta.IsNoMatchError(err) {
-		// No cert-manager: TURN over TLS is not offered, and the rest is.
+		// No certificate service: TURN over TLS is not offered, and the
+		// rest is.
 		return nil
 	}
 	if errors.IsNotFound(err) {
@@ -497,7 +492,8 @@ func (r *TURNEdgeReconciler) ensureCertificate(ctx context.Context) error {
 	return r.Patch(ctx, existing, patch)
 }
 
-// issuedCertificate is the edge's certificate and key, as cert-manager wrote
+// issuedCertificate is the edge's certificate and key, as the certificate
+// source wrote
 // them, or nothing while it has not.
 func (r *TURNEdgeReconciler) issuedCertificate(ctx context.Context) ([]byte, []byte, error) {
 	tls := &corev1.Secret{}

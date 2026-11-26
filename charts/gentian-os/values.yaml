@@ -57,6 +57,13 @@ dnsProvider: cloudflare
 # only when tenant zones are hosted somewhere the kernel zone is not.
 tenantDNS01ClusterIssuer: ""
 
+# edgeCertificates is who issues the certificates tenants and the TURN edge are
+# served under: "gardener" where the DNS provider's entry in
+# kernel/platforms.yaml says its shoot issues them (certificates: gardener),
+# anything else cert-manager through tenantDNS01ClusterIssuer. Plumbed as
+# EDGE_CERTIFICATES.
+edgeCertificates: ""
+
 # backupRecipients are age public keys (age1...) that tenant export bundles are
 # encrypted to. Plumbed as BACKUP_AGE_RECIPIENTS.
 #

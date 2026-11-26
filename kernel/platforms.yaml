@@ -168,10 +168,14 @@ dnsProviders:
   # platform holds no credential and runs no external-dns: the edge's
   # LoadBalancer Service carries Gardener's annotations, and Gardener publishes
   # the kernel domain and its wildcard for the Service's address and keeps
-  # them. No DNS-01, so certificates come by HTTP-01, and with no
-  # _acme-challenge record under a tenant's name the one wildcard answers for
-  # every name below the domain. The default answer at the interview on a
-  # cluster that serves dns.gardener.cloud.
+  # them. The default answer at the interview on a cluster that serves
+  # dns.gardener.cloud.
+  #
+  # certificates: gardener -- the shoot's certificate service
+  # (cert.gardener.cloud) issues the edge's certificates, the kernel wildcard,
+  # each tenant's and the TURN edge's, by DNS-01 with the shoot's own DNS
+  # credential. cert-manager here has no DNS-01 issuer, so this is what makes
+  # wildcards possible. Its HTTP-01 issuer and the internal CA stay.
   #
   # edgeAnnotations: put on the edge's LoadBalancer Service beside the
   # platform's lbAnnotations, rendered against the edge chart's values
@@ -181,6 +185,7 @@ dnsProviders:
     # The interview offers this as the default where the cluster serves it.
     detectCRD: dnsentries.dns.gardener.cloud
     solver: {}
+    certificates: gardener
     externalDNS:
       enabled: false
     edgeAnnotations:
