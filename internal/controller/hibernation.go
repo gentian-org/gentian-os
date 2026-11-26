@@ -368,7 +368,9 @@ func (r *TenantReconciler) wakeWorkload(ctx context.Context, obj client.Object, 
 	if !ok {
 		return nil
 	}
-	replicas, err := strconv.Atoi(kept)
+	// Read as the 32 bits a replica count has: an annotation is whatever
+	// somebody wrote there.
+	replicas, err := strconv.ParseInt(kept, 10, 32)
 	if err != nil || replicas < 0 {
 		replicas = 1
 	}

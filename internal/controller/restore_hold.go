@@ -122,11 +122,6 @@ func ensureRestoreHoldFilter(ctx context.Context, c client.Client, namespace str
 	return ensureSpec(ctx, c, buildHoldFilter(namespace, restoreHoldFilterName))
 }
 
-// heldRules are a route's rules as the restore hold has them.
-func heldRules(rules []gatewayv1.HTTPRouteRule) []gatewayv1.HTTPRouteRule {
-	return heldRulesBy(rules, restoreHoldFilterName)
-}
-
 // heldRulesBy are a route's rules as a hold has them: the same matches, each
 // answered by the hold's filter and sent nowhere.
 func heldRulesBy(rules []gatewayv1.HTTPRouteRule, filter string) []gatewayv1.HTTPRouteRule {
