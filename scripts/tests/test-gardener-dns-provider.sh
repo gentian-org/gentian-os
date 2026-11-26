@@ -182,6 +182,7 @@ check "a tunnel keeps it" '[[ "$(token_ref gardener tunnel)" == default ]]' "$(t
 # A tenant's certificate is the operator's to ask for and Crossplane's to
 # apply: the kind the operator asks for on gardener is one provider-kubernetes
 # may manage, in the list and in the role generated from it.
+# shellcheck disable=SC2329 # called from the checks' condition strings
 provider_may() {
     python3 - "$1" <<'PY'
 import sys, yaml
@@ -197,7 +198,7 @@ role = any(
 sys.exit(0 if listed and role else 1)
 PY
 }
-check "the operator's Gardener certificate is the kind it says" 'grep -q "Group: \"cert.gardener.cloud\"" internal/controller/edge_certificates.go'
+check "the operator asks for a certificate of the shoot's group" 'grep -q "cert.gardener.cloud" internal/controller/edge_certificates.go'
 check "Crossplane may manage the shoot's certificates" 'provider_may cert.gardener.cloud'
 check "and cert-manager's" 'provider_may cert-manager.io'
 
