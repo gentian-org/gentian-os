@@ -54,6 +54,43 @@ _d02_component_chart_version() {
     esac
 }
 
+# The release index the operator reads (internal/releaseindex DefaultFeed).
+_D03_RELEASE_FEED_DEFAULT="https://raw.githubusercontent.com/gentian-org/gentian-os/main/docs/releases/index.yaml"
+
+# _d03_release_index <file> -- the release index, written into <file>, when
+# the claim names a release version; returns 0 with nothing written when it
+# names a track or nothing.
+_d03_release_index() {
+    local file="$1" ref
+    ref="$(claim_release_ref || true)"
+    [[ "${ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
+    curl -sfL --retry 3 --max-time 20 "${GENTIAN_RELEASE_FEED_URL:-${_D03_RELEASE_FEED_DEFAULT}}" -o "${file}" \
+        || { error "could not read the release index ${GENTIAN_RELEASE_FEED_URL:-${_D03_RELEASE_FEED_DEFAULT}}"; return 1; }
+}
+
+# _d03_ui_chart_version <index-key> <chart-repo> <base> <index-file> -- the
+# version of a gentian-ui chart this step renders.
+#
+# On a cluster whose claim names a release version, the operator's release
+# reconciler sets each UI chart the release's index entry lists to that
+# version (internal/controller/release_reconciler.go). Rendering anything else
+# here is undone shortly after, and the wait below would then wait for a
+# version that never comes back. So a chart the entry lists is taken from it;
+# any other is the immutable build of the branch, which is what the operator
+# resolves for a track too.
+_d03_ui_chart_version() {
+    local key="$1" repo="$2" base="$3" index="$4" ref listed
+    ref="$(claim_release_ref || true)"
+    if [[ -s "${index}" ]]; then
+        listed="$(yq_get ".releases[] | select(.version == \"${ref}\") | .ui.${key}" "${index}" || true)"
+        if [[ -n "${listed}" ]]; then
+            printf '%s\n' "${listed}"
+            return 0
+        fi
+    fi
+    _d02_component_chart_version "${repo}" "${base}-$(gentian_ui_chart_branch)"
+}
+
 _d02_export_layout() {
     export IDENTITY_NAMESPACE AUTHZ_NAMESPACE GITOPS_NAMESPACE \
         EDGE_NAMESPACE GENTIAN_SYSTEM_NAMESPACE CROSSPLANE_NAMESPACE OBSERVABILITY_NAMESPACE
@@ -145,14 +182,23 @@ apply() {
     # verifies the person's token comes with the render. Before this step
     # there is no realm to sign in against, which is why a fresh cluster
     # starts on token login. The same render pins the desktop chart.
-    local desktop_chart_version admin_console_chart_version concierge_chart_version
-    desktop_chart_version="$(_d02_component_chart_version gentian-org/charts/gentian-portal "0.1.0-$(gentian_ui_chart_branch)")" || return 1
+    local desktop_chart_version admin_console_chart_version concierge_chart_version release_index
+    release_index="$(mktemp)"
+    if ! _d03_release_index "${release_index}"; then
+        rm -f "${release_index}"
+        return 1
+    fi
+    # All three from gentian-ui, so all follow its branch or its release.
+    desktop_chart_version="$(_d03_ui_chart_version desktop gentian-org/charts/gentian-portal 0.1.0 "${release_index}")" \
+        || { rm -f "${release_index}"; return 1; }
     info "Desktop chart: ${desktop_chart_version}"
-    # Both from gentian-ui, so both follow its branch.
-    admin_console_chart_version="$(_d02_component_chart_version gentian-org/charts/admin-console "0.1.1-$(gentian_ui_chart_branch)")" || return 1
+    admin_console_chart_version="$(_d03_ui_chart_version adminConsole gentian-org/charts/admin-console 0.1.1 "${release_index}")" \
+        || { rm -f "${release_index}"; return 1; }
     info "Administration console chart: ${admin_console_chart_version}"
-    concierge_chart_version="$(_d02_component_chart_version gentian-org/charts/concierge "0.1.0-$(gentian_ui_chart_branch)")" || return 1
+    concierge_chart_version="$(_d03_ui_chart_version concierge gentian-org/charts/concierge 0.1.0 "${release_index}")" \
+        || { rm -f "${release_index}"; return 1; }
     info "Concierge chart: ${concierge_chart_version}"
+    rm -f "${release_index}"
     DESKTOP_CHART_VERSION="${desktop_chart_version}" \
         ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart_version}" \
         CONCIERGE_CHART_VERSION="${concierge_chart_version}" \
