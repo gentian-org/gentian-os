@@ -84,46 +84,22 @@ until it is done.
 
 ## What you need before you start
 
-- **A Kubernetes cluster** you are an admin on, version 1.33 or newer.
-- **A domain**, with its DNS at Cloudflare.
-- **A way for traffic to reach the cluster**, one of:
-  - a **tunnel**: a Cloudflare Tunnel, which needs no public address and no
-    open port, or
-  - a **fixed IP address** that the domain points at.
-- **A deployments repository on GitHub, and a token that can write to it.**
-  The cluster's definition lives in this repository as files. The installer
-  commits the first version there, and the cluster commits every later change
-  (a new tenant, an installed app) there too.
+Pre-flight checks the cluster and the tools, and names anything missing. The
+guides in the last column get you there one step at a time, written for
+someone who knows basic IT but not Kubernetes.
 
-Starting from nothing? These guides get you there one step at a time, written
-for someone who knows basic IT but not Kubernetes:
-
-1. [Set up a cluster with MicroK8s](docs/guides/microk8s.md), on an Ubuntu
-   machine or a Mac mini, with the tools the installer runs.
-2. [Get a domain and a tunnel from Cloudflare](docs/guides/cloudflare.md),
-   connect the tunnel to the cluster, and create the API token. For a
-   cluster at a cloud provider, the alternative is
-   [a fixed IP address](docs/guides/static-ip.md).
-3. [Create the deployments repository on GitHub](docs/guides/github-deployments.md)
-   and its token.
+| You need | In detail | How to get it |
+|---|---|---|
+| **A Kubernetes cluster** | Version 1.33 to 1.36, and you are an admin on it; cluster DNS, RBAC and a default StorageClass; Secrets encrypted at rest; room for about 100 pods before any app (on MicroK8s `--max-pods=220`) | [microk8s.md](docs/guides/microk8s.md) on an Ubuntu machine or a Mac mini; [cluster-requirements.md](docs/guides/cluster-requirements.md) |
+| **The installer's tools** | `kubectl helm jq yq openssl curl git gpg crossplane python3 age age-keygen` on your `PATH`; `qrencode` optional | [microk8s.md §4](docs/guides/microk8s.md#4-the-tools-the-installer-runs); [The tools the installer runs](#the-tools-the-installer-runs) |
+| **A domain** | Its DNS at a provider the cluster can write to: Cloudflare (the default) or one that takes `rfc2136` updates | [cloudflare.md §1](docs/guides/cloudflare.md#1-a-cloudflare-account-and-a-domain); [The names that reach the cluster](#the-names-that-reach-the-cluster) |
+| **A way for traffic to reach the cluster:** a tunnel | A Cloudflare Tunnel, which needs no public address and no open port: `cloudflared` running in the cluster, its token in the Secret `cf-tunnel` (key `token`) or `tunnel-credentials` in the namespace `default`; Cloudflare as the DNS provider, with Total TLS on the zone for names two levels deep ([cloudflare.md §1.1](docs/guides/cloudflare.md#11-certificates-for-names-two-levels-deep)); one API token with Zone → Zone → Read, Zone → DNS → Edit and Account → Cloudflare One Connector: cloudflared → Edit | [cloudflare.md](docs/guides/cloudflare.md); [The two ways in](#the-two-ways-in) |
+| **or** a fixed IP address | An address the domain points at, and something that answers a `LoadBalancer` Service with it (MetalLB, or the cloud's load balancer); the platform's own mail needs this mode | [static-ip.md](docs/guides/static-ip.md); [The two ways in](#the-two-ways-in) |
+| **A deployments repository on GitHub, and a token that can write to it** | The cluster's definition lives in this repository as files: the installer commits the first version, and the cluster commits every later change (a new tenant, an installed app). An empty repository is enough; on GitHub the token is a fine-grained one with Contents: Read and write | [github-deployments.md](docs/guides/github-deployments.md) |
 
 Installed on this machine, or into this deployments repository, before? Read
 [Installing again on a machine that installed before](#installing-again-on-a-machine-that-installed-before)
 first.
-
-### Checklist
-
-For readers who have done this before. Pre-flight checks the cluster and the
-tools, and names anything missing.
-
-| | What | Details |
-|---|---|---|
-| Cluster | Kubernetes 1.33 to 1.36, you are an admin; cluster DNS, RBAC and a default StorageClass; Secrets encrypted at rest; room for about 100 pods before any app (on MicroK8s `--max-pods=220`) | [cluster-requirements.md](docs/guides/cluster-requirements.md) |
-| Tools | `kubectl helm jq yq openssl curl git gpg crossplane python3 age age-keygen` on your `PATH`; `qrencode` optional | [The tools the installer runs](#the-tools-the-installer-runs) |
-| Domain | Its DNS at a provider the cluster can write to: Cloudflare (the default) or one that takes `rfc2136` updates | [The names that reach the cluster](#the-names-that-reach-the-cluster) |
-| Tunnel | A Cloudflare Tunnel with `cloudflared` running in the cluster, its token in the Secret `cf-tunnel` (key `token`) or `tunnel-credentials` in the namespace `default`; Cloudflare as the DNS provider, with Total TLS on the zone for names two levels deep ([cloudflare.md §1.1](docs/guides/cloudflare.md#11-certificates-for-names-two-levels-deep)); one API token with Zone → Zone → Read, Zone → DNS → Edit and Account → Cloudflare One Connector: cloudflared → Edit | [cloudflare.md](docs/guides/cloudflare.md), [The two ways in](#the-two-ways-in) |
-| Fixed IP | An address the domain points at, and something that answers a `LoadBalancer` Service with it (MetalLB, or the cloud's load balancer); the platform's own mail needs this mode | [static-ip.md](docs/guides/static-ip.md), [The two ways in](#the-two-ways-in) |
-| Deployments repository | A repository (an empty one is enough) and a user name with a token that can write to it; on GitHub a fine-grained token with Contents: Read and write | [github-deployments.md](docs/guides/github-deployments.md) |
 
 ---
 
