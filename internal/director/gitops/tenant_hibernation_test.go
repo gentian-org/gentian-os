@@ -59,8 +59,8 @@ func TestATenantsSleepIsOneBlockOfItsManifest(t *testing.T) {
 	if err != nil || !res.Changed {
 		t.Fatalf("sleep: %+v, %v", res, err)
 	}
-	if doc := dt.RemoteFile(t, remote, path); !strings.Contains(doc, "  hibernation:\n    asleep: true") {
-		t.Fatalf("tenant.yaml:\n%s", doc)
+	if doc := dt.RemoteFile(t, remote, path); !strings.Contains(doc, "  hibernation:\n    asleep: true\n    setBy: ") {
+		t.Fatalf("the block does not say who asked:\n%s", doc)
 	}
 	if got := listed(t, g, "acme"); !got.Asleep || got.AwakeUntil != nil {
 		t.Fatalf("the listing says %+v", got)

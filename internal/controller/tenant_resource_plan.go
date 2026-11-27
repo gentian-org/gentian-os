@@ -41,6 +41,7 @@ type planEventStore interface {
 	EnsureSchema(ctx context.Context) error
 	LastPlanBefore(ctx context.Context, t time.Time) (usage.PlanEvent, bool, error)
 	RecordPlanEvent(ctx context.Context, event usage.PlanEvent) error
+	RecordHibernationEvent(ctx context.Context, event usage.HibernationEvent) error
 }
 
 // planEventStoreFor opens the usage store of one tenant. A field so that a

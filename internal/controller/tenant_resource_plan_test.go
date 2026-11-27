@@ -31,6 +31,7 @@ import (
 
 type recordedPlans struct {
 	events []usage.PlanEvent
+	sleep  []usage.HibernationEvent
 	last   *usage.PlanEvent
 	fail   error
 }
@@ -44,6 +45,11 @@ func (r *recordedPlans) LastPlanBefore(context.Context, time.Time) (usage.PlanEv
 }
 func (r *recordedPlans) RecordPlanEvent(_ context.Context, e usage.PlanEvent) error {
 	r.events = append(r.events, e)
+	return nil
+}
+
+func (r *recordedPlans) RecordHibernationEvent(_ context.Context, e usage.HibernationEvent) error {
+	r.sleep = append(r.sleep, e)
 	return nil
 }
 

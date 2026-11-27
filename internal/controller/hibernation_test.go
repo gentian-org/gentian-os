@@ -31,6 +31,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
 // sleepWorld is a tenant with something of every kind in its own namespace
@@ -572,5 +573,65 @@ func TestAnExportOfASleepingTenantIsSkipped(t *testing.T) {
 	}
 	if got.Status.Phase == gentianov1alpha1.TenantExportPhaseSkipped {
 		t.Fatal("an export of a tenant that is kept awake was skipped")
+	}
+}
+
+// Falling asleep and waking go into the tenant's usage history once each, at
+// the time the operator did it and with who asked; a tenant that fell asleep
+// because its time had come has nobody to name; and a history that cannot be
+// written is written on a later look.
+func TestSleepAndWakingAreRecordedInTheUsageHistory(t *testing.T) {
+	ctx := context.Background()
+	since := metav1.NewTime(time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC))
+	tenant := func(asleep bool, until *metav1.Time) *gentianov1alpha1.Tenant {
+		return &gentianov1alpha1.Tenant{
+			ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+			Spec: gentianov1alpha1.TenantSpec{Hibernation: &gentianov1alpha1.TenantHibernation{
+				Asleep: true, AwakeUntil: until, SetBy: "tom@example.com",
+			}},
+			Status: gentianov1alpha1.TenantStatus{Hibernation: &gentianov1alpha1.TenantHibernationStatus{
+				Asleep: asleep, Since: &since,
+			}},
+		}
+	}
+	later := metav1.NewTime(since.Add(72 * time.Hour))
+
+	store := &recordedPlans{}
+	r := planReconciler(t, store)
+
+	put := tenant(true, nil)
+	if !r.recordHibernation(ctx, put) || !put.Status.Hibernation.Recorded {
+		t.Fatal("a tenant put to sleep was not recorded")
+	}
+	if r.recordHibernation(ctx, put) {
+		t.Fatal("the same change was recorded twice")
+	}
+	woken := tenant(false, &later)
+	r.recordHibernation(ctx, woken)
+	fell := tenant(true, &since)
+	r.recordHibernation(ctx, fell)
+
+	want := []usage.HibernationEvent{
+		{OccurredAt: since.UTC(), Asleep: true, Actor: "tom@example.com"},
+		{OccurredAt: since.UTC(), Asleep: false, Actor: "tom@example.com"},
+		{OccurredAt: since.UTC(), Asleep: true},
+	}
+	if len(store.sleep) != len(want) {
+		t.Fatalf("events = %+v", store.sleep)
+	}
+	for i := range want {
+		if store.sleep[i] != want[i] {
+			t.Errorf("event %d = %+v, want %+v", i, store.sleep[i], want[i])
+		}
+	}
+
+	// No database yet: nothing is noted, so the next reconcile tries again.
+	unreachable := tenant(true, nil)
+	if planReconciler(t, nil).recordHibernation(ctx, unreachable) || unreachable.Status.Hibernation.Recorded {
+		t.Fatal("a change that was not written was noted as recorded")
+	}
+	// A tenant that never slept has nothing to record.
+	if r.recordHibernation(ctx, &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}) {
+		t.Fatal("a tenant that never slept was recorded")
 	}
 }
