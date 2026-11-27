@@ -893,22 +893,14 @@ things, all for *outbound* mail, and all before you run the install:
 2. **Reserve a floating IP for sending.** A second one: not the cluster's
    `nodeIp`, and not the address the mail load balancer was given.
 3. **Attach it to one node.** A node with a floating IP on its port sends from
-   that address instead of the provider's shared one. On OpenStack:
-
-   ```bash
-   kubectl get node <node> -o jsonpath='{.spec.providerID}'   # openstack://<region>/<server-id>
-   openstack port list --device-id <server-id> -f value -c ID
-   openstack floating ip set --port <port-id> <floating-ip>
-   ```
-
-   `kubectl get nodes -o wide` then shows the address as that node's
-   `EXTERNAL-IP`, usually within a minute or two.
+   that address instead of the provider's shared one. `kubectl get nodes -o
+   wide` then shows the address as that node's `EXTERNAL-IP`, usually within a
+   minute or two.
 4. **Set its reverse DNS** to the name mail will leave from, for example
-   `mail-egress.<domain>`. On Infomaniak Public Cloud:
+   `mail-egress.<domain>`.
 
-   ```bash
-   openstack ptr record set <region>:<floating-ip-id> mail-egress.<domain>.
-   ```
+[On OpenStack, step by step](#on-openstack-step-by-step) below has each of
+the four with the dashboard and the command line.
 
 Then run the install. Step 0 asks for `mail.egressHost`: give the name from 4.
 Do not create an A record for it; the operator publishes it from the node's
@@ -939,6 +931,92 @@ to relay instead*).
   it; set it to `mail.<domain>` if you want it tidy.
 - When the node that carries the address is replaced, attach the address to
   another node (step 3). The label, the A record and Postfix follow.
+
+### On OpenStack, step by step
+
+The four things above and the answer at the install, for a cluster whose
+machines run on OpenStack. Each step has the dashboard (Horizon) and the
+`openstack` command line; use either. `<domain>` is the cluster's domain, and
+`mail-egress.<domain>` the name mail will leave from.
+
+**1. Check that outbound port 25 is open.** Ask a mail server on the internet
+for its greeting, from inside the cluster:
+
+```bash
+kubectl run smtp-check --rm -i --restart=Never --image=busybox:1.36 -- \
+    sh -c 'echo QUIT | nc -w 10 gmail-smtp-in.l.google.com 25'
+```
+
+A line starting with `220` means port 25 is open. No answer within ten seconds
+means it is blocked. Two places can block it:
+
+- *The project's security group.* Dashboard: **Network → Security Groups**,
+  the group of the cluster's nodes, **Manage Rules**: there has to be an
+  egress rule that allows TCP port 25, or all egress. Command line:
+  `openstack security group rule list <group> --egress`.
+- *The provider.* Many block port 25 for every new project, outside anything
+  the dashboard shows. Ask the provider's support to open outbound port 25
+  for the project, and run the check again.
+
+**2. Reserve a floating IP for sending.** A new one, besides the one the
+cluster answers on.
+
+- Dashboard: **Network → Floating IPs → Allocate IP To Project**, pool: the
+  external network, description: `mail egress`, then **Allocate IP**.
+- Command line:
+
+  ```bash
+  openstack network list --external                 # the name of the external network
+  openstack floating ip create --description "mail egress" <external network>
+  ```
+
+Note the address, and its ID for step 4:
+`openstack floating ip show <address> -f value -c id`.
+
+**3. Attach it to one node.** Pick a node that stays: `kubectl get nodes`
+lists them, and a node's name is usually its server's name in OpenStack.
+
+- Dashboard: **Network → Floating IPs**, on the new address choose
+  **Associate**, and under **Port to be associated** pick the entry of that
+  node (the server's name with its internal address), then **Associate**.
+- Command line:
+
+  ```bash
+  kubectl get node <node> -o jsonpath='{.spec.providerID}'   # openstack://<region>/<server-id>
+  openstack port list --device-id <server-id> -f value -c ID
+  openstack floating ip set --port <port-id> <address>
+  ```
+
+Check: within a minute or two, `kubectl get nodes -o wide` shows the address
+as that node's `EXTERNAL-IP`, and on no other node.
+
+**4. Set its reverse DNS.** The reverse DNS (a PTR record) is set at the
+provider, not where the domain's DNS is hosted.
+
+- Dashboard: **DNS → Reverse DNS**, on the address choose **Set**, and enter
+  `mail-egress.<domain>.` with the final dot. A dashboard without a **DNS**
+  panel has no page for it: use the command line, or ask the provider.
+- Command line, with the DNS plugin (`pip install python-designateclient`):
+
+  ```bash
+  openstack ptr record set <region>:<floating-ip-id> mail-egress.<domain>.
+  ```
+
+Check: `dig -x <address> +short` answers `mail-egress.<domain>.`. It can take
+a few minutes.
+
+**5. Answer the install.** At step 0, choose `internal` at `mail.serviceMode`
+and give the name at `mail.egressHost`:
+
+```
+  mail.egressHost [blank: the shared address]: mail-egress.<domain>
+```
+
+Create no A record for the name: the cluster publishes it from the node's
+address. The install checks steps 3 and 4 before it applies anything and says
+which one is missing. On a cluster that is already installed with the
+question left blank, set `mail.egressHost` on the Cluster claim in the
+deployments checkout and run `./install.sh` again.
 
 ---
 
