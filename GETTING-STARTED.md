@@ -110,8 +110,10 @@ on your machine, by default in `~/.gentian/gentian-deployments`. To keep it
 somewhere else, set `GENTIAN_DEPLOYMENTS_PATH` in step 2.
 
 The install clones `GENTIAN_DEPLOYMENTS_REPO` there itself when that directory
-does not exist or is empty, with your own git credentials. A directory that
-holds other files is left alone. To make commits of your own before the
+does not exist or is empty, with your own git credentials. A
+`GENTIAN_DEPLOYMENTS_BRANCH` the repository does not have yet is started from
+its default branch and created on the first push. A directory that holds
+other files is left alone. To make commits of your own before the
 first install (below), clone it now:
 
 ```bash
