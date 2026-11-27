@@ -101,7 +101,9 @@ for someone who knows basic IT but not Kubernetes:
 1. [Set up a cluster with MicroK8s](docs/guides/microk8s.md), on an Ubuntu
    machine or a Mac mini, with the tools the installer runs.
 2. [Get a domain and a tunnel from Cloudflare](docs/guides/cloudflare.md),
-   connect the tunnel to the cluster, and create the API token.
+   connect the tunnel to the cluster, and create the API token. For a
+   cluster at a cloud provider, the alternative is
+   [a fixed IP address](docs/guides/static-ip.md).
 3. [Create the deployments repository on GitHub](docs/guides/github-deployments.md)
    and its token.
 
@@ -120,7 +122,7 @@ tools, and names anything missing.
 | Tools | `kubectl helm jq yq openssl curl git gpg crossplane python3 age age-keygen` on your `PATH`; `qrencode` optional | [The tools the installer runs](#the-tools-the-installer-runs) |
 | Domain | Its DNS at a provider the cluster can write to: Cloudflare (the default) or one that takes `rfc2136` updates | [The names that reach the cluster](#the-names-that-reach-the-cluster) |
 | Tunnel | A Cloudflare Tunnel with `cloudflared` running in the cluster, its token in the Secret `cf-tunnel` (key `token`) or `tunnel-credentials` in the namespace `default`; Cloudflare as the DNS provider, with Total TLS on the zone for names two levels deep ([cloudflare.md §1.1](docs/guides/cloudflare.md#11-certificates-for-names-two-levels-deep)); one API token with Zone → Zone → Read, Zone → DNS → Edit and Account → Cloudflare One Connector: cloudflared → Edit | [cloudflare.md](docs/guides/cloudflare.md), [The two ways in](#the-two-ways-in) |
-| Fixed IP | An address the domain points at, and something that answers a `LoadBalancer` Service with it (MetalLB, or the cloud's load balancer); the platform's own mail needs this mode | [The two ways in](#the-two-ways-in) |
+| Fixed IP | An address the domain points at, and something that answers a `LoadBalancer` Service with it (MetalLB, or the cloud's load balancer); the platform's own mail needs this mode | [static-ip.md](docs/guides/static-ip.md), [The two ways in](#the-two-ways-in) |
 | Deployments repository | A repository (an empty one is enough) and a user name with a token that can write to it; on GitHub a fine-grained token with Contents: Read and write | [github-deployments.md](docs/guides/github-deployments.md) |
 
 ---

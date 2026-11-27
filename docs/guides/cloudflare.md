@@ -15,6 +15,9 @@ Gentian OS is installed on it:
 - **An API token.** With it the platform creates its own DNS records and tells
   the tunnel which name goes where, so you never edit either by hand.
 
+A cluster at a cloud provider can take a fixed IP address instead of the
+tunnel: [static-ip.md](static-ip.md).
+
 It is written for someone who knows basic IT and has not used Kubernetes
 before. You need the cluster from [microk8s.md](microk8s.md), with `kubectl`
 working on your machine.

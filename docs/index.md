@@ -33,6 +33,7 @@ How to do one thing, for operators, tenant administrators and app authors.
 |---|---|
 | [microk8s.md](guides/microk8s.md) | Setting up a one-machine cluster with MicroK8s on Ubuntu or a Mac mini, with the tools the installer runs |
 | [cloudflare.md](guides/cloudflare.md) | A domain, a tunnel run in the cluster, and the API token from Cloudflare |
+| [static-ip.md](guides/static-ip.md) | A fixed IP address for the cluster, the alternative to the tunnel: reserving one on OpenStack |
 | [github-deployments.md](guides/github-deployments.md) | The deployments repository on GitHub and the token that writes to it |
 | [deployment.md](guides/deployment.md) | Deployment environments, promotion and release numbering |
 | [app-customization.md](guides/app-customization.md) | Customizing an installed app along the customization ladder |
