@@ -35,15 +35,26 @@ working on your machine.
 
 ### 1.1 Certificates for names two levels deep
 
-The platform uses names such as `admin.platform.example.com` and
-`desktop.acme.example.com`, two levels below the domain. Cloudflare's free
-certificate covers the domain and one level below it only, so a visitor to
-those names gets a certificate error.
+Cloudflare's free certificate covers the domain and names one level below
+it, such as `desktop.example.com`. A name two levels below, such as
+`admin.platform.example.com`, gets a certificate error unless the domain has
+**Total TLS**. How much of the platform that affects depends on the tenancy
+mode you choose in step 4 of
+[GETTING-STARTED](../../GETTING-STARTED.md#4-install):
 
-Turn on **SSL/TLS → Edge Certificates → Total TLS** for the domain. Total TLS
-needs **Advanced Certificate Manager**, a paid add-on that the same page
-offers. With it on, Cloudflare issues a certificate for every name the
-platform publishes, a few minutes after the name appears.
+| Tenancy mode | Names two levels deep | Without Total TLS |
+|---|---|---|
+| `single` | The platform administrator's console, `admin.platform.<domain>`, and the Operations Console beside it | Everything people use works: the desktop, the tenant's administration console, the App Store and every app. The platform administrator signs in at `platform.<domain>`, and those two consoles show a certificate error |
+| `multi` | Every tenant's desktop and apps, `<app>.<tenant>.<domain>` | No tenant is reachable |
+
+This holds when the platform's domain is the domain itself, `example.com`.
+With a subdomain, `gentian.example.com`, every name is one level deeper and
+all of them need Total TLS.
+
+To turn it on, open **SSL/TLS → Edge Certificates → Total TLS** for the
+domain. Total TLS needs **Advanced Certificate Manager**, a paid add-on that
+the same page offers. With it on, Cloudflare issues a certificate for every
+name the platform publishes, a few minutes after the name appears.
 
 ## 2. Create the tunnel
 
