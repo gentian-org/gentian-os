@@ -2514,7 +2514,10 @@ _claim_default_line() {
 gentian_sync_deployments_checkout() {
     resolve_deployments_path
     local mode="${1:-sync}" path="${GENTIAN_DEPLOYMENTS_PATH}" branch behind ahead dirty
-    [[ -d "${path}/.git" ]] || return 0   # scaffold_cluster_deployment reports this
+    if [[ ! -d "${path}/.git" ]]; then
+        _deployments_checkout_clone "${mode}" "${path}"
+        return
+    fi
     git -C "${path}" remote get-url origin >/dev/null 2>&1 || return 0
     branch="$(git -C "${path}" branch --show-current 2>/dev/null || true)"
     branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
@@ -2581,6 +2584,36 @@ _deployments_checkout_report() {
     _deployments_checkout_refuse "${path}" "${branch}" "behind" "${ahead}" "${dirty}"
 }
 
+# _deployments_checkout_clone <mode> <path> — make the checkout that is not there.
+#
+# Clones GENTIAN_DEPLOYMENTS_REPO into the path when the path does not exist
+# or is an empty directory, with the same git and the same credentials the
+# sync's fetch and step 0's push use. Anything else is left to
+# scaffold_cluster_deployment to report: a directory that holds files is not
+# a checkout and may be someone's, and with no repository named there is
+# nothing to clone. `check` only says what an install would clone.
+_deployments_checkout_clone() {
+    local mode="$1" path="$2" repo="${GENTIAN_DEPLOYMENTS_REPO:-}" branch="${GENTIAN_DEPLOYMENTS_BRANCH:-}"
+    [[ -n "${repo}" ]] || return 0
+    if [[ -e "${path}" ]]; then
+        [[ -d "${path}" && -z "$(ls -A "${path}" 2>/dev/null)" ]] || return 0
+    fi
+    local shown
+    shown="$(_gentian_url_redact "${repo}")"
+    if [[ "${mode}" == "check" ]]; then
+        gentian_would "clone ${shown}${branch:+ (branch ${branch})} into ${path}"
+        return 0
+    fi
+    info "No deployments checkout at ${path}; cloning ${shown}${branch:+ (branch ${branch})}."
+    if ! mkdir -p "$(dirname "${path}")" ||
+       ! git clone -q ${branch:+--branch "${branch}"} "${repo}" "${path}"; then
+        error "Could not clone the deployments repository into ${path}."
+        error "  Clone it by hand and run again:"
+        error "    git clone ${branch:+--branch ${branch} }${shown} ${path}"
+        return 1
+    fi
+}
+
 # _deployments_checkout_refuse <path> <branch> <how far behind> <ahead> <dirty>
 _deployments_checkout_refuse() {
     local path="$1" branch="$2" behind="$3" ahead="$4" dirty="$5"
@@ -2609,10 +2642,15 @@ scaffold_cluster_deployment() {
     # The files are only useful inside the checkout they get committed from.
     # Writing them into a bare directory produces a tree nothing tracks, which
     # looks like success and installs nothing.
+    # The sync clones into a path that is missing or empty; what is left here
+    # is a directory that holds files, or no repository named to clone.
     if [[ ! -d "${GENTIAN_DEPLOYMENTS_PATH}/.git" ]]; then
         error "${GENTIAN_DEPLOYMENTS_PATH} is not a git checkout of gentian-deployments."
-        error "  Clone it there first:"
-        error "    git clone ${GENTIAN_DEPLOYMENTS_REPO:-<deployments-repo>} ${GENTIAN_DEPLOYMENTS_PATH}"
+        if [[ -z "${GENTIAN_DEPLOYMENTS_REPO:-}" ]]; then
+            error "  GENTIAN_DEPLOYMENTS_REPO names no repository to clone there."
+        else
+            error "  It holds files, so it was not cloned into. Move them away and run again."
+        fi
         error "  Or point GENTIAN_DEPLOYMENTS_PATH at an existing checkout."
         return 1
     fi
