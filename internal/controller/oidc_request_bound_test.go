@@ -111,6 +111,47 @@ func TestARequestBoundClientNeedsNoRedirectURIs(t *testing.T) {
 	}
 }
 
+// A bridge's client only exchanges the token the bridge is handed: admission
+// forbids it a redirect address, so having none is not a refusal, and the
+// client is rendered with the bridge's release, not made by a Job.
+func TestABridgesClientNeedsNoRedirectURIs(t *testing.T) {
+	bridge := oidcProfile("mail-bridge", &gentianov1alpha1.OIDCClientSpec{ClientID: "mail-bridge", AccessType: "CONFIDENTIAL"}, false)
+	bridge.Spec.Bridge = &gentianov1alpha1.BridgeSpec{}
+	r := oidcTestReconciler(t, bridge)
+	tenant := tenantWithApps("demo", "mail-bridge")
+
+	configs, refused, err := r.collectOIDCAppConfigs(context.Background(), tenant)
+	if err != nil || len(refused) > 0 {
+		t.Fatalf("collectOIDCAppConfigs = %v, refused %v; want the client resolved", err, refused)
+	}
+	if len(configs) != 1 || configs[0].clientID != "mail-bridge" || len(configs[0].redirectURIs) != 0 {
+		t.Fatalf("configs = %+v, want mail-bridge with no redirect URIs", configs)
+	}
+	jobs, _, err := r.buildTenantProvisioningJobs(context.Background(), tenant)
+	if err != nil {
+		t.Fatalf("buildTenantProvisioningJobs: %v", err)
+	}
+	if provisioningJobNames(jobs)[clientJobName("demo", "mail-bridge")] {
+		t.Fatal("a client Job was built for a client the bridge's release is rendered with")
+	}
+}
+
+// A bridge that installs no chart has no release its client is rendered
+// with, and the Job such an entry gets would register a sign-in client.
+func TestABridgesClientOnAnAPIEntryIsRefused(t *testing.T) {
+	bridge := oidcProfile("outside-bridge", &gentianov1alpha1.OIDCClientSpec{ClientID: "outside-bridge", AccessType: "CONFIDENTIAL"}, true)
+	bridge.Spec.Bridge = &gentianov1alpha1.BridgeSpec{}
+	r := oidcTestReconciler(t, bridge)
+
+	configs, refused, err := r.collectOIDCAppConfigs(context.Background(), tenantWithApps("demo", "outside-bridge"))
+	if err != nil {
+		t.Fatalf("collectOIDCAppConfigs: %v", err)
+	}
+	if len(configs) != 0 || len(refused) != 1 || !strings.Contains(refused[0], "needs a release") {
+		t.Fatalf("configs = %+v, refused = %v; want the client refused for having no release", configs, refused)
+	}
+}
+
 // One app's client that cannot be made as declared is that app's: it gets no
 // Job and is named, and the next app's client is provisioned as before.
 func TestOneAppsRefusedClientDoesNotStopTheOthers(t *testing.T) {

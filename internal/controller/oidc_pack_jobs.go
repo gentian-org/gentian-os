@@ -165,7 +165,16 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 		return oidcAppConfig{}, refuseOIDCClient(
 			"ComponentProfile %s: requires.services.identity.oidc.requestParameter needs a release the client is rendered with, which an API entry does not have", profileName)
 	}
-	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, profile, profileName, oidcSpec.RedirectURIs, oidcSpec.RequestParameter != nil)
+	// A bridge's client signs nobody in: it only exchanges the token the
+	// bridge is handed, and admission forbids it a redirect address. It is
+	// rendered with the bridge's release as well (apprender, exchange only);
+	// the Job a profile without a chart gets registers a sign-in client.
+	exchangeOnly := profile.Spec.Bridge != nil
+	if exchangeOnly && profile.IsAPI() {
+		return oidcAppConfig{}, refuseOIDCClient(
+			"ComponentProfile %s: a bridge's requires.services.identity.oidc needs a release the client is rendered with, which an API entry does not have", profileName)
+	}
+	redirects, err := r.resolveOIDCRedirectURIs(ctx, tenant, profile, profileName, oidcSpec.RedirectURIs, oidcSpec.RequestParameter != nil || exchangeOnly)
 	if err != nil {
 		return oidcAppConfig{}, err
 	}
@@ -264,17 +273,18 @@ func (r *TenantReconciler) getOIDCOwnerProfile(ctx context.Context, cfg oidcAppC
 }
 
 // resolveOIDCRedirectURIs is where the client's codes may be delivered: the
-// declared redirectUris, else the profile's default annotation. A
-// request-bound client needs neither -- its address is computed from each
-// request, and the Composition registers https://* for it -- so for one
-// nothing declared is no address, not a refusal.
+// declared redirectUris, else the profile's default annotation. Two kinds of
+// client need neither (noAddress), so for them nothing declared is no
+// address, not a refusal: a request-bound client, whose address is computed
+// from each request and for which the Composition registers https://*, and a
+// bridge's client, which only exchanges a token and is sent no code.
 func (r *TenantReconciler) resolveOIDCRedirectURIs(
 	_ context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	profile *gentianov1alpha1.ComponentProfile,
 	profileName string,
 	uris []string,
-	requestBound bool,
+	noAddress bool,
 ) ([]string, error) {
 	if len(uris) > 0 {
 		return substituteTenantDomainInURIs(tenant, uris, r.KernelDomain, r.TenancyMode), nil
@@ -288,7 +298,7 @@ func (r *TenantReconciler) resolveOIDCRedirectURIs(
 			return substituteTenantDomainInURIs(tenant, defaults, r.KernelDomain, r.TenancyMode), nil
 		}
 	}
-	if requestBound {
+	if noAddress {
 		return nil, nil
 	}
 	// Sidecar OIDC redirect URIs must be declared on the ComponentProfile or in the pack spec.
