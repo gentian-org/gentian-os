@@ -130,13 +130,17 @@ tools, and names anything missing.
 ## 1. Clone the deployments repository
 
 This cluster's configuration lives here, and the installer reads and writes it
-on your machine. Clone it to the default location:
+on your machine, by default in `~/.gentian/gentian-deployments`. To keep it
+somewhere else, set `GENTIAN_DEPLOYMENTS_PATH` in step 2.
+
+The install clones `GENTIAN_DEPLOYMENTS_REPO` there itself when that directory
+does not exist or is empty, with your own git credentials. A directory that
+holds other files is left alone. To make commits of your own before the
+first install (below), clone it now:
 
 ```bash
 git clone <your-gentian-deployments-url> ~/.gentian/gentian-deployments
 ```
-
-To keep it somewhere else, set `GENTIAN_DEPLOYMENTS_PATH` in step 2.
 
 An empty repository is enough: the install writes what it needs into it
 (step 4), including `profiles/_base.yaml` and `profiles/<stage>.yaml`, the two

@@ -45,6 +45,8 @@ advance() {
 sync() {
     # shellcheck disable=SC2016 # the inner script is for the child shell to expand
     env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" GENTIAN_DEPLOYMENTS_BRANCH=main \
+        ${GENTIAN_DEPLOYMENTS_REPO:+GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO}"} \
+        ${GENTIAN_DEPLOYMENTS_PATH:+GENTIAN_DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH}"} \
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; rc=0; gentian_sync_deployments_checkout '"${1:-}"' || rc=$?; echo "rc=${rc}"' 2>&1
 }
 
@@ -83,6 +85,32 @@ expect "behind with a local commit: refuses, names both ways out" "$(sync)" 1 "r
 [[ "$(git -C "${CHECKOUT}" log -1 --format=%s)" == "local" ]] || { echo "  a refused sync moved the checkout"; fail=$((fail + 1)); }
 
 rm -rf "${CHECKOUT}"
-expect "no checkout at all: leaves it to the scaffold to say so" "$(sync)" 0 ""
+export GENTIAN_DEPLOYMENTS_PATH="${CHECKOUT}"
+expect "no checkout and no repository named: leaves it to the scaffold to say so" "$(sync)" 0 ""
+[[ ! -e "${CHECKOUT}" ]] || { echo "  something was made with no repository named"; fail=$((fail + 1)); }
+
+# With the repository named, a missing or empty checkout is cloned. The path
+# is named too, as an install.env for a second cluster names it: unnamed, a
+# sibling ../gentian-deployments of the checkout would be taken instead.
+export GENTIAN_DEPLOYMENTS_REPO="${SANDBOX}/origin.git" GENTIAN_DEPLOYMENTS_PATH="${CHECKOUT}"
+expect "--validate / --dry-run with no checkout: says it would clone" "$(sync check)" 0 "Would clone"
+[[ ! -e "${CHECKOUT}" ]] || { echo "  a check made the checkout"; fail=$((fail + 1)); }
+
+expect "no checkout: clones it" "$(sync)" 0 "cloning"
+[[ "$(git -C "${CHECKOUT}" log -1 --format=%s 2>/dev/null)" == "four" ]] || { echo "  the clone is not at origin/main"; fail=$((fail + 1)); }
+[[ "$(git -C "${CHECKOUT}" branch --show-current 2>/dev/null)" == "main" ]] || { echo "  the clone is not on main"; fail=$((fail + 1)); }
+
+rm -rf "${CHECKOUT}"; mkdir -p "${CHECKOUT}"
+expect "an empty directory: clones into it" "$(sync)" 0 "cloning"
+[[ -d "${CHECKOUT}/.git" ]] || { echo "  the empty directory was not cloned into"; fail=$((fail + 1)); }
+
+rm -rf "${CHECKOUT}"; mkdir -p "${CHECKOUT}"; echo mine > "${CHECKOUT}/notes"
+expect "a directory that holds files: left alone" "$(sync)" 0 ""
+[[ ! -e "${CHECKOUT}/.git" && "$(cat "${CHECKOUT}/notes")" == "mine" ]] || { echo "  a directory with files was touched"; fail=$((fail + 1)); }
+
+rm -rf "${CHECKOUT}"
+GENTIAN_DEPLOYMENTS_REPO="${SANDBOX}/nowhere.git"
+expect "a clone that fails: stops and says how to clone by hand" "$(sync)" 1 "git clone --branch main ${SANDBOX}/nowhere.git"
+unset GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_PATH
 
 finish

@@ -58,7 +58,8 @@ one repository and nothing else.
 ## 4. Where the repository and the token go
 
 - **Step 1 of [GETTING-STARTED](../../GETTING-STARTED.md#1-clone-the-deployments-repository)**
-  clones the repository. Git asks for a user name and a password: give your
+  clones the repository, by hand or, when the checkout is not there yet,
+  during the install. Git asks for a user name and a password: give your
   GitHub user name, and the token as the password. Git says the repository
   is empty, which is expected.
 - **Step 2** puts its address in `install.env`:
