@@ -197,6 +197,12 @@ type Tenant struct {
 	// administrators may sign in to the tenant. The tenant's own
 	// administrators set it; off unless set.
 	AdminsEnter bool `json:"adminsEnter"`
+	// Asleep is whether the manifest has the tenant sleeping at the moment
+	// of the listing: spec.hibernation.asleep, and no awakeUntil still ahead.
+	Asleep bool `json:"asleep"`
+	// AwakeUntil is spec.hibernation.awakeUntil while it is still ahead:
+	// when a tenant that is kept awake sleeps again.
+	AwakeUntil *time.Time `json:"awakeUntil,omitempty"`
 }
 
 // PurgeAnnotation marks a tenant whose purge was asked for and not finished.
@@ -310,6 +316,7 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 		return nil, err
 	}
 	out := make([]Tenant, 0, len(names))
+	now := time.Now()
 	for _, name := range names {
 		t := Tenant{Name: name, Apps: []string{}, Protected: name == platformTenant}
 		file, err := g.TenantFile(ctx, name)
@@ -342,6 +349,7 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 						Mail struct {
 							Mode string `json:"mode"`
 						} `json:"mail"`
+						Hibernation Hibernation `json:"hibernation"`
 					} `json:"spec"`
 				}
 				if yamlErr := yaml.Unmarshal(b, &doc); yamlErr == nil {
@@ -351,6 +359,12 @@ func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 					t.Country = doc.Spec.Country
 					t.DisplayName = doc.Spec.DisplayName
 					t.MailMode = doc.Spec.Mail.Mode
+					if h := doc.Spec.Hibernation; h.Asleep && !t.Protected && !adoptsAnotherRealm(string(b), name) {
+						t.Asleep = h.asleepAt(now)
+						if !t.Asleep {
+							t.AwakeUntil = h.AwakeUntil
+						}
+					}
 					t.Purging = doc.Metadata.Annotations[PurgeAnnotation] != ""
 					t.Realm = doc.Spec.Isolation.KeycloakRealm
 					for _, a := range doc.Spec.Apps {
