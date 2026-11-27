@@ -77,6 +77,8 @@ const (
 	conditionHibernated = "Hibernated"
 	// reasonHibernated is why a component of a sleeping tenant is not Ready.
 	reasonHibernated = "Hibernated"
+	// reasonTenantAsleep is why an export of a sleeping tenant was skipped.
+	reasonTenantAsleep = "TenantAsleep"
 
 	// hibernationRecheck is how often a sleeping tenant is looked at again.
 	// The quota is what keeps it asleep; this puts back to zero what

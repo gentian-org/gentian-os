@@ -80,6 +80,8 @@ type updateEntry struct {
 	Rollout *rolloutView `json:"rollout,omitempty"`
 	// Ready is the instance's Ready condition.
 	Ready bool `json:"ready"`
+	// Asleep: the tenant sleeps, and nothing of it is moved until it wakes.
+	Asleep bool `json:"asleep,omitempty"`
 }
 
 type rolloutView struct {
@@ -138,6 +140,10 @@ func (s *Server) updateReport(ctx context.Context, tenant string) (*updateReport
 			return nil, err
 		}
 	}
+	asleep, err := s.sleepingTenants(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rollouts, holds, partial := s.clusterSide(ctx)
 	report.Partial = partial
 	unread := map[string]bool{}
@@ -158,7 +164,7 @@ func (s *Server) updateReport(ctx context.Context, tenant string) (*updateReport
 				// catalog lists (platform_apps.go).
 				continue
 			}
-			e := updateEntry{Tenant: t, Profile: app.Profile, Pinned: app.Digest}
+			e := updateEntry{Tenant: t, Profile: app.Profile, Pinned: app.Digest, Asleep: asleep[t]}
 			if ro, ok := rollouts[t+"/"+app.Profile]; ok {
 				e.Running, e.Ready = ro.Running, ro.Ready
 				if ro.Phase != "" {
@@ -333,12 +339,33 @@ func (s *Server) effectiveMode(policy gitops.UpdatePolicy, app gitops.App, holds
 	return string(policy.ModeFor(app.Profile, "")), modeFromCluster
 }
 
+// heldAsleep is what keeps every app of a sleeping tenant where it is.
+const heldAsleep = "the tenant is asleep: it is moved after it wakes"
+
+// sleepingTenants is which tenants git declares asleep now.
+func (s *Server) sleepingTenants(ctx context.Context) (map[string]bool, error) {
+	tenants, err := s.cfg.Repo.TenantDetails(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, t := range tenants {
+		if t.Asleep {
+			out[t.Name] = true
+		}
+	}
+	return out, nil
+}
+
 // heldReasons says what keeps an outdated app where it is.
 func heldReasons(e updateEntry, holds []customizationHold, tenant string) []string {
 	if !e.Outdated {
 		return nil
 	}
 	var out []string
+	if e.Asleep {
+		out = append(out, heldAsleep)
+	}
 	switch e.Mode {
 	case string(gitops.UpdateManual):
 		if e.ModeFrom == modeFromCustomization {
@@ -457,7 +484,8 @@ func retryable(e updateEntry) bool {
 // right. Apps held by their mode are moved too: this is the administrator
 // acting, which every mode allows. An app whose newest build this platform
 // does not admit, or whose move to that build is under way, is skipped and
-// said. An app whose last move, to the build it is pinned to, was rolled back
+// said, and so is every app of a tenant that is asleep, whose pins do not move
+// until it wakes. An app whose last move, to the build it is pinned to, was rolled back
 // or did not start is asked to move once more, and reported as "retried".
 // Only here and by an install of that build: the platform's own mover never
 // retries, so a build that keeps failing is not tried again and again.
@@ -499,6 +527,12 @@ func (s *Server) moveOutdated(w http.ResponseWriter, r *http.Request, c call) {
 	moved, skipped := []outcome{}, []outcome{}
 	for _, e := range report.Entries {
 		if !wanted(body.Tenants, e.Tenant) || !wanted(body.Apps, e.Profile) {
+			continue
+		}
+		if e.Asleep {
+			if e.Outdated || retryable(e) {
+				skipped = append(skipped, outcome{Tenant: e.Tenant, Profile: e.Profile, To: e.Newest, Status: "asleep", Detail: heldAsleep})
+			}
 			continue
 		}
 		if retryable(e) {
@@ -676,8 +710,19 @@ func (s *Server) setAppUpdateMode(w http.ResponseWriter, r *http.Request, c call
 // moveAllowed answers whether a move of an installed app under its mode is
 // this caller's to make: a tenant-mode app is anybody's who may install in
 // the tenant; under latest and manual the move is the cluster
-// administrator's. Writes the refusal and answers false.
+// administrator's. In a sleeping tenant no move is anybody's. Writes the
+// refusal and answers false.
 func (s *Server) moveAllowed(w http.ResponseWriter, r *http.Request, c call, tenant string, app gitops.App) bool {
+	asleep, err := s.sleepingTenants(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return false
+	}
+	if asleep[tenant] {
+		s.fail(w, r, http.StatusConflict, fmt.Sprintf(
+			"tenant %s is asleep: %s stays on the build it has until the tenant wakes. Nothing was changed", tenant, app.Profile))
+		return false
+	}
 	policy, err := s.cfg.Repo.UpdatePolicy(r.Context())
 	if err != nil {
 		s.repoError(w, r, err)

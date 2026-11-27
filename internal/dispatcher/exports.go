@@ -13,6 +13,7 @@ package dispatcher
 import (
 	"context"
 	"fmt"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -32,25 +33,38 @@ type ClusterExports struct {
 	Client client.Client
 }
 
-// namespace is where a tenant's records are kept, read off the Tenant: a
-// tenant that is not there has none.
-func (e ClusterExports) namespace(ctx context.Context, tenant string) (string, error) {
+// tenant reads the Tenant an act names; one that is not there has no records.
+func (e ClusterExports) tenant(ctx context.Context, tenant string) (*gentianov1alpha1.Tenant, error) {
 	t := &gentianov1alpha1.Tenant{}
 	if err := e.Client.Get(ctx, types.NamespacedName{Name: tenant}, t); err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("tenant %q: %w", tenant, ErrNoSuch)
+			return nil, fmt.Errorf("tenant %q: %w", tenant, ErrNoSuch)
 		}
+		return nil, err
+	}
+	return t, nil
+}
+
+// namespace is where a tenant's records are kept, read off the Tenant.
+func (e ClusterExports) namespace(ctx context.Context, tenant string) (string, error) {
+	t, err := e.tenant(ctx, tenant)
+	if err != nil {
 		return "", err
 	}
 	return t.NamespaceName(), nil
 }
 
-// Start writes the record of one backup.
+// Start writes the record of one backup. A sleeping tenant is refused before
+// anything is written: it runs nothing a backup could be taken from.
 func (e ClusterExports) Start(ctx context.Context, tenant string, backup Backup, actor string) error {
-	namespace, err := e.namespace(ctx, tenant)
+	t, err := e.tenant(ctx, tenant)
 	if err != nil {
 		return err
 	}
+	if t.Asleep(time.Now()) || (t.Status.Hibernation != nil && t.Status.Hibernation.Asleep) {
+		return fmt.Errorf("no backup of tenant %q was started: %w; wake it first", tenant, ErrAsleep)
+	}
+	namespace := t.NamespaceName()
 	export := &gentianov1alpha1.TenantExport{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: backup.Name, Namespace: namespace,

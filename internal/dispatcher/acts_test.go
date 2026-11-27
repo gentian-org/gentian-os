@@ -62,8 +62,10 @@ func startActs(t *testing.T, director string) *actsHarness {
 	}
 	elsewhere := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "moved"}}
 	elsewhere.Spec.Isolation = &gentianov1alpha1.TenantIsolation{Namespace: "somewhere-else"}
+	asleep := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "dozing"}}
+	asleep.Spec.Hibernation = &gentianov1alpha1.TenantHibernation{Asleep: true}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}, elsewhere).Build()
+		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "acme"}}, elsewhere, asleep).Build()
 	out := &bytes.Buffer{}
 	acts := NewActs(ClusterExports{Client: c}, tokens{"director": directorName, "usher": "system:serviceaccount:kernel-control:gentian-os-usher"},
 		director, slog.New(slog.NewJSONHandler(out, nil)))
@@ -109,6 +111,22 @@ func TestTheActsListenerAdmitsTheDirectorAlone(t *testing.T) {
 	}
 	if status, _ := startActs(t, "").post("director", "/v1/tenants/acme/actions/backup", `{}`); status != http.StatusServiceUnavailable {
 		t.Errorf("a listener with no director configured answered %d", status)
+	}
+}
+
+// A backup of a sleeping tenant is refused with the reason, and no record of
+// one is written: nothing of the tenant is touched.
+func TestABackupOfASleepingTenantIsRefused(t *testing.T) {
+	h := startActs(t, directorName)
+	status, body := h.post("director", "/v1/tenants/dozing/actions/backup", `{"name":"by-hand"}`)
+	if status != http.StatusConflict || !strings.Contains(body, "asleep") || !strings.Contains(body, "wake it first") {
+		t.Fatalf("status %d, body %s", status, body)
+	}
+	if _, err := h.read("tenant-dozing", "by-hand"); err == nil {
+		t.Fatal("a record of the refused backup was written")
+	}
+	if !strings.Contains(h.audit.String(), `"outcome":"failed"`) {
+		t.Fatalf("the refusal is not on record: %s", h.audit.String())
 	}
 }
 

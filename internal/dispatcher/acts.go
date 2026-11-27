@@ -53,6 +53,9 @@ type Identifier interface {
 // ErrNoSuch is something an act names that is not there.
 var ErrNoSuch = errors.New("not found")
 
+// ErrAsleep is an act asked of a tenant that is asleep and runs nothing.
+var ErrAsleep = errors.New("the tenant is asleep")
+
 // ErrExists is something an act would make that is there already.
 var ErrExists = errors.New("already exists")
 
@@ -166,6 +169,8 @@ func (a *Acts) failed(w http.ResponseWriter, r *http.Request, action, tenant, ob
 		actsRefuse(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrExists):
 		actsRefuse(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, ErrAsleep):
+		actsRefuse(w, http.StatusConflict, err.Error())
 	default:
 		actsRefuse(w, http.StatusBadGateway, err.Error())
 	}

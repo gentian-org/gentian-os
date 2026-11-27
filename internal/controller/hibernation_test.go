@@ -12,6 +12,7 @@ package controller
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -525,5 +527,50 @@ func TestASleepingTenantIsNotInTheDispatchersTable(t *testing.T) {
 	}
 	if table := runsTable(t, c); len(table.Tenants) != 1 || len(table.Callers) != 1 {
 		t.Fatalf("a woken tenant is not in the table: %+v", table)
+	}
+}
+
+// An export of a sleeping tenant is skipped, not failed: nothing is captured,
+// it has no bundle, and the record says the tenant is asleep. One that had
+// its bundle before the tenant slept is left to finish.
+func TestAnExportOfASleepingTenantIsSkipped(t *testing.T) {
+	s := quiesceScheme(t)
+	ctx := context.Background()
+	asleep := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: gentianov1alpha1.TenantSpec{Hibernation: &gentianov1alpha1.TenantHibernation{Asleep: true}}}
+	later := metav1.NewTime(time.Now().Add(time.Hour))
+	keptAwake := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "awake"},
+		Spec: gentianov1alpha1.TenantSpec{Hibernation: &gentianov1alpha1.TenantHibernation{Asleep: true, AwakeUntil: &later}}}
+	export := func(ns string) *gentianov1alpha1.TenantExport {
+		return &gentianov1alpha1.TenantExport{ObjectMeta: metav1.ObjectMeta{Name: "nightly", Namespace: ns, Finalizers: []string{exportFinalizer}}}
+	}
+	skipped, taken := export("tenant-demo"), export("tenant-awake")
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(asleep, keptAwake, skipped, taken).
+		WithStatusSubresource(skipped, taken).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s, Reconciler: &TenantReconciler{Client: c, Scheme: s}}
+
+	if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(skipped)}); err != nil {
+		t.Fatal(err)
+	}
+	got := &gentianov1alpha1.TenantExport{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(skipped), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Phase != gentianov1alpha1.TenantExportPhaseSkipped || !got.IsTerminal() || got.Status.Bundle != nil || len(got.Status.Apps) != 0 {
+		t.Fatalf("status = %+v, want skipped with nothing captured", got.Status)
+	}
+	cond := apimeta.FindStatusCondition(got.Status.Conditions, conditionExportComplete)
+	if cond == nil || cond.Reason != reasonTenantAsleep || !strings.Contains(cond.Message, "asleep") {
+		t.Fatalf("the record does not say why: %+v", cond)
+	}
+
+	// A tenant that is kept awake is exported like any other: its export is
+	// not ended here, whatever else it then waits for.
+	_, _ = r.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(taken)})
+	if err := c.Get(ctx, client.ObjectKeyFromObject(taken), got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Phase == gentianov1alpha1.TenantExportPhaseSkipped {
+		t.Fatal("an export of a tenant that is kept awake was skipped")
 	}
 }

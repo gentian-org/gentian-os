@@ -429,6 +429,7 @@ spec:
                       - Running
                       - Ready
                       - Failed
+                      - Skipped
                       type: string
                     quiesceEnd:
                       format: date-time
@@ -715,6 +716,7 @@ spec:
                 - Running
                 - Ready
                 - Failed
+                - Skipped
                 type: string
               quiesced:
                 description: |-

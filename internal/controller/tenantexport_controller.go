@@ -230,6 +230,15 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 				tenantName, ns, export.Namespace))
 	}
 
+	// A sleeping tenant is not exported: it runs nothing an export could
+	// capture from, and nothing of it changed since it fell asleep. An export
+	// that has its bundle already started before the tenant slept and is
+	// finished; the tenant waits for it.
+	if export.Status.Bundle == nil && (tenant.Asleep(time.Now()) || sleeps(tenant)) {
+		return r.end(ctx, export, gentianov1alpha1.TenantExportPhaseSkipped, reasonTenantAsleep,
+			fmt.Sprintf("tenant %q is asleep and is not exported; wake it to take a backup", tenantName))
+	}
+
 	// One export or restore at a time per tenant, or per app for exports
 	// that capture apps alone. Two concurrent captures of one app would pause
 	// it twice and race each other's resume.
@@ -1706,6 +1715,16 @@ func (r *TenantExportReconciler) fail(
 	export *gentianov1alpha1.TenantExport,
 	reason, message string,
 ) (ctrl.Result, error) {
+	return r.end(ctx, export, gentianov1alpha1.TenantExportPhaseFailed, reason, message)
+}
+
+// end finishes an export that did not complete: failed, or skipped.
+func (r *TenantExportReconciler) end(
+	ctx context.Context,
+	export *gentianov1alpha1.TenantExport,
+	phase gentianov1alpha1.TenantExportPhase,
+	reason, message string,
+) (ctrl.Result, error) {
 	// Best effort: a failure to tidy up must not mask the failure being
 	// reported, but it is still attempted on the way out, and again on every
 	// reconcile of the ended export. The Jobs first: a unit still running
@@ -1714,12 +1733,9 @@ func (r *TenantExportReconciler) fail(
 	_ = r.discardPassphrase(ctx, export)
 	_ = r.discardDestinationCredential(ctx, export)
 	_ = r.discardStagedSecrets(ctx, export)
-	export.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
+	export.Status.Phase = phase
 	export.Status.CompletedAt = ptrNow()
-	tenantExportTotal.WithLabelValues(
-		tenantNameFromNamespace(export.Namespace),
-		string(gentianov1alpha1.TenantExportPhaseFailed),
-	).Inc()
+	tenantExportTotal.WithLabelValues(tenantNameFromNamespace(export.Namespace), string(phase)).Inc()
 	setStatusCondition(&export.Status.Conditions, export.Generation, conditionExportComplete, metav1.ConditionFalse, reason, message)
 	return ctrl.Result{}, r.persist(ctx, export)
 }
