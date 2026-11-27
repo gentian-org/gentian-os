@@ -24,6 +24,7 @@
 - [Setting up a cluster with MicroK8s](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/microk8s.md): This guide turns one computer into a Kubernetes cluster that Gentian OS can be installed on, and sets that computer up with the tools the installer runs.
 - [Migrating a cluster to a new node flavor](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/node-pool-migration.md): Moving a running cluster onto different worker nodes — usually to a larger or memory-heavier flavor.
 - [Recovery Playbook](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/recovery.md): What to do when something is gone.
+- [A fixed IP address for the cluster](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/static-ip.md): This guide reserves the one public address a cluster answers on, before Gentian OS is installed on it.
 - [Backing Up and Recovering Your Workspace](https://github.com/gentian-org/gentian-os/blob/develop/docs/guides/tenant-backup.md): A backup captures your whole workspace — your apps' databases, the files they store, and your member accounts — into a single encrypted bundle.
 
 ## Reference
