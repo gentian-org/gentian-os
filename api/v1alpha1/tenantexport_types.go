@@ -331,7 +331,7 @@ func (e *ExportEncryption) PassphraseKey() string {
 }
 
 // TenantExportPhase is the overall lifecycle phase of an export.
-// +kubebuilder:validation:Enum=Pending;Running;Ready;Failed
+// +kubebuilder:validation:Enum=Pending;Running;Ready;Failed;Skipped
 type TenantExportPhase string
 
 const (
@@ -348,6 +348,10 @@ const (
 	// TenantExportPhaseFailed means the export gave up. Any app it paused has
 	// been resumed; the partial bundle is left in place for diagnosis.
 	TenantExportPhaseFailed TenantExportPhase = "Failed"
+	// TenantExportPhaseSkipped means the export was not taken and nothing
+	// went wrong: its tenant is asleep, and a sleeping tenant is not exported.
+	// Nothing was captured and there is no bundle.
+	TenantExportPhaseSkipped TenantExportPhase = "Skipped"
 )
 
 // TenantExportStatus reports progress, and carries the state needed to undo a
@@ -736,10 +740,14 @@ type TenantExportList struct {
 	Items           []TenantExport `json:"items"`
 }
 
-// IsTerminal reports whether the export has finished, either way. Callers use
-// it to decide whether a tenant is free for another export or a restore.
+// IsTerminal reports whether the export has finished, whichever way. Callers
+// use it to decide whether a tenant is free for another export or a restore.
 func (e *TenantExport) IsTerminal() bool {
-	return e.Status.Phase == TenantExportPhaseReady || e.Status.Phase == TenantExportPhaseFailed
+	switch e.Status.Phase {
+	case TenantExportPhaseReady, TenantExportPhaseFailed, TenantExportPhaseSkipped:
+		return true
+	}
+	return false
 }
 
 // CapturesTenantCore reports whether the export captures the tenant's own

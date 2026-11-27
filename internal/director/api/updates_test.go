@@ -332,6 +332,59 @@ func TestThePlatformMovesOneTenantFirstAndStopsOnARollback(t *testing.T) {
 	}
 }
 
+// A sleeping tenant's pins do not move. The report names its outdated app as
+// held because the tenant is asleep; the platform's mover and move-outdated
+// leave it and say so; and a move asked for by hand is refused. Woken, it is
+// moved like any other.
+func TestASleepingTenantsAppsAreNotMoved(t *testing.T) {
+	one := profileNamed("notes", "one")
+	two := strings.ReplaceAll(one, `version: "1.0.0"`, `version: "2.0.0"`)
+	content := served{"gentian": {"notes": one}}
+	src := catalogues(t, content)
+	op := &rolloutsOperator{}
+	h := startCatalogues(t, src, withOperator(op))
+	tom, alice := h.token(t, "tenant-demo", "tom"), h.token(t, "gentian", "alice")
+	install := func(token, bundle string) (int, map[string]any) {
+		return h.do(t, "POST", "/v1/tenants/demo/apps/notes", token,
+			fmt.Sprintf(`{"coordinate":"gentian/notes","digest":%q}`, sha(bundle)))
+	}
+	if code, out := install(tom, one); code != http.StatusAccepted {
+		t.Fatalf("install = %d %v", code, out)
+	}
+	op.set([]map[string]any{{"tenant": "demo", "profile": "notes", "pinned": sha(one), "running": sha(one), "phase": "Done", "ready": true}})
+	content["gentian"]["notes"] = two
+	sleepAction := func(action string) {
+		t.Helper()
+		if code, out := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/tenants/demo/actions/"+action, alice, ""); code != http.StatusAccepted {
+			t.Fatalf("%s = %d %v", action, code, out)
+		}
+	}
+	g := gitops.NewGitOps(dt.Clone(t, h.remote), h.remote, dt.Cluster, gitops.Person{})
+	pinned := func() string { return appNamed(t, g, "demo", "notes").Digest }
+
+	sleepAction("hibernate")
+	_, out := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/updates", alice, "")
+	e := updateEntryOf(t, out, "demo", "notes")
+	if e["outdated"] != true || e["asleep"] != true || !strings.Contains(fmt.Sprint(e["held"]), "the tenant is asleep") {
+		t.Fatalf("entry = %v", e)
+	}
+	if moved := h.server().RunLatestMoves(context.Background()); moved != 0 || pinned() != sha(one) {
+		t.Fatalf("the mover moved %d of a sleeping tenant; pinned %s", moved, pinned())
+	}
+	code, out := h.do(t, "POST", "/v1/clusters/"+dt.Cluster+"/actions/move-outdated", alice, "")
+	if code != http.StatusAccepted || len(out["moved"].([]any)) != 0 || !strings.Contains(fmt.Sprint(out["skipped"]), "asleep") || pinned() != sha(one) {
+		t.Fatalf("move-outdated = %d %v; pinned %s", code, out, pinned())
+	}
+	if code, out := install(alice, two); code != http.StatusConflict || !strings.Contains(fmt.Sprint(out["error"]), "asleep") || pinned() != sha(one) {
+		t.Fatalf("a move by hand = %d %v; pinned %s", code, out, pinned())
+	}
+
+	sleepAction("wake")
+	if moved := h.server().RunLatestMoves(context.Background()); moved != 1 || pinned() != sha(two) {
+		t.Fatalf("woken: the mover moved %d; pinned %s", moved, pinned())
+	}
+}
+
 // A pinned add-on is reported beside its app and moves under its app's mode:
 // the platform moves it in latest mode and not in manual, and move-outdated
 // moves it in any, each moving that add-on's pin and leaving the app and its
