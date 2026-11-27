@@ -25,7 +25,7 @@ The steps, in the order you do them:
 
 | | Step | You are done when |
 |---|---|---|
-| — | [What you need](#what-you-need-before-you-start), and [on a machine that installed before](#on-a-machine-that-installed-before) | pre-flight passes |
+| — | [What you need](#what-you-need-before-you-start) | pre-flight passes |
 | 1–3 | Clone the deployments repository, write `install.env`, have the credentials ready | the two stage files are pushed and you hold the token and the master password |
 | 4 | `./install.sh` | it prints `Almost There: 1 step left` |
 | 5 | Handover: keep the kit, sign in | it prints `Install Complete` |
@@ -84,147 +84,44 @@ until it is done.
 
 ## What you need before you start
 
-- **A Kubernetes cluster you are an admin on, version 1.33 or newer, with
-  room for about 100 pods before any app.** What it needs (cluster DNS, RBAC,
-  a default StorageClass, Secrets encrypted at rest), how big it has to be,
-  and how the platform learns where it runs and who hosts its DNS:
-  [cluster-requirements.md](docs/guides/cluster-requirements.md).
-- **These tools on your `PATH`:** `kubectl helm jq yq openssl curl git gpg
-  crossplane python3 age age-keygen`. Pre-flight checks and names any that are
-  missing, and refuses to start without them. `bao` (the OpenBao CLI) is the
-  one tool the installer fetches itself when it is missing: to `~/.local/bin`,
-  for Linux and macOS on x86_64 and arm64, and only after the archive matches
-  the release's own checksum list. On any other machine install `bao` first.
+- **A Kubernetes cluster** you are an admin on, version 1.33 or newer.
+- **A domain**, with its DNS at Cloudflare.
+- **A way for traffic to reach the cluster**, one of:
+  - a **tunnel**: a Cloudflare Tunnel, which needs no public address and no
+    open port, or
+  - a **fixed IP address** that the domain points at.
+- **A deployments repository on GitHub, and a token that can write to it.**
+  The cluster's definition lives in this repository as files. The installer
+  commits the first version there, and the cluster commits every later change
+  (a new tenant, an installed app) there too.
 
-  - `git` and `gpg` are needed before the cluster is touched: step 0 commits
-    this cluster's definition to `gentian-deployments`, and every commit to
-    that repository is signed — Argo CD refuses unsigned ones. The keys are
-    generated for you, in `~/.gentian/gnupg`, never in your own keyring.
-  - [`age`](https://age-encryption.org) ships both binaries — `sudo apt install
-    age`, `brew install age`, `apk add age`. It encrypts the recovery kit, and it
-    **generates this cluster's backup key** — the age key pair every scheduled
-    export encrypts to. Nothing else can make one; without it the install would
-    finish and every nightly backup would fail with `no age recipients
-    configured`, for as long as nobody looked.
-- **Optional:** [`qrencode`](https://fukuchi.org/works/qrencode/) — `sudo apt
-  install qrencode`, `brew install qrencode`, `apk add qrencode`. The recovery
-  kit prints the backup key as text either way; with `qrencode` it also prints
-  it as a QR code, which is what you keep on paper. Pre-flight warns if it is
-  missing, since the kit is written near the end of a long install.
-- **A domain**, for example `platform.example.com`. It does not have to be
-  publicly resolvable. On a public one, these names have to reach the
-  cluster, and their certificates are issued over DNS (step 3):
+Starting from nothing? These guides get you there one step at a time, written
+for someone who knows basic IT but not Kubernetes:
 
-  | Name | What answers there |
-  |---|---|
-  | `<domain>`, `www.<domain>` | the page that sends each person to their tenant |
-  | `platform.<domain>` | the platform admin's desktop |
-  | `admin.platform.<domain>` | the platform admin's console |
-  | `id.<domain>` | the identity provider, for every tenant |
-  | `*.<tenant>.<domain>` | multi-tenancy, one tenant: `desktop.`, `admin.`, `store.` and each app |
-  | `desktop.<domain>`, `admin.<domain>`, `store.<domain>`, `<app>.<domain>` | single-tenancy: the one tenant for users, which has no label of its own (step 7) |
+1. [Set up a cluster with MicroK8s](docs/guides/microk8s.md), on an Ubuntu
+   machine or a Mac mini, with the tools the installer runs.
+2. [Get a domain and a tunnel from Cloudflare](docs/guides/cloudflare.md),
+   connect the tunnel to the cluster, and create the API token.
+3. [Create the deployments repository on GitHub](docs/guides/github-deployments.md)
+   and its token.
 
-  With a DNS provider named in step 4 (Cloudflare by default) and its token
-  supplied, the cluster publishes these records itself and the install waits
-  for them. Without one you maintain them: `<domain>`, `*.<domain>`,
-  `*.platform.<domain>` and, on a multi-tenancy cluster, one
-  `*.<tenant>.<domain>` per tenant, pointing at the cluster.
-- **A way for traffic to reach the cluster**, which is the `networkMode`
-  question of step 4. The installer sets up neither:
+Installed on this machine, or into this deployments repository, before? Read
+[Installing again on a machine that installed before](#installing-again-on-a-machine-that-installed-before)
+first.
 
-  - `tunnel` (the default) is a Cloudflare Tunnel. Create the tunnel in your
-    Cloudflare account and run `cloudflared` for it **in the cluster** before
-    the install: the platform does neither, and the tunnel's routes point at a
-    Service name only a pod in the cluster can resolve. The installer needs
-    the tunnel's id and has one source for it, the Secret `cloudflared` runs
-    with, in the namespace `default`:
+### Checklist
 
-    ```bash
-    kubectl create secret generic cf-tunnel -n default \
-        --from-literal=token=<the tunnel's token>
-    # or, for a tunnel run from a credentials file:
-    kubectl create secret generic tunnel-credentials -n default \
-        --from-file=<tunnel-id>.json=<the tunnel's credentials file>
-    ```
+For readers who have done this before. Pre-flight checks the cluster and the
+tools, and names anything missing.
 
-    The pre-flight stops the install when it finds neither, with these two
-    commands. Step `B-08` stores `<tunnel-id>.cfargotunnel.com` with the
-    Cloudflare DNS credential, so a tunnel cluster needs Cloudflare as its DNS
-    provider (`acme-dns01`, `cloudflare`). The operator then writes the
-    tunnel's routes itself and publishes every hostname as a record pointing at
-    the tunnel, through external-dns, which is installed on a tunnel cluster
-    too.
-    A tunnel carries HTTP and HTTPS only, so mail goes out through a relay
-    or a mail server outside the cluster.
-  - `static-ip` needs a fixed address that DNS points at and something that
-    answers a `LoadBalancer` Service with it: MetalLB on your own machines
-    (on MicroK8s the add-on `metallb`, given that address), or the cloud's
-    load balancer. The platform's own mail needs this mode, and a few
-    things at your provider before you install: an address to send from, its
-    reverse DNS, outbound port 25. [mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)
-    has the list. Skip it if the cluster relays its mail.
-- **A token with write access to `gentian-deployments`.** The installer pushes
-  this cluster's definition with it, and the director on the cluster pushes
-  every later change — tenants, app installs — with it too. The installer asks
-  for it.
-
-### On a machine that installed before
-
-The installer renders the cluster from the files on this machine and reads
-back whatever an earlier install left. Five things carry over, and each of
-them quietly gives you the earlier cluster instead of the one you mean:
-
-1. **This checkout.** Bring it to the commit you want to install, and
-   reinstall the CLI from it:
-
-   ```bash
-   git pull --ff-only && git log --oneline -1
-   make install-plugin
-   ```
-2. **A pinned image in `install.env`.** A line `GENTIAN_OS_IMAGE_TAG=…` left
-   from an earlier run is used as it stands: the cluster runs that older
-   build under the current manifests. The installer warns only when the value is
-   a tag that moves (`develop`), not when it is an old build. Delete the line
-   (step 2).
-3. **A list of default profiles in `install.env`.** A line
-   `GENTIAN_DEFAULT_PROFILES=…` (or `GENTIAN_STORE_CATALOGUE_URL=…`) is used
-   in place of the default too, an empty value included. An entry that is a
-   local file — the form earlier installs used — is now refused and **stops
-   step 0**, and so does one whose catalog lists no digest for it; one whose
-   catalog cannot be reached is a warning, and the cluster then comes
-   without the profile. Delete the line; unset, step 0 places the Operations
-   Console from the catalog `GENTIAN_STORE_CATALOGUE_URL` names, only if the file hashes to the
-   digest that catalog's index lists
-   ([reference/install.md §4](docs/reference/install.md)).
-4. **The cluster's definition in the deployments repository.** If
-   `clusters/<cluster-id>/` exists there, step 0 asks nothing and rewrites
-   nothing: the domain, the tenancy mode, the catalog and the store are the
-   ones in `kernel/claims/cluster.yaml`, and every tenant directory under
-   `tenants/` comes back with the cluster. Read the claim before you start.
-   To change a setting, edit it in your deployments checkout and let
-   `./install.sh` commit it (never commit there yourself once the signing
-   keys exist). In particular, a claim written by an earlier installer may
-   name a store and a catalog that never served anything; the installer
-   warns about both, and the App Store stays empty until they read as a new
-   claim's do:
-
-   ```yaml
-   catalogue:
-     storeUrl: https://<store address>   # GENTIAN_STORE_URL
-     sources:
-       - name: gentian
-         url: https://gentian-org.github.io/gentian-apps/develop   # without /develop when installing a release
-   ```
-5. **The signing keys and the wildcard certificate** in `~/.gentian`. Keep
-   them: the keys are the ones the repository's history is signed with, and
-   the certificate saves one of the five a week Let's Encrypt issues for a
-   set of names. The installer looks the break-glass key up by the id the
-   repository records for this cluster (`signing/keys.env`). On a machine
-   whose keyring does not hold that key it **refuses to install**, before
-   writing anything: run `./install.sh --recover <kit>` there first, or
-   install from the machine that has the key. Only when the key is lost for
-   good, `./install.sh --rotate-break-glass-key` records a new one
-   ([reference/install.md §9](docs/reference/install.md)).
+| | What | Details |
+|---|---|---|
+| Cluster | Kubernetes 1.33 to 1.36, you are an admin; cluster DNS, RBAC and a default StorageClass; Secrets encrypted at rest; room for about 100 pods before any app (on MicroK8s `--max-pods=220`) | [cluster-requirements.md](docs/guides/cluster-requirements.md) |
+| Tools | `kubectl helm jq yq openssl curl git gpg crossplane python3 age age-keygen` on your `PATH`; `qrencode` optional | [The tools the installer runs](#the-tools-the-installer-runs) |
+| Domain | Its DNS at a provider the cluster can write to: Cloudflare (the default) or one that takes `rfc2136` updates | [The names that reach the cluster](#the-names-that-reach-the-cluster) |
+| Tunnel | A Cloudflare Tunnel with `cloudflared` running in the cluster, its token in the Secret `cf-tunnel` (key `token`) or `tunnel-credentials` in the namespace `default`; Cloudflare as the DNS provider, with Total TLS on the zone; one API token with Zone → Zone → Read, Zone → DNS → Edit and Account → Cloudflare One Connector: cloudflared → Edit | [cloudflare.md](docs/guides/cloudflare.md), [The two ways in](#the-two-ways-in) |
+| Fixed IP | An address the domain points at, and something that answers a `LoadBalancer` Service with it (MetalLB, or the cloud's load balancer); the platform's own mail needs this mode | [The two ways in](#the-two-ways-in) |
+| Deployments repository | A repository (an empty one is enough) and a user name with a token that can write to it; on GitHub a fine-grained token with Contents: Read and write | [github-deployments.md](docs/guides/github-deployments.md) |
 
 ---
 
@@ -271,7 +168,7 @@ Edit it. These are the values that matter for a first install:
 
 Leave `GENTIAN_OS_IMAGE_TAG` and `GENTIAN_DEFAULT_PROFILES` unset, and remove
 either line if an earlier install left it
-([above](#on-a-machine-that-installed-before)). The installer then runs the
+([Installing again](#installing-again-on-a-machine-that-installed-before)). The installer then runs the
 build of exactly the commit you are installing from, and pre-flight says so
 if that build has not been published yet.
 
@@ -1029,6 +926,66 @@ differs is listed here, in the order you meet it.
 
 ---
 
+## Installing again on a machine that installed before
+
+The installer renders the cluster from the files on this machine and reads
+back whatever an earlier install left. Five things carry over, and each of
+them quietly gives you the earlier cluster instead of the one you mean:
+
+1. **This checkout.** Bring it to the commit you want to install, and
+   reinstall the CLI from it:
+
+   ```bash
+   git pull --ff-only && git log --oneline -1
+   make install-plugin
+   ```
+2. **A pinned image in `install.env`.** A line `GENTIAN_OS_IMAGE_TAG=…` left
+   from an earlier run is used as it stands: the cluster runs that older
+   build under the current manifests. The installer warns only when the value is
+   a tag that moves (`develop`), not when it is an old build. Delete the line
+   (step 2).
+3. **A list of default profiles in `install.env`.** A line
+   `GENTIAN_DEFAULT_PROFILES=…` (or `GENTIAN_STORE_CATALOGUE_URL=…`) is used
+   in place of the default too, an empty value included. An entry that is a
+   local file — the form earlier installs used — is now refused and **stops
+   step 0**, and so does one whose catalog lists no digest for it; one whose
+   catalog cannot be reached is a warning, and the cluster then comes
+   without the profile. Delete the line; unset, step 0 places the Operations
+   Console from the catalog `GENTIAN_STORE_CATALOGUE_URL` names, only if the file hashes to the
+   digest that catalog's index lists
+   ([reference/install.md §4](docs/reference/install.md)).
+4. **The cluster's definition in the deployments repository.** If
+   `clusters/<cluster-id>/` exists there, step 0 asks nothing and rewrites
+   nothing: the domain, the tenancy mode, the catalog and the store are the
+   ones in `kernel/claims/cluster.yaml`, and every tenant directory under
+   `tenants/` comes back with the cluster. Read the claim before you start.
+   To change a setting, edit it in your deployments checkout and let
+   `./install.sh` commit it (never commit there yourself once the signing
+   keys exist). In particular, a claim written by an earlier installer may
+   name a store and a catalog that never served anything; the installer
+   warns about both, and the App Store stays empty until they read as a new
+   claim's do:
+
+   ```yaml
+   catalogue:
+     storeUrl: https://<store address>   # GENTIAN_STORE_URL
+     sources:
+       - name: gentian
+         url: https://gentian-org.github.io/gentian-apps/develop   # without /develop when installing a release
+   ```
+5. **The signing keys and the wildcard certificate** in `~/.gentian`. Keep
+   them: the keys are the ones the repository's history is signed with, and
+   the certificate saves one of the five a week Let's Encrypt issues for a
+   set of names. The installer looks the break-glass key up by the id the
+   repository records for this cluster (`signing/keys.env`). On a machine
+   whose keyring does not hold that key it **refuses to install**, before
+   writing anything: run `./install.sh --recover <kit>` there first, or
+   install from the machine that has the key. Only when the key is lost for
+   good, `./install.sh --rotate-break-glass-key` records a new one
+   ([reference/install.md §9](docs/reference/install.md)).
+
+---
+
 ## Advanced install options
 
 None of this is needed for a normal install. Skip it unless one of the headings
@@ -1329,3 +1286,86 @@ key, or unsigned, sits at the head of the branch and stops every sync.
 
 On another machine, `./install.sh --recover <kit>` imports that key into
 `~/.gentian/gnupg` first.
+
+### The tools the installer runs
+
+**These tools on your `PATH`:** `kubectl helm jq yq openssl curl git gpg
+crossplane python3 age age-keygen`. Pre-flight checks and names any that are
+missing, and refuses to start without them. `bao` (the OpenBao CLI) is the
+one tool the installer fetches itself when it is missing: to `~/.local/bin`,
+for Linux and macOS on x86_64 and arm64, and only after the archive matches
+the release's own checksum list. On any other machine install `bao` first.
+
+- `git` and `gpg` are needed before the cluster is touched: step 0 commits
+  this cluster's definition to `gentian-deployments`, and every commit to
+  that repository is signed — Argo CD refuses unsigned ones. The keys are
+  generated for you, in `~/.gentian/gnupg`, never in your own keyring.
+- [`age`](https://age-encryption.org) ships both binaries — `sudo apt install
+  age`, `brew install age`, `apk add age`. It encrypts the recovery kit, and it
+  **generates this cluster's backup key** — the age key pair every scheduled
+  export encrypts to. Nothing else can make one; without it the install would
+  finish and every nightly backup would fail with `no age recipients
+  configured`, for as long as nobody looked.
+**Optional:** [`qrencode`](https://fukuchi.org/works/qrencode/) — `sudo apt
+install qrencode`, `brew install qrencode`, `apk add qrencode`. The recovery
+kit prints the backup key as text either way; with `qrencode` it also prints
+it as a QR code, which is what you keep on paper. Pre-flight warns if it is
+missing, since the kit is written near the end of a long install.
+
+### The names that reach the cluster
+
+**A domain**, for example `platform.example.com`. It does not have to be
+publicly resolvable. On a public one, these names have to reach the
+cluster, and their certificates are issued over DNS (step 3):
+
+| Name | What answers there |
+|---|---|
+| `<domain>`, `www.<domain>` | the page that sends each person to their tenant |
+| `platform.<domain>` | the platform admin's desktop |
+| `admin.platform.<domain>` | the platform admin's console |
+| `id.<domain>` | the identity provider, for every tenant |
+| `*.<tenant>.<domain>` | multi-tenancy, one tenant: `desktop.`, `admin.`, `store.` and each app |
+| `desktop.<domain>`, `admin.<domain>`, `store.<domain>`, `<app>.<domain>` | single-tenancy: the one tenant for users, which has no label of its own (step 7) |
+
+With a DNS provider named in step 4 (Cloudflare by default) and its token
+supplied, the cluster publishes these records itself and the install waits
+for them. Without one you maintain them: `<domain>`, `*.<domain>`,
+`*.platform.<domain>` and, on a multi-tenancy cluster, one
+`*.<tenant>.<domain>` per tenant, pointing at the cluster.
+
+### The two ways in
+
+**A way for traffic to reach the cluster**, which is the `networkMode`
+question of step 4. The installer sets up neither:
+
+- `tunnel` (the default) is a Cloudflare Tunnel. Create the tunnel in your
+  Cloudflare account and run `cloudflared` for it **in the cluster** before
+  the install: the platform does neither, and the tunnel's routes point at a
+  Service name only a pod in the cluster can resolve. The installer needs
+  the tunnel's id and has one source for it, the Secret `cloudflared` runs
+  with, in the namespace `default`:
+
+  ```bash
+  kubectl create secret generic cf-tunnel -n default \
+      --from-literal=token=<the tunnel's token>
+  # or, for a tunnel run from a credentials file:
+  kubectl create secret generic tunnel-credentials -n default \
+      --from-file=<tunnel-id>.json=<the tunnel's credentials file>
+  ```
+
+  The pre-flight stops the install when it finds neither, with these two
+  commands. Step `B-08` stores `<tunnel-id>.cfargotunnel.com` with the
+  Cloudflare DNS credential, so a tunnel cluster needs Cloudflare as its DNS
+  provider (`acme-dns01`, `cloudflare`). The operator then writes the
+  tunnel's routes itself and publishes every hostname as a record pointing at
+  the tunnel, through external-dns, which is installed on a tunnel cluster
+  too.
+  A tunnel carries HTTP and HTTPS only, so mail goes out through a relay
+  or a mail server outside the cluster.
+- `static-ip` needs a fixed address that DNS points at and something that
+  answers a `LoadBalancer` Service with it: MetalLB on your own machines
+  (on MicroK8s the add-on `metallb`, given that address), or the cloud's
+  load balancer. The platform's own mail needs this mode, and a few
+  things at your provider before you install: an address to send from, its
+  reverse DNS, outbound port 25. [mail.md §9c](docs/concepts/mail.md#9c-installing-a-cluster-with-its-own-mail-what-is-yours-to-do)
+  has the list. Skip it if the cluster relays its mail.
