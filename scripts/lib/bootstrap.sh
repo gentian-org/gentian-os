@@ -2592,17 +2592,46 @@ _deployments_checkout_report() {
 # scaffold_cluster_deployment to report: a directory that holds files is not
 # a checkout and may be someone's, and with no repository named there is
 # nothing to clone. `check` only says what an install would clone.
+#
+# A branch origin does not have yet is started from the repository's default
+# branch, here in the checkout: step 0 pushes its signed commit to
+# HEAD:<branch>, and that push creates it on origin. Only a definite "no such
+# branch" from origin starts one. Where origin cannot be asked, the clone asks
+# for the branch as before and git says what went wrong.
 _deployments_checkout_clone() {
     local mode="$1" path="$2" repo="${GENTIAN_DEPLOYMENTS_REPO:-}" branch="${GENTIAN_DEPLOYMENTS_BRANCH:-}"
     [[ -n "${repo}" ]] || return 0
     if [[ -e "${path}" ]]; then
         [[ -d "${path}" && -z "$(ls -A "${path}" 2>/dev/null)" ]] || return 0
     fi
-    local shown
+    local shown start="" rc=0
     shown="$(_gentian_url_redact "${repo}")"
+    if [[ -n "${branch}" ]]; then
+        # --exit-code: 2 is "asked, and no such branch"; anything else but 0
+        # is a question that was not answered.
+        git ls-remote --exit-code --heads "${repo}" "refs/heads/${branch}" >/dev/null 2>&1 || rc=$?
+        (( rc == 2 )) && start="${branch}"
+    fi
     if [[ "${mode}" == "check" ]]; then
-        gentian_would "clone ${shown}${branch:+ (branch ${branch})} into ${path}"
+        if [[ -n "${start}" ]]; then
+            gentian_would "clone ${shown} into ${path} and start branch ${start} from its default branch"
+        else
+            gentian_would "clone ${shown}${branch:+ (branch ${branch})} into ${path}"
+        fi
         return 0
+    fi
+    if [[ -n "${start}" ]]; then
+        info "No deployments checkout at ${path}; cloning ${shown}."
+        info "  It has no branch ${start} yet: it is started from the default branch, and step 0's push creates it."
+        if mkdir -p "$(dirname "${path}")" &&
+           git clone -q "${repo}" "${path}" &&
+           git -C "${path}" switch -q -c "${start}"; then
+            return 0
+        fi
+        error "Could not clone the deployments repository into ${path} and start branch ${start}."
+        error "  Do it by hand and run again:"
+        error "    git clone ${shown} ${path} && git -C ${path} switch -c ${start}"
+        return 1
     fi
     info "No deployments checkout at ${path}; cloning ${shown}${branch:+ (branch ${branch})}."
     if ! mkdir -p "$(dirname "${path}")" ||

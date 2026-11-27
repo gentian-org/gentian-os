@@ -44,7 +44,7 @@ advance() {
 # startup files are not ours to hold to it.
 sync() {
     # shellcheck disable=SC2016 # the inner script is for the child shell to expand
-    env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" GENTIAN_DEPLOYMENTS_BRANCH=main \
+    env -i HOME="${SANDBOX}/home" PATH="${PATH}" SCRIPT_DIR="${REPO}" GENTIAN_DEPLOYMENTS_BRANCH="${TEST_BRANCH:-main}" \
         ${GENTIAN_DEPLOYMENTS_REPO:+GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO}"} \
         ${GENTIAN_DEPLOYMENTS_PATH:+GENTIAN_DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH}"} \
         bash -c 'set -u; source scripts/lib/load.sh >/dev/null 2>&1; rc=0; gentian_sync_deployments_checkout '"${1:-}"' || rc=$?; echo "rc=${rc}"' 2>&1
@@ -111,6 +111,31 @@ expect "a directory that holds files: left alone" "$(sync)" 0 ""
 rm -rf "${CHECKOUT}"
 GENTIAN_DEPLOYMENTS_REPO="${SANDBOX}/nowhere.git"
 expect "a clone that fails: stops and says how to clone by hand" "$(sync)" 1 "git clone --branch main ${SANDBOX}/nowhere.git"
-unset GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_PATH
+
+# A branch origin does not have yet: cloned from the default branch, and the
+# branch started in the checkout for step 0's push to create.
+rm -rf "${CHECKOUT}"
+GENTIAN_DEPLOYMENTS_REPO="${SANDBOX}/origin.git"
+export TEST_BRANCH=cloud
+expect "--validate / --dry-run, a branch origin lacks: says it would start it" "$(sync check)" 0 "start branch cloud"
+[[ ! -e "${CHECKOUT}" ]] || { echo "  a check made the checkout"; fail=$((fail + 1)); }
+expect "a branch origin lacks: clones and starts it" "$(sync)" 0 "step 0's push creates it"
+[[ "$(git -C "${CHECKOUT}" branch --show-current 2>/dev/null)" == "cloud" ]] || { echo "  the checkout is not on cloud"; fail=$((fail + 1)); }
+[[ "$(git -C "${CHECKOUT}" log -1 --format=%s 2>/dev/null)" == "four" ]] || { echo "  cloud did not start at origin/main"; fail=$((fail + 1)); }
+git --git-dir="${SANDBOX}/origin.git" rev-parse -q --verify refs/heads/cloud >/dev/null &&
+    { echo "  the branch reached origin before step 0 pushed it"; fail=$((fail + 1)); }
+
+# An empty repository, which GETTING-STARTED says is enough: no branch at all.
+rm -rf "${CHECKOUT}"
+g init --bare -b main "${SANDBOX}/empty.git"
+GENTIAN_DEPLOYMENTS_REPO="${SANDBOX}/empty.git" TEST_BRANCH=main
+expect "an empty repository: clones it and starts the branch" "$(sync)" 0 "step 0's push creates it"
+[[ "$(git -C "${CHECKOUT}" branch --show-current 2>/dev/null)" == "main" ]] || { echo "  the empty clone is not on main"; fail=$((fail + 1)); }
+
+# Origin cannot be asked: no branch is started on a guess, git says why.
+rm -rf "${CHECKOUT}"
+GENTIAN_DEPLOYMENTS_REPO="${SANDBOX}/nowhere.git" TEST_BRANCH=cloud
+expect "origin cannot be asked: no branch started, the clone fails" "$(sync)" 1 "git clone --branch cloud ${SANDBOX}/nowhere.git"
+unset GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_PATH TEST_BRANCH
 
 finish
