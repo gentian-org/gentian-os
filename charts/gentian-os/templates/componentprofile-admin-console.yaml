@@ -24,7 +24,7 @@ spec:
   # Platform trust, because it relays the forwarded token to the director,
   # which forwardToken below requires.
   trustTier: platform
-  version: {{ .Values.adminConsole.chart.version | quote }}
+  version: {{ include "gentian-os.componentChartVersion" (list . "adminConsole") | quote }}
   # Every tenant gets one, by the same rule that gives every tenant its
   # desktop. The tile below decides who sees it.
   placement:
@@ -33,7 +33,7 @@ spec:
     chart:
       repository: {{ .Values.adminConsole.chart.repository | quote }}
       name: {{ .Values.adminConsole.chart.name | quote }}
-      version: {{ .Values.adminConsole.chart.version | quote }}
+      version: {{ include "gentian-os.componentChartVersion" (list . "adminConsole") | quote }}
     valueMapping:
       # Where the console's chart takes the facts of the cluster it runs in.
       # Every key matches the chart's values.yaml as the app template ships

@@ -518,11 +518,9 @@ jobs:
 
   # The charts of the components the platform places in every tenant from its
   # own image (charts/${{ matrix.chart }}, charts/porter), published with that image:
-  # once the image has its tags, a moving chart per branch and an immutable
-  # one per commit, each naming this build's image. A placed component has no
-  # image updater, so each chart itself names the image; and a Helm release
-  # under an unchanged version is never upgraded, so the moving chart's
-  # appVersion names the immutable one a cluster installs.
+  # once the image has its tags, one chart under the version of the build
+  # (scripts/tools/chart-version.sh), naming this build's image. A placed
+  # component has no image updater, so the chart itself names the image.
   placed-charts:
     name: Chart — ${{ matrix.chart }}
     runs-on: ubuntu-latest
@@ -537,26 +535,19 @@ jobs:
         chart: [homesync, porter, liaison]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        # The version counts the commits and reads the release tags.
+        with:
+          fetch-depth: 0
       - name: Versions
         id: v
         run: |
-          base="$(sed -n 's/^version: *//p' charts/${{ matrix.chart }}/Chart.yaml)"
-          short="${GITHUB_SHA::7}"
-          # A prerelease part of digits alone is a number in semver, and
-          # "0710412" is refused for its leading zero: such a commit is named
-          # by as many more characters as it takes to reach a letter.
-          vshort="${short}"; n=7
-          while [[ "${vshort}" =~ ^[0-9]+$ && "${n}" -lt 40 ]]; do n=$((n + 1)); vshort="${GITHUB_SHA::n}"; done
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            ref="${GITHUB_REF_NAME}"
             image="${GITHUB_REF_NAME#v}"
           else
-            ref="${GITHUB_REF_NAME//\//-}"
-            image="${ref}-${short}"
+            image="${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}"
           fi
           {
-            echo "moving=${base}-${ref}"
-            echo "immutable=${base}-${ref}.${vshort}"
+            echo "version=$(scripts/tools/chart-version.sh)"
             echo "image=${image}"
           } >> "$GITHUB_OUTPUT"
       - name: Name this build's image
@@ -567,13 +558,11 @@ jobs:
         run: |
           chart="charts/${{ matrix.chart }}"
           helm lint "${chart}"
-          helm package "${chart}" --version "${{ steps.v.outputs.immutable }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-immutable
-          helm package "${chart}" --version "${{ steps.v.outputs.moving }}" --app-version "${{ steps.v.outputs.immutable }}" -d /tmp/chart-moving
+          helm package "${chart}" --version "${{ steps.v.outputs.version }}" --app-version "${{ steps.v.outputs.version }}" -d /tmp/chart
       - name: Push
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-          helm push /tmp/chart-immutable/*.tgz oci://ghcr.io/gentian-org/charts
-          helm push /tmp/chart-moving/*.tgz oci://ghcr.io/gentian-org/charts
+          helm push /tmp/chart/*.tgz oci://ghcr.io/gentian-org/charts
 
   # The images beside the operator's. Each pushes and signs from its build
   # step, so it runs only once every check passed: a failed check publishes

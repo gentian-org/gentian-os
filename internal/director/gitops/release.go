@@ -70,6 +70,8 @@ func CheckRelease(r ReleaseSpec) error {
 		return fmt.Errorf("%w: a cluster runs a version or follows a track, not both", ErrInvalidRelease)
 	case r.Version != "" && !releaseVersion.MatchString(r.Version):
 		return fmt.Errorf("%w: %q is not a release tag of the form vMAJOR.MINOR.PATCH", ErrInvalidRelease, r.Version)
+	case r.Track == "main":
+		return fmt.Errorf("%w: main holds releases only and is not a branch a cluster follows; name the version to run", ErrInvalidRelease)
 	case r.Track != "" && !releaseTrack.MatchString(r.Track):
 		return fmt.Errorf("%w: %q is not a branch name", ErrInvalidRelease, r.Track)
 	case r.Track != "" && r.AutoUpgrade != "":

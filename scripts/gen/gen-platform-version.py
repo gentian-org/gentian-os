@@ -47,7 +47,6 @@ OUT = ROOT / "internal" / "platformversion" / "line.go"
 COMPOSITION = ROOT / "crossplane" / "compositions" / "cluster-default.yaml"
 RENDER_FIXTURES = ROOT / "crossplane" / "tests" / "unit" / "render"
 INDEX = ROOT / "docs" / "releases" / "index.yaml"
-BOOTSTRAP_OPERATOR = ROOT / "kernel" / "bootstrap" / "chart" / "templates" / "gentian-os.yaml"
 UI_COMPONENTS = ("desktop", "adminConsole", "concierge")
 REPO_URL = "https://github.com/gentian-org/gentian-os"
 RELEASED_CATALOGUE = "https://gentian-org.github.io/gentian-apps"
@@ -117,23 +116,6 @@ def write_chart_ref(version: str) -> int:
     return 0
 
 
-def ui_chart_bases() -> dict[str, str]:
-    """The gentian-ui chart bases the bootstrap chart names, per component.
-
-    The chart pins each UI as `<base>-<branch or tag>`; the base is the
-    literal in its template (printf "0.1.0-%s"), read here so the index and
-    the chart cannot disagree.
-    """
-    text = BOOTSTRAP_OPERATOR.read_text(encoding="utf-8")
-    bases = {}
-    for component in UI_COMPONENTS:
-        m = re.search(r'printf "(\d+\.\d+\.\d+)-%s" \(\.Values\.' + component + r"\.chartBranch", text)
-        if not m:
-            raise SystemExit(f"{BOOTSTRAP_OPERATOR}: no chart base for {component}")
-        bases[component] = m.group(1)
-    return bases
-
-
 def write_index_entry(tag: str, line: str, patch: int) -> int:
     """Add the release's entry to the index unless it is there already."""
     text = INDEX.read_text(encoding="utf-8")
@@ -151,8 +133,9 @@ def write_index_entry(tag: str, line: str, patch: int) -> int:
         f"    upgradesFrom: {upgrades_from}",
         "    ui:",
     ]
-    for component, base in ui_chart_bases().items():
-        entry.append(f"      {component}: {base}-{tag}")
+    # Every chart of a release is published under the release's number.
+    for component in UI_COMPONENTS:
+        entry.append(f"      {component}: {tag.removeprefix('v')}")
     entry.append(f"    catalogue: {RELEASED_CATALOGUE}")
     INDEX.write_text(text + "\n".join(entry) + "\n", encoding="utf-8")
     print(f"release {tag} added to the release index -> {INDEX.relative_to(ROOT)}")

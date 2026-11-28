@@ -13,8 +13,8 @@
 #   - certificates.issuerMode is read back from the claim file, so a re-run
 #     of a self-signed cluster is not asked for a DNS credential;
 #   - GENTIAN_OS_BRANCH unset is the branch of the checkout, wherever it is
-#     read, and nothing when there is no branch; GENTIAN_UI_BRANCH unset is
-#     main and PORTAL_IMAGE_TAG unset is develop;
+#     read, and nothing when there is no branch; main is read as the newest
+#     release the checkout's index lists; GENTIAN_UI_BRANCH unset is main;
 #   - GENTIAN_DEPLOYMENTS_REPO has no default: an unattended run without it
 #     stops, and writes nothing first.
 #
@@ -163,13 +163,40 @@ out="$(run GENTIAN_DEPLOYMENTS_PATH="${DEP}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 K
 has "step 0 does not write a Repository claim naming a ref nobody chose" "${out}" "the gentian-os Repository claim cannot name the ref" "rc=0"
 if [[ ! -e "${DEP}/clusters" ]]; then ok "and has written nothing"; else bad "and has written nothing" "$(find "${DEP}/clusters")"; fi
 
+# main holds releases only: it is read as the newest release the checkout's
+# index lists, so nobody looks a version number up to install one.
+is "main without a release index stays main" "$(run GENTIAN_OS_BRANCH=main -- "$(at)gentian_os_ref")" "main"
+mkdir -p "${OS}/docs/releases"
+g -C "${OS}" tag v9.10.1; g -C "${OS}" push origin v9.10.1
+printf 'releases:\n  - version: v9.8.0\n    line: "9.8"\n  - version: v9.10.1\n    line: "9.10"\n  - version: v9.9.9\n    line: "9.9"\n' > "${OS}/docs/releases/index.yaml"
+is "main is the newest release the index lists" "$(run GENTIAN_OS_BRANCH=main -- "$(at)gentian_os_ref")" "v9.10.1"
+is "and renders as that release: revision and image" \
+    "$(run GENTIAN_OS_REPO="${OSREMOTE}" GENTIAN_OS_BRANCH=main -- "$(at)"'resolve_gentian_os_image_tag >/dev/null 2>&1; echo "$(gentian_os_revision) ${GENTIAN_OS_IMAGE_TAG}"')" "v9.10.1 9.10.1"
+is "a branch is not touched" "$(run GENTIAN_OS_BRANCH=develop -- "$(at)gentian_os_ref")" "develop"
+# A claim that names a version, beside an install.env that still says main.
+REL="${SANDBOX}/rel"; mkdir -p "${REL}/clusters/c1/kernel/claims"
+printf 'spec:\n  release:\n    version: v9.9.9\n' > "${REL}/clusters/c1/kernel/claims/cluster.yaml"
+is "install.env may go on saying main beside a claim that names a version" \
+    "$(run GENTIAN_OS_REPO="${OSREMOTE}" GENTIAN_OS_BRANCH=main GENTIAN_DEPLOYMENTS_PATH="${REL}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 -- "$(at)"'resolve_gentian_os_branch >/dev/null 2>&1; echo "rc=$? ${GENTIAN_OS_BRANCH}"')" "rc=0 v9.9.9"
+out="$(run GENTIAN_OS_REPO="${OSREMOTE}" GENTIAN_OS_BRANCH=develop GENTIAN_DEPLOYMENTS_PATH="${REL}" GENTIAN_DEPLOYMENTS_CLUSTER_ID=c1 -- "$(at)"'resolve_gentian_os_branch; echo "rc=$?"')"
+has "a branch beside it is still a contradiction" "${out}" "spec.release names v9.9.9" "rc=0"
+# A claim that follows main is made to name the release.
+printf 'spec:\n  release:\n    track: main\n  other: x\n' > "${REL}/clusters/c1/kernel/claims/cluster.yaml"
+out="$(run -- "$(at)"'preview_claim_follows_no_release_branch '"$(printf %q "${REL}/clusters/c1/kernel/claims/cluster.yaml")")"
+has "a dry run says what it would do" "${out}" "would turn spec.release.track main in claims/cluster.yaml into version v9.10.1"
+is "and writes nothing" "$(cat "${REL}/clusters/c1/kernel/claims/cluster.yaml")" "$(printf 'spec:\n  release:\n    track: main\n  other: x')"
+run -- "$(at)"'ensure_claim_follows_no_release_branch '"$(printf %q "${REL}/clusters/c1/kernel/claims/cluster.yaml")" >/dev/null
+is "a claim that follows main names the newest release instead" "$(cat "${REL}/clusters/c1/kernel/claims/cluster.yaml")" "$(printf 'spec:\n  release:\n    version: v9.10.1\n  other: x')"
+printf 'spec:\n  release:\n    track: develop\n' > "${REL}/clusters/c1/kernel/claims/cluster.yaml"
+run -- "$(at)"'ensure_claim_follows_no_release_branch '"$(printf %q "${REL}/clusters/c1/kernel/claims/cluster.yaml")" >/dev/null
+is "a claim that follows a branch is left alone" "$(cat "${REL}/clusters/c1/kernel/claims/cluster.yaml")" "$(printf 'spec:\n  release:\n    track: develop')"
+rm -rf "${OS}/docs"
+
 is "GENTIAN_UI_BRANCH unset: main" "$(run -- gentian_ui_branch)" "main"
-is "PORTAL_IMAGE_TAG unset: develop, where the charts are published" "$(run -- gentian_ui_chart_branch)" "develop"
-is "each set: that" "$(run GENTIAN_UI_BRANCH=a PORTAL_IMAGE_TAG=b -- 'echo "$(gentian_ui_branch) $(gentian_ui_chart_branch)"')" "a b"
 # One default each means no second one beside it.
-second="$(grep -nE '\$\{(GENTIAN_OS_BRANCH|GENTIAN_UI_BRANCH|PORTAL_IMAGE_TAG):-[^}]' install.sh scripts/lib/*.sh scripts/steps/*.sh \
-    | grep -vE 'common\.sh:[0-9]+:(gentian_ui_branch|gentian_ui_chart_branch)\(\)|local ref="\$\{GENTIAN_OS_BRANCH:-\}"' || true)"
-if [[ -z "${second}" ]]; then ok "no step or library carries a default of its own for any of the three"; else bad "no step or library carries a default of its own for any of the three" "${second}"; fi
+second="$(grep -nE '\$\{(GENTIAN_OS_BRANCH|GENTIAN_UI_BRANCH):-[^}]' install.sh scripts/lib/*.sh scripts/steps/*.sh \
+    | grep -vE 'common\.sh:[0-9]+:gentian_ui_branch\(\)|local ref="\$\{GENTIAN_OS_BRANCH:-\}"' || true)"
+if [[ -z "${second}" ]]; then ok "no step or library carries a default of its own for either"; else bad "no step or library carries a default of its own for either" "${second}"; fi
 
 # --- the deployments repository ----------------------------------------------
 rm -rf "${SANDBOX:?}/home"; mkdir -p "${SANDBOX}/home"

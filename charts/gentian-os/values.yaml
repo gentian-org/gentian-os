@@ -339,8 +339,9 @@ desktop:
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: gentian-portal
-    # A moving prerelease per branch on a dev cluster; a release pins one.
-    version: 0.1.0-develop
+    # Empty: the release's on a release, else the build the release
+    # reconciler names (gentian-os.componentChartVersion).
+    version: ""
   # Values the profile carries as its own. The chart's objects are named
   # after the component, not the Release (which carries the namespace too),
   # so that the profile's exposures can name the Services.
@@ -355,27 +356,21 @@ adminConsole:
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: admin-console
-    # An immutable version. gentian-apps publishes the console's chart twice:
-    # a moving prerelease per branch and an immutable one per commit, whose
-    # version the moving chart names in appVersion. The installer resolves the
-    # first into the second and pins it here, because provider-helm never
-    # upgrades a release whose version string has not changed -- so a moving
-    # version installs the first build and then stays on it for ever.
-    version: "0.1.1-main"
+    # Empty: named as the desktop's is.
+    version: ""
   # Values the profile carries as its own, merged over what it sets already.
   extraValues: {}
 
 # The home sync: keeps the calendars and contacts the tenant's apps keep of
 # their own equal to the tenant's home, in every tenant. Off by default; the
-# v5 bootstrap turns it on. Its chart is this repository's, published per
-# branch and per commit with the image it runs, and the installer pins the
-# commit's.
+# v5 bootstrap turns it on. Its chart is this repository's, published with
+# the image it runs under the version of the build.
 homesync:
   enabled: false
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: homesync
-    # Empty: the chart published with image.tag (componentprofile-homesync.yaml).
+    # Empty: named as the desktop's is.
     version: ""
 
 # The porter: the platform's file dialog, one per tenant (internal/porter).
@@ -385,7 +380,7 @@ porter:
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: porter
-    # Empty: the chart published with image.tag (componentprofile-porter.yaml).
+    # Empty: named as the desktop's is.
     version: ""
 
 # The liaison: a person's sign-ins at services outside the cluster
@@ -396,20 +391,19 @@ liaison:
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: liaison
-    # Empty: the chart published with image.tag (componentprofile-liaison.yaml).
+    # Empty: named as the desktop's is.
     version: ""
 
 # The concierge: the page on the cluster's bare domain, a component of the
 # platform tenant published from its DMZ. Off by default; the v5 bootstrap
-# turns it on. Like the consoles it comes from gentian-ui as a moving chart
-# per branch and an immutable one per commit, and the installer pins the
-# immutable one.
+# turns it on. Like the consoles it comes from gentian-ui.
 concierge:
   enabled: false
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: concierge
-    version: "0.1.0-develop"
+    # Empty: named as the desktop's is.
+    version: ""
   extraValues: {}
 
 # The ext-auth bouncer: L2 of the edge, run in the edge namespace from this

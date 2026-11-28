@@ -11,21 +11,7 @@
   platform's trust.
 */ -}}
 {{- if .Values.liaison.enabled }}
-{{- /*
-  The chart is published with the image the operator runs, so it follows
-  image.tag, which Image Updater moves on every build: <branch>-<sha> was
-  published as 0.1.0-<branch>.<sha>, a release X.Y.Z as 0.1.0-vX.Y.Z;
-  anything else follows the moving chart of develop. liaison.chart.version,
-  when set, wins.
-*/ -}}
-{{- $liTag := .Values.image.tag | default "" }}
-{{- $liVersion := "0.1.0-develop" }}
-{{- if regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+$" $liTag }}
-{{- $liVersion = printf "0.1.0-v%s" $liTag }}
-{{- else if regexMatch "^[a-z0-9-]+-[0-9a-f]{7}$" $liTag }}
-{{- $liVersion = regexReplaceAll "^(.+)-([0-9a-f]{7})$" $liTag "0.1.0-${1}.${2}" }}
-{{- end }}
-{{- $liVersion = .Values.liaison.chart.version | default $liVersion }}
+{{- $liVersion := include "gentian-os.componentChartVersion" (list . "liaison") }}
 apiVersion: gentianos.io/v1alpha1
 kind: ComponentProfile
 metadata:

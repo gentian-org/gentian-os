@@ -23,35 +23,52 @@ source "${SCRIPT_DIR}/scripts/steps/B-01-bootstrap-apps.sh"
 # the wildcard certificate and Argo CD alike, and under this layout those are
 # different answers.
 
-# A chart's immutable version for the branch this cluster follows.
+# _d03_newest_chart_build <chart-repo> -- the newest build of a branch among
+# a chart's versions, read off the registry's list of them, anonymously, the
+# way the cluster pulls.
 #
-# The registry holds a moving version per branch and an immutable one per
-# build, and the moving chart's appVersion names the immutable one it is a
-# copy of. A Helm release under an unchanged version string is never
-# upgraded, so what a profile pins is the immutable version; this reads it
-# off the moving chart through the registry's OCI API, anonymously, the way
-# the cluster pulls it. No answer is an error: a component that cannot be
-# installed is not something to guess at. The chart and the branch are
-# arguments rather than the desktop's by name; the administration console is
-# not resolved this way, because gentian-apps publishes its chart at an exact
-# version the operator chart pins directly.
-_d02_component_chart_version() {
-    local repo="$1" moving="$2"
-    local token manifest config_digest version
+# A release's chart is X.Y.Z; a build of a branch is X.Y.Z-dev.<n>.g<commit>,
+# a prerelease of the release it leads up to whose <n> grows with every
+# commit (scripts/tools/chart-version.sh). So the highest is the newest, and
+# no version ever names a different build than it did. The operator's
+# release reconciler takes the same one (internal/controller,
+# NewestBuild). No answer is an error: a component that cannot be installed
+# is not something to guess at.
+_d03_newest_chart_build() {
+    local repo="$1"
+    local token url headers body tags="" pages=0 newest
     token="$(curl -sf --max-time 20 "https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io" | jq -r '.token // empty')"
     [[ -n "${token}" ]] || { error "could not get a pull token for ${repo} from ghcr.io"; return 1; }
-    manifest="$(curl -sf --max-time 20 -H @<(printf 'Authorization: Bearer %s\n' "${token}") \
-        -H "Accept: application/vnd.oci.image.manifest.v1+json" \
-        "https://ghcr.io/v2/${repo}/manifests/${moving}")" \
-        || { error "chart ${repo}:${moving} is not published; merge to the branch this cluster follows first"; return 1; }
-    config_digest="$(jq -r '.config.digest // empty' <<<"${manifest}")"
-    [[ -n "${config_digest}" ]] || { error "chart ${repo}:${moving} has no config blob"; return 1; }
-    version="$(curl -sfL --max-time 20 -H @<(printf 'Authorization: Bearer %s\n' "${token}") \
-        "https://ghcr.io/v2/${repo}/blobs/${config_digest}" | jq -r '.appVersion // empty')"
-    case "${version}" in
-        "${moving}".*) echo "${version}" ;;
-        *) error "chart ${repo}:${moving} names no immutable version (appVersion=${version:-none})"; return 1 ;;
-    esac
+    headers="$(mktemp)"
+    url="https://ghcr.io/v2/${repo}/tags/list?n=1000"
+    while [[ -n "${url}" ]]; do
+        pages=$((pages + 1))
+        if (( pages > 200 )); then
+            rm -f "${headers}"
+            error "chart ${repo} lists more than 200 pages of versions"
+            return 1
+        fi
+        if ! body="$(curl -sf --max-time 20 -D "${headers}" -H @<(printf 'Authorization: Bearer %s\n' "${token}") "${url}")"; then
+            rm -f "${headers}"
+            error "the versions of chart ${repo} could not be read from ghcr.io"
+            return 1
+        fi
+        tags+="$(jq -r '.tags[]? // empty' <<<"${body}")"$'\n'
+        # The next page, when the registry names one: Link: </v2/...>; rel="next".
+        url="$(tr -d '\r' < "${headers}" | sed -nE 's/^[Ll]ink: *<([^>]+)> *; *rel="?next"?.*$/\1/p' | head -n 1)"
+        [[ "${url}" != /* ]] || url="https://ghcr.io${url}"
+    done
+    rm -f "${headers}"
+    newest="$(_d03_newest_build <<<"${tags}")"
+    [[ -n "${newest}" ]] || { error "chart ${repo} has no build of a branch (X.Y.Z-dev.<n>.g<commit>)"; return 1; }
+    printf '%s\n' "${newest}"
+}
+
+# _d03_newest_build -- of the versions on stdin, one a line, the highest
+# build of a branch by semver: the release it leads up to, then its number.
+_d03_newest_build() {
+    sed -nE 's/^([0-9]+)\.([0-9]+)\.([0-9]+)-dev\.([0-9]+)\.g[0-9a-f]+$/\1 \2 \3 \4 &/p' \
+        | sort -k1,1n -k2,2n -k3,3n -k4,4n | tail -n 1 | cut -d' ' -f5
 }
 
 # The release index the operator reads (internal/releaseindex DefaultFeed).
@@ -68,27 +85,34 @@ _d03_release_index() {
         || { error "could not read the release index ${GENTIAN_RELEASE_FEED_URL:-${_D03_RELEASE_FEED_DEFAULT}}"; return 1; }
 }
 
-# _d03_ui_chart_version <index-key> <chart-repo> <base> <index-file> -- the
-# version of a gentian-ui chart this step renders.
+# _d03_chart_version <chart-repo> <index-file> [index-key] -- the version of
+# one of the platform's own charts this step renders.
 #
 # On a cluster whose claim names a release version, the operator's release
-# reconciler sets each UI chart the release's index entry lists to that
-# version (internal/controller/release_reconciler.go). Rendering anything else
-# here is undone shortly after, and the wait below would then wait for a
-# version that never comes back. So a chart the entry lists is taken from it;
-# any other is the immutable build of the branch, which is what the operator
-# resolves for a track too.
-_d03_ui_chart_version() {
-    local key="$1" repo="$2" base="$3" index="$4" ref listed
-    ref="$(claim_release_ref || true)"
-    if [[ -s "${index}" ]]; then
+# reconciler sets each chart the release's index entry lists to that version
+# (internal/controller/release_reconciler.go). Rendering anything else here
+# is undone shortly after, and the wait below would then wait for a version
+# that never comes back. So a chart the entry lists is taken from it, and
+# one of gentian-ui's it does not list is the release's number, which every
+# chart of a release is published under. The charts published with the
+# operator's image (no index key) are left out on a release: the operator
+# chart names them from image.tag. On a cluster that follows a branch each
+# is the newest build, which is what the operator takes for a track too.
+_d03_chart_version() {
+    local repo="$1" index="$2" key="${3:-}" ref listed
+    ref="$(gentian_os_ref)"
+    if [[ -n "${key}" && -s "${index}" ]]; then
         listed="$(yq_get ".releases[] | select(.version == \"${ref}\") | .ui.${key}" "${index}" || true)"
         if [[ -n "${listed}" ]]; then
             printf '%s\n' "${listed}"
             return 0
         fi
     fi
-    _d02_component_chart_version "${repo}" "${base}-$(gentian_ui_chart_branch)"
+    if [[ "${ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        [[ -z "${key}" ]] || printf '%s\n' "${ref#v}"
+        return 0
+    fi
+    _d03_newest_chart_build "${repo}"
 }
 
 _d02_export_layout() {
@@ -126,7 +150,7 @@ check() {
     # The platform's desktop: a component of the platform tenant, at
     # platform.<kernel> behind the kernel session. Ready means its chart is
     # deployed and its routes exist -- the chart the profile pins, not an
-    # earlier one still deployed under a moving version.
+    # earlier one still deployed.
     [[ "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
     local pinned deployed
     pinned="$(kubectl get componentprofile desktop -o jsonpath='{.spec.package.chart.version}' 2>/dev/null)"
@@ -182,26 +206,31 @@ apply() {
     # verifies the person's token comes with the render. Before this step
     # there is no realm to sign in against, which is why a fresh cluster
     # starts on token login. The same render pins the desktop chart.
-    local desktop_chart_version admin_console_chart_version concierge_chart_version release_index
+    local release_index spec name repo key version
+    local desktop_chart="" admin_console_chart="" concierge_chart="" homesync_chart="" porter_chart="" liaison_chart=""
     release_index="$(mktemp)"
     if ! _d03_release_index "${release_index}"; then
         rm -f "${release_index}"
         return 1
     fi
-    # All three from gentian-ui, so all follow its branch or its release.
-    desktop_chart_version="$(_d03_ui_chart_version desktop gentian-org/charts/gentian-portal 0.1.0 "${release_index}")" \
-        || { rm -f "${release_index}"; return 1; }
-    info "Desktop chart: ${desktop_chart_version}"
-    admin_console_chart_version="$(_d03_ui_chart_version adminConsole gentian-org/charts/admin-console 0.1.1 "${release_index}")" \
-        || { rm -f "${release_index}"; return 1; }
-    info "Administration console chart: ${admin_console_chart_version}"
-    concierge_chart_version="$(_d03_ui_chart_version concierge gentian-org/charts/concierge 0.1.0 "${release_index}")" \
-        || { rm -f "${release_index}"; return 1; }
-    info "Concierge chart: ${concierge_chart_version}"
+    # The three from gentian-ui, which a release's index entry lists, and the
+    # three published from this repository with the operator's image.
+    for spec in \
+        "desktop gentian-portal desktop" "admin_console admin-console adminConsole" "concierge concierge concierge" \
+        "homesync homesync" "porter porter" "liaison liaison"; do
+        read -r name repo key <<<"${spec}"
+        version="$(_d03_chart_version "gentian-org/charts/${repo}" "${release_index}" "${key}")" \
+            || { rm -f "${release_index}"; return 1; }
+        printf -v "${name}_chart" '%s' "${version}"
+        info "Chart ${repo}: ${version:-of the release, as the operator chart names it}"
+    done
     rm -f "${release_index}"
-    DESKTOP_CHART_VERSION="${desktop_chart_version}" \
-        ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart_version}" \
-        CONCIERGE_CHART_VERSION="${concierge_chart_version}" \
+    DESKTOP_CHART_VERSION="${desktop_chart}" \
+        ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart}" \
+        CONCIERGE_CHART_VERSION="${concierge_chart}" \
+        HOMESYNC_CHART_VERSION="${homesync_chart}" \
+        PORTER_CHART_VERSION="${porter_chart}" \
+        LIAISON_CHART_VERSION="${liaison_chart}" \
         V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
         _v5_render | kubectl apply -f - >/dev/null
 
@@ -264,8 +293,8 @@ apply() {
     # chart comes from the registry the profile names. Both, because waiting
     # for the desktop alone let the install finish while the console's
     # release had been refused, and the first sign was a 500 at the admin console's address.
-    _d03_wait_component desktop "${desktop_chart_version}" "platform.${KERNEL_DOMAIN}" || return 1
-    _d03_wait_component admin-console "${admin_console_chart_version}" "admin.platform.${KERNEL_DOMAIN}" || return 1
+    _d03_wait_component desktop "${desktop_chart}" "platform.${KERNEL_DOMAIN}" || return 1
+    _d03_wait_component admin-console "${admin_console_chart}" "admin.platform.${KERNEL_DOMAIN}" || return 1
 
     # Said, and not waited for: the App Store app is a tenant's, never the
     # platform tenant's, and only where the cluster offers a store.
@@ -315,7 +344,7 @@ _d03_wait_component() {
             # Both halves of the condition, because reporting one of two is
             # how this came to print "not Ready" directly above a line
             # reading Ready=True: the Component was Ready and the Release was
-            # still on the moving chart version, and only the Component was
+            # still on an earlier chart version, and only the Component was
             # shown.
             have_version="$(kubectl get release "tenant-platform-${name}" -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)"
             if [[ "${have_version}" != "${want}" ]]; then
