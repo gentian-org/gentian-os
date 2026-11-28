@@ -33,6 +33,10 @@ type PlanInterval struct {
 	// plan change — the first and usually the last in any report. A biller
 	// pro-rating a month needs to know which ends are real.
 	Partial bool `json:"partial"`
+	// Asleep marks a stretch the tenant slept through: it ran nothing and
+	// kept what it holds. A stretch on one plan is split where the tenant
+	// fell asleep or woke, so each interval is the one or the other.
+	Asleep bool `json:"asleep"`
 }
 
 // Report is a tenant's billable plan history over a window.
@@ -90,7 +94,60 @@ func BuildReport(ctx context.Context, store *Store, tenant string, from, to time
 
 	report.Intervals, report.Incomplete = buildIntervals(
 		events, current, currentSku, known, report.From, report.To)
+
+	asleep, err := store.AsleepBefore(ctx, report.From)
+	if err != nil {
+		return nil, err
+	}
+	changes, err := store.HibernationEvents(ctx, report.From, report.To)
+	if err != nil {
+		return nil, err
+	}
+	report.Intervals = splitAtSleep(report.Intervals, changes, asleep, report.From, report.To)
 	return report, nil
+}
+
+// splitAtSleep marks each plan interval as slept through or not, cutting one
+// in two where the tenant fell asleep or woke inside it.
+//
+// asleep is the state the window opened in. An event that repeats the state
+// already held cuts nothing. A piece is partial when the interval it was cut
+// from was and the piece still touches the edge of the window: an end made
+// by falling asleep or waking is a real one.
+func splitAtSleep(intervals []PlanInterval, changes []HibernationEvent, asleep bool, from, to time.Time) []PlanInterval {
+	if len(intervals) == 0 {
+		return intervals
+	}
+	out := make([]PlanInterval, 0, len(intervals)+len(changes))
+	next := 0
+	for _, whole := range intervals {
+		cursor := whole.From
+		for ; next < len(changes); next++ {
+			at := changes[next].OccurredAt.UTC()
+			if !at.Before(whole.To) {
+				break
+			}
+			if changes[next].Asleep == asleep {
+				continue
+			}
+			if at.After(cursor) {
+				out = append(out, piece(whole, cursor, at, asleep, from, to))
+				cursor = at
+			}
+			asleep = changes[next].Asleep
+		}
+		out = append(out, piece(whole, cursor, whole.To, asleep, from, to))
+	}
+	return out
+}
+
+func piece(whole PlanInterval, start, end time.Time, asleep bool, from, to time.Time) PlanInterval {
+	p := interval(whole.Plan, whole.ProductSku, start, end, whole.Partial)
+	if !start.Equal(whole.From) || !end.Equal(whole.To) {
+		p.Partial = whole.Partial && (start.Equal(from) || end.Equal(to))
+	}
+	p.Asleep = asleep
+	return p
 }
 
 // buildIntervals turns a plan history into the stretches a bill is made of.

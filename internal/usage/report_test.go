@@ -146,3 +146,74 @@ func TestNormalizeDSNIgnoresPlusSignsInTheCredentials(t *testing.T) {
 		t.Fatalf("expected %q unchanged, got %q", in, got)
 	}
 }
+
+// A tenant that slept from day 5 to day 20 of a month on one plan: three
+// stretches of that plan, the middle one slept through, cut exactly where it
+// fell asleep and where it woke.
+func TestAMonthIsSplitWhereTheTenantSleptAndWoke(t *testing.T) {
+	plan, _ := buildIntervals(nil, "base", "sku-base", true, at(1), at(31))
+	changes := []HibernationEvent{
+		{OccurredAt: at(5), Asleep: true, Actor: "tom@example.com"},
+		{OccurredAt: at(20), Asleep: false, Actor: "tom@example.com"},
+	}
+	got := splitAtSleep(plan, changes, false, at(1), at(31))
+
+	want := []struct {
+		from, to int
+		asleep   bool
+		partial  bool
+	}{
+		{1, 5, false, true},
+		{5, 20, true, false},
+		{20, 31, false, true},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected three intervals, got %+v", got)
+	}
+	for i, w := range want {
+		g := got[i]
+		if g.Plan != "base" || g.ProductSku != "sku-base" {
+			t.Errorf("interval %d left its plan: %+v", i, g)
+		}
+		if !g.From.Equal(at(w.from)) || !g.To.Equal(at(w.to)) || g.Seconds != int64(at(w.to).Sub(at(w.from)).Seconds()) {
+			t.Errorf("interval %d is %s to %s (%d s), want day %d to day %d", i, g.From, g.To, g.Seconds, w.from, w.to)
+		}
+		if g.Asleep != w.asleep || g.Partial != w.partial {
+			t.Errorf("interval %d: asleep=%t partial=%t, want %t and %t", i, g.Asleep, g.Partial, w.asleep, w.partial)
+		}
+	}
+}
+
+// Sleep that began before the window, a plan change during it, and an event
+// that repeats the state held: the window opens asleep, the plan change cuts
+// once, and the repeated event cuts nothing.
+func TestSleepIsCarriedIntoTheWindowAndAcrossAPlanChange(t *testing.T) {
+	events := []PlanEvent{{OccurredAt: at(10), FromPlan: "base", ToPlan: "base-plus-8", ProductSku: "sku-8"}}
+	plan, _ := buildIntervals(events, "base", "sku-base", true, at(1), at(31))
+	changes := []HibernationEvent{
+		{OccurredAt: at(4), Asleep: true},
+		{OccurredAt: at(15), Asleep: false},
+	}
+	got := splitAtSleep(plan, changes, true, at(1), at(31))
+
+	if len(got) != 3 {
+		t.Fatalf("expected three intervals, got %+v", got)
+	}
+	if !got[0].Asleep || got[0].Plan != "base" || !got[0].To.Equal(at(10)) || !got[0].Partial {
+		t.Errorf("first interval: %+v", got[0])
+	}
+	if !got[1].Asleep || got[1].Plan != "base-plus-8" || !got[1].From.Equal(at(10)) || !got[1].To.Equal(at(15)) || got[1].Partial {
+		t.Errorf("second interval: %+v", got[1])
+	}
+	if got[2].Asleep || got[2].Plan != "base-plus-8" || !got[2].From.Equal(at(15)) || !got[2].Partial {
+		t.Errorf("third interval: %+v", got[2])
+	}
+}
+
+func TestAWindowWithoutSleepIsLeftAsItWas(t *testing.T) {
+	plan, _ := buildIntervals(nil, "base", "sku-base", true, at(1), at(31))
+	got := splitAtSleep(plan, nil, false, at(1), at(31))
+	if len(got) != 1 || got[0].Asleep || !got[0].Partial || got[0].Seconds != plan[0].Seconds {
+		t.Fatalf("got %+v", got)
+	}
+}
