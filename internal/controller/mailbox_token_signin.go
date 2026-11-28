@@ -12,6 +12,8 @@ package controller
 
 import (
 	"context"
+	"slices"
+	"sort"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -37,6 +39,13 @@ import (
 // Optional, so a token carries the scope and the audience only when the app
 // asked for "mailbox" at that sign-in. The token the app holds for its own
 // session, and relays to whatever it calls, does not open a mailbox.
+//
+// A bridge signs nobody in and has no client. Where a bridge declares it,
+// the scope is an optional scope of the clients of the tenant's components
+// that vouch for people (mailboxVouchers): one of them obtains the person's
+// token for a call to the bridge, asks for "mailbox" with it because the
+// bridge's entry on its list says so (agentBridgeListEntry.Scopes), and the
+// bridge passes that token on to the mail server.
 
 // mailboxScopeName is the client scope the mail server requires of a token.
 // The Compositions name it too; TestMailboxScopeHasOneName holds them
@@ -44,13 +53,48 @@ import (
 const mailboxScopeName = "mailbox"
 
 // declaresMailboxTokenSignIn reports whether a profile asks that its sign-in
-// tokens open mailboxes, and has the sign-in client to give the scope to.
+// tokens open mailboxes, and has the sign-in client to give the scope to. A
+// bridge has none (bridgeOpensMailboxes).
 func declaresMailboxTokenSignIn(profile *gentianov1alpha1.ComponentProfile) bool {
-	s := profile.Services()
-	if s == nil || s.Mail == nil || s.Mail.IMAP == nil || !s.Mail.IMAP.TokenSignIn {
+	if profile.Spec.Bridge != nil || !asksForMailboxTokens(profile) {
 		return false
 	}
+	s := profile.Services()
 	return s.Identity != nil && s.Identity.OIDC != nil && s.Identity.OIDC.ClientID != ""
+}
+
+// bridgeOpensMailboxes reports whether a profile is a bridge that opens a
+// person's mailbox with the token a call to it carries.
+func bridgeOpensMailboxes(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile != nil && profile.Spec.Bridge != nil && asksForMailboxTokens(profile)
+}
+
+func asksForMailboxTokens(profile *gentianov1alpha1.ComponentProfile) bool {
+	s := profile.Services()
+	return s != nil && s.Mail != nil && s.Mail.IMAP != nil && s.Mail.IMAP.TokenSignIn
+}
+
+// mailboxVouchers are, among the profiles of one tenant's components, the
+// ones whose client may ask for "mailbox": every component that vouches for
+// people with the platform's trust (vouchesNarrowly says which do not),
+// while the tenant has a bridge that opens mailboxes. Without such a bridge
+// nobody is given the scope. Sorted.
+func mailboxVouchers(profiles []*gentianov1alpha1.ComponentProfile) []string {
+	bridge := false
+	var out []string
+	for _, p := range profiles {
+		switch {
+		case bridgeOpensMailboxes(p):
+			bridge = true
+		case p != nil && wantsVouching(p) && !vouchesNarrowly(p):
+			out = append(out, p.Name)
+		}
+	}
+	if !bridge {
+		return nil
+	}
+	sort.Strings(out)
+	return slices.Compact(out)
 }
 
 // tenantHasTokenMailboxes reports whether a tenant's people have mailboxes on

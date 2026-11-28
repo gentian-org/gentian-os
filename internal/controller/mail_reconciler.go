@@ -1479,7 +1479,7 @@ func signingKeys(raw []json.RawMessage) ([]realmSigningKey, error) {
 }
 
 // dovecotRealmKeys is a realm's part of the validation dict: each key under
-// each app that may be given "mailbox". Sorted, so that the same realm always
+// each client that may be given "mailbox". Sorted, so that the same realm always
 // writes the same bytes.
 func dovecotRealmKeys(clients []string, keys []realmSigningKey) string {
 	clients = slices.Clone(clients)
@@ -1619,14 +1619,40 @@ func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName
 	return r.Update(ctx, secret)
 }
 
-// mailboxTokenClients are the client ids of the tenant's apps that may be
-// given "mailbox": the apps whose sign-in tokens the mail server is to accept
-// (mailboxTokenSignIn, which renders the scope onto their clients).
+// mailboxTokenClients are the ids of the tenant's clients that may be given
+// "mailbox", whose tokens the mail server is to accept: the sign-in clients
+// of the apps that declare it (mailboxTokenSignIn, which renders the scope
+// onto them), and, while the tenant has a bridge that opens mailboxes, the
+// clients of its components that vouch for people (mailboxVouchers).
 func (r *TenantReconciler) mailboxTokenClients(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]string, error) {
 	if !tenantHasTokenMailboxes(tenant, clusterMailServiceMode(ctx, r.Client, ""), r.KernelRealm) {
 		return nil, nil
 	}
 	var clients []string
+	// By the Components, as the realm is told (projectZoneHosts): a
+	// component every tenant is given may vouch as well as an installed one.
+	components := &gentianov1alpha1.ComponentList{}
+	if err := r.List(ctx, components, client.InNamespace(tenant.NamespaceName())); err != nil {
+		return nil, fmt.Errorf("list the tenant's components: %w", err)
+	}
+	var running []*gentianov1alpha1.ComponentProfile
+	for i := range components.Items {
+		comp := &components.Items[i]
+		if comp.DeletionTimestamp != nil {
+			continue
+		}
+		profile, err := getProfileFor(ctx, r.Client, comp.Spec.ProfileRef.Name, comp.Spec.ProfileRef.Digest)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", comp.Spec.ProfileRef.Name, err)
+		}
+		running = append(running, profile)
+	}
+	for _, name := range mailboxVouchers(running) {
+		clients = append(clients, VouchingAlias(name))
+	}
 	for _, app := range tenant.Spec.Apps {
 		profile, err := getProfileFor(ctx, r.Client, app.Profile, app.Digest)
 		if errors.IsNotFound(err) {

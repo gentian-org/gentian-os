@@ -633,7 +633,9 @@ spec:
                  is no key. Among those
                  words, "narrow" marks a component below the platform's trust,
                  whose client is given no app scope, and each "home=<profile>"
-                 names a home granted to it, which it calls as the person. A line that
+                 names a home granted to it, which it calls as the person, and
+                 "mailbox" says its client may ask for the scope that opens
+                 mailboxes (see the vouching clients' optional scopes). A line that
                  is not four or five fields is not guessed at: it is left
                  out, and that component gets nothing rather than an issuer
                  made of something half-read. A director
@@ -648,11 +650,13 @@ spec:
             {{- $director := list }}
             {{- $exchanges := false }}
             {{- $narrow := false }}
+            {{- $mailbox := false }}
             {{- $homes := list }}
             {{- if eq (len $f) 5 }}
             {{- range $d := (splitList "," (index $f 4)) }}
             {{- if eq $d "exchange" }}{{- $exchanges = true }}{{- end }}
             {{- if eq $d "narrow" }}{{- $narrow = true }}{{- end }}
+            {{- if eq $d "mailbox" }}{{- $mailbox = true }}{{- end }}
             {{- if and (hasPrefix "home=" $d) (not (has (trimPrefix "home=" $d) $homes)) }}{{- $homes = append $homes (trimPrefix "home=" $d) }}{{- end }}
             {{- if and (has $d (list "plans-read" "plans-apply")) (not (has $d $director)) }}
             {{- $director = append $director $d }}
@@ -664,7 +668,7 @@ spec:
             {{- if and (eq (index $f 1) "keys") (ne (index $f 3) "-") }}
             {{- $jwks = b64dec (index $f 3) }}
             {{- end }}
-            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "jwks" $jwks "director" $director "exchange" $exchanges "narrow" $narrow "homes" $homes "keyless" (eq (index $f 1) "-")) }}
+            {{- $vouchingProfiles = append $vouchingProfiles (dict "profile" (index $f 0) "jwks" $jwks "director" $director "exchange" $exchanges "narrow" $narrow "mailbox" $mailbox "homes" $homes "keyless" (eq (index $f 1) "-")) }}
             {{- end }}
             {{- end }}
             {{- /* $presentCallers are the profiles among them that call a home
@@ -2434,8 +2438,20 @@ spec:
             {{- /* A component below the platform's trust ("narrow") is given
                  no app scope: only the scopes of the homes granted to it,
                  which a platform component is given beside its app scopes. */}}
+            {{- /* And "mailbox", for a component whose line says so: the
+                 tenant has a bridge that opens a person's mailbox with the
+                 token a call to it carries, and this component obtains
+                 that token. It asks for the scope with the bridge's app
+                 scope, for such a call and no other; the mail server
+                 accepts a token with the scope from this client and from
+                 the sign-in clients of the apps that declare it, and from
+                 no other (mailboxTokenClients in the operator). Once the
+                 scope has been observed, as for every scope here. */}}
             {{- $optional := $exchangeScopes }}
             {{- if $v.narrow }}{{- $optional = list }}{{- end }}
+            {{- if and $v.mailbox (not $v.narrow) (dig "resources" "keycloak-mailbox-scope" "resource" "status" "atProvider" "id" "" $observed) }}
+            {{- $optional = append $optional "mailbox" }}
+            {{- end }}
             {{- range $h := $v.homes }}
             {{- if has (printf "home-%s" $h) $homeScopeNames }}
             {{- $optional = append $optional (printf "home-%s" $h) }}
@@ -2590,12 +2606,16 @@ spec:
                  token of the realm again
                  (TestNothingSwitchesTheIntrospectionAudienceCheckOff).
 
-                 The scope is given to no client here. app-default gives it,
-                 as an OPTIONAL scope, to the sign-in client of an app whose
-                 profile declares requires.services.mail.imap.tokenSignIn. So
-                 a token names the mail server only when such an app asked
-                 for "mailbox" at that sign-in; Keycloak refuses the request
-                 of a client that does not have the scope (invalid_scope).
+                 The scope is an OPTIONAL scope of two kinds of client and of
+                 no other. The app render gives it to the sign-in client of
+                 an app whose profile declares
+                 requires.services.mail.imap.tokenSignIn. And while the
+                 tenant has a bridge that declares it, the clients of the
+                 components that vouch for people have it (above): a bridge
+                 has no client, and is handed the token. So a token names
+                 the mail server only when one of those asked for "mailbox"
+                 with it; Keycloak refuses the request of a client that does
+                 not have the scope (invalid_scope).
                  Dovecot checks the scope as well as Keycloak the audience
                  (scope = mailbox in each realm's oauth2 settings).
 

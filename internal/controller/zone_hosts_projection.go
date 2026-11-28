@@ -82,7 +82,8 @@ const (
 	// none of the fields can hold one: the first is a DNS label, base64 has
 	// none, and the fifth is a list of words joined by commas: "exchange"
 	// where the profile says requires.services.vouching.exchange, then the
-	// profile's requires.services.vouching.director. The director's scopes
+	// profile's requires.services.vouching.director, and "mailbox" where
+	// its client may ask for the scope that opens mailboxes. The director's scopes
 	// are written only in the platform tenant's projection: a token for the
 	// director is the cluster's administrators', who sign in at that
 	// tenant's realm, and in another tenant's realm the scopes are never
@@ -121,6 +122,11 @@ const (
 	// below the platform's trust: its client is given no app scope, only the
 	// scopes of the homes its "home=" words name.
 	vouchingNarrowWord = "narrow"
+	// vouchingMailboxWord is, in the fifth field, the word that gives the
+	// component's client the scope "mailbox": the tenant has a bridge that
+	// opens mailboxes with the token a call carries, and this component is
+	// one that obtains that token (mailboxVouchers).
+	vouchingMailboxWord = "mailbox"
 	// vouchingHomePrefix starts a word of the fifth field that names a home
 	// granted to the component, which it calls as the person: "home=" and
 	// the home's profile. Its client is given HomeTokenScope of it.
@@ -186,6 +192,8 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 	// contract: the tenant's homes are known once all are read.
 	syncers := map[string]map[string]*gentianov1alpha1.ComponentProfile{}
 	providers := map[string]map[string][]string{}
+	// Every profile of the tenant's components, for mailboxVouchers.
+	installed := map[string][]*gentianov1alpha1.ComponentProfile{}
 	for i := range tenants.Items {
 		syncers[tenants.Items[i].Name] = map[string]*gentianov1alpha1.ComponentProfile{}
 		providers[tenants.Items[i].Name] = map[string][]string{}
@@ -222,6 +230,7 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			apimeta.IsStatusConditionTrue(comp.Status.Conditions, ConditionBridge) {
 			bridged[tenant][profile.Spec.Bridge.App.Profile] = true
 		}
+		installed[tenant] = append(installed[tenant], profile)
 		if asksForExchangedToken(profile) {
 			// The profile's name and not the component's: the route builder
 			// names the scope after the profile (AppTokenScope), and two
@@ -331,6 +340,18 @@ func (r *TileProjectionReconciler) projectZoneHosts(ctx context.Context) error {
 			}
 			if line, ok := vouching[byNamespace[ns]][profile]; ok && jwks != "" {
 				vouching[byNamespace[ns]][profile] = withVouchingKey(line, jwks)
+			}
+		}
+	}
+	// The scope that opens mailboxes, where the tenant's realm has it.
+	mailMode := clusterMailServiceMode(ctx, r.Client, "")
+	for tenant, profiles := range installed {
+		if !tenantHasTokenMailboxes(byName[tenant], mailMode, r.KernelRealm) {
+			continue
+		}
+		for _, name := range mailboxVouchers(profiles) {
+			if line, ok := vouching[tenant][name]; ok {
+				vouching[tenant][name] = withVouchingWord(line, vouchingMailboxWord)
 			}
 		}
 	}
@@ -448,7 +469,7 @@ func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string, hom
 	// Nor is a component that names no keys and calls a home as the person
 	// given more, whatever its trust: it exchanges the token of a person at
 	// its address for a home's, and that is all its client is for.
-	if profile.Spec.TrustTier == gentianov1alpha1.TrustTierCertified || (vouching.Keys == nil && callsHomesAsPerson(profile)) {
+	if vouchesNarrowly(profile) {
 		extra = append(extra, vouchingNarrowWord)
 	}
 	for _, home := range homes {
@@ -457,6 +478,27 @@ func vouchingLine(profile *gentianov1alpha1.ComponentProfile, tenant string, hom
 	if len(extra) > 0 {
 		fields = append(fields, strings.Join(extra, ","))
 	}
+	return strings.Join(fields, " ")
+}
+
+// vouchesNarrowly reports whether a vouching profile's client is given no
+// app scope (vouchingNarrowWord).
+func vouchesNarrowly(profile *gentianov1alpha1.ComponentProfile) bool {
+	vouching := profile.Services().Vouching
+	return profile.Spec.TrustTier == gentianov1alpha1.TrustTierCertified || (vouching.Keys == nil && callsHomesAsPerson(profile))
+}
+
+// withVouchingWord is a vouching line with one more word in its fifth
+// field.
+func withVouchingWord(line, word string) string {
+	fields := strings.Split(line, " ")
+	if len(fields) < 4 {
+		return line
+	}
+	if len(fields) == 4 {
+		return line + " " + word
+	}
+	fields[4] += "," + word
 	return strings.Join(fields, " ")
 }
 

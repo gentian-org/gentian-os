@@ -625,14 +625,11 @@ spec:
 			"    - {name: files, caller: device, callee: app, protocol: webdav, speaksAs: person, paths: [/dav/], endpoint: {service: x, port: 80, path: /}}\n" + chart, "only for a way whose caller is agents"},
 		{"add-ons told without an app", toOutside + "    addonsValuesPath: tools.active\n" + api, "it needs spec.bridge.app"},
 
-		// A bridge that opens mailboxes has a client of its own, which only
-		// exchanges the token made out to the profile's name.
-		{"an agent bridge with a client that exchanges", toApp + chart + mailbox("x", "CONFIDENTIAL", ""), ""},
-		{"an agent bridge to a service of the platform", toPlatform + chart + mailbox("x", "CONFIDENTIAL", ""), ""},
-		{"a bridge's client under another name", toApp + chart + mailbox("tools", "CONFIDENTIAL", ""), "only exchanges the chaperone's token"},
-		{"a bridge's public client", toApp + chart + mailbox("x", "PUBLIC", ""), "only exchanges the chaperone's token"},
-		{"a bridge's client of no access type", toApp + chart + mailbox("x", "", ""), "only exchanges the chaperone's token"},
-		{"a bridge's client with a redirect", toApp + chart + mailbox("x", "CONFIDENTIAL", "https://x.example/cb"), "only exchanges the chaperone's token"},
+		// A bridge has no client of its own: one that opens mailboxes says
+		// so, and the token is obtained for it.
+		{"an agent bridge that opens mailboxes", toPlatform + chart + "  requires:\n    services:\n      mail: {imap: {tokenSignIn: true}}\n", ""},
+		{"a bridge with a client", toApp + chart + mailbox("x", "CONFIDENTIAL", ""), "a bridge has no client of its own"},
+		{"a bridge to the platform with a client", toPlatform + chart + mailbox("x", "CONFIDENTIAL", ""), "a bridge has no client of its own"},
 	} {
 		expect(t, c.name, v.check(t, head+c.spec, ""), c.want)
 	}

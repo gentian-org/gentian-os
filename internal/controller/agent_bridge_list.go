@@ -40,6 +40,9 @@ import (
 //
 //	{"odoo-adapter-ee": {"url": "<its Service, port and path>", "app": "odoo"}}
 //
+// and, for a bridge whose calls need more than the app's scope, the scopes
+// the caller asks the realm for with it (agentBridgeListEntry.Scopes).
+//
 // It follows installs: an agent bridge is on it while it is installed and
 // says where it answers (the endpoint of its way from the agents). It holds
 // no credential and grants nothing: the way to a bridge is the network
@@ -67,6 +70,12 @@ type agentBridgeListEntry struct {
 	// a person signs in. Absent for a bridge inside the tenant, which is
 	// asked for its tools.
 	Outside *gentianov1alpha1.OutsideToolServer `json:"outside,omitempty"`
+	// Scopes are the scopes a caller asks the realm for beside the app's
+	// when it obtains a person's token for a call to this bridge: "mailbox"
+	// for a bridge that opens mailboxes, on a tenant whose realm has the
+	// scope. The realm grants a scope only to a client that has it
+	// (mailboxVouchers).
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // agentBridgeList is the tenant's agent bridges as their callers are told:
@@ -74,7 +83,7 @@ type agentBridgeListEntry struct {
 // right is asked about. A bridge inside the tenant is listed by its way's
 // endpoint. A bridge to an outside tool server is listed by the entry's
 // baseUrl, with what the entry says of the server.
-func agentBridgeList(namespace string, bridges []string, profiles map[string]*gentianov1alpha1.ComponentProfile) (string, error) {
+func agentBridgeList(namespace string, bridges []string, profiles map[string]*gentianov1alpha1.ComponentProfile, mailboxes bool) (string, error) {
 	list := map[string]agentBridgeListEntry{}
 	for _, name := range bridges {
 		profile := profiles[name]
@@ -89,7 +98,11 @@ func agentBridgeList(namespace string, bridges []string, profiles map[string]*ge
 		if app == "" {
 			continue
 		}
-		list[name] = agentBridgeListEntry{URL: contractURL(profile.AgentWay().Endpoint, namespace), App: app}
+		entry := agentBridgeListEntry{URL: contractURL(profile.AgentWay().Endpoint, namespace), App: app}
+		if mailboxes && bridgeOpensMailboxes(profile) {
+			entry.Scopes = []string{mailboxScopeName}
+		}
+		list[name] = entry
 	}
 	raw, err := json.Marshal(list)
 	return string(raw), err
@@ -147,7 +160,8 @@ func (r *TenantReconciler) ensureAgentBridgeLists(ctx context.Context, tenant *g
 	if err != nil {
 		return err
 	}
-	list, err := agentBridgeList(in.Namespace, bridges, in.Profiles)
+	mailboxes := tenantHasTokenMailboxes(tenant, clusterMailServiceMode(ctx, r.Client, ""), r.KernelRealm)
+	list, err := agentBridgeList(in.Namespace, bridges, in.Profiles, mailboxes)
 	if err != nil {
 		return err
 	}

@@ -768,12 +768,14 @@ checks an XOAUTH2 token itself, against the realm's keys, and requires `gentian-
   `mailbox`. Its one mapper adds `gentian-dovecot` to the audience of an access
   token (`included.client.audience`: Keycloak leaves it out if that client is
   disabled or gone). Nothing else in the realm names that audience.
-- The scope is an *optional* scope of the client of a profile that declares
-  `requires.services.mail.imap.tokenSignIn`, and of no other client. A token
-  carries the scope and the audience only when such an app asked for `mailbox`
-  at that sign-in, or such an agent bridge at the exchange of the token the
-  chaperone handed it, which names the bridge; Keycloak refuses the request of
-  a client without the scope (`invalid_scope`).
+- The scope is an *optional* scope of the client of an app whose profile
+  declares `requires.services.mail.imap.tokenSignIn`. While the tenant has an
+  agent bridge that declares it, it is also an optional scope of the clients
+  of the components that vouch for people with the platform's trust. No other
+  client has it. A token carries the scope and the audience only when such an
+  app asked for `mailbox` at that sign-in, or a vouching component with the
+  token it obtains for a call to such a bridge; Keycloak refuses the request
+  of a client without the scope (`invalid_scope`).
 - Dovecot requires the scope too (`scope = mailbox` in each realm's oauth2
   settings), opens the mailbox of the token's `email` claim, and refuses a
   mail program that names another address.

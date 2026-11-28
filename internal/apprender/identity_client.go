@@ -32,6 +32,12 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 	if oidc == nil || oidc.ClientID == "" {
 		return nil
 	}
+	// A bridge signs nobody in and has no client: the token a call to it
+	// carries is obtained by the component that vouches for the person.
+	// Admission refuses a bridge that declares one.
+	if id.profile.Bridge != nil {
+		return nil
+	}
 	packKey := oidc.ClientID
 	if oidc.OIDCPackRef != "" {
 		packKey = oidc.OIDCPackRef
@@ -109,22 +115,6 @@ func (id *identityScope) appClient() []*unstructured.Unstructured {
 		"directAccessGrantsEnabled": oidc.DirectAccessGrantsEnabled,
 		"serviceAccountsEnabled":    false,
 		"webOrigins":                []interface{}{"+"},
-	}
-	// A bridge's client signs nobody in. The chaperone hands the bridge a
-	// person's token made out to the bridge, and this client turns it into
-	// a narrower one of the same person -- "mailbox" for a bridge that opens
-	// mailboxes (optionalScopes) -- which is the one grant
-	// standardTokenExchangeEnabled switches on. Admission holds it to the
-	// profile's name, confidential and without a redirect.
-	if id.profile.Bridge != nil {
-		fp["standardFlowEnabled"] = false
-		fp["directAccessGrantsEnabled"] = false
-		fp["standardTokenExchangeEnabled"] = true
-		// The exchanged token is to be worth something at one service, not
-		// carry every role of the person and with them the audience of every
-		// client those roles belong to.
-		fp["fullScopeAllowed"] = false
-		delete(fp, "webOrigins")
 	}
 	// A public client has no secret, so the code is all that stands between
 	// whoever receives it and a token: PKCE with S256, on every one.

@@ -256,10 +256,12 @@ spec:
 - **Callee `platform`.** A service the platform runs for the tenant's people,
   such as the mail server, reached with what the bridge's own
   `requires.services` provide. A bridge that opens a person's mailbox declares
-  `requires.services.mail.imap.tokenSignIn` beside a client of its own, named
-  after the profile, confidential and without a redirect: that client only
-  exchanges the token the bridge is handed for one with the scope `mailbox`,
-  for one call ([security/design.md](../security/design.md) §2.16).
+  `requires.services.mail.imap.tokenSignIn`. The token it is handed for a call
+  then carries the scope `mailbox` as well, and the bridge signs in to the mail
+  server with it ([security/design.md](../security/design.md) §2.16).
+- **No client.** A bridge signs nobody in and asks the realm for nothing, so
+  it declares no `requires.services.identity.oidc` and holds no secret:
+  whatever token a call needs is obtained for it.
 - **Add-ons.** With `addonsValuesPath`, the bridge is told at that chart value
   the IDs of the add-ons selected into the app it connects, and is rendered
   again when they change.

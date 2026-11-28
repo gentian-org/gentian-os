@@ -1369,16 +1369,20 @@ type IMAPRequirement struct {
 	// person's sign-in token (SASL XOAUTH2) instead of an app password.
 	//
 	// It is a grant, which is why it is said and never implied by imap: the
-	// mail server accepts a token only from the sign-in client of an app
-	// whose profile declares this. The app's client is given the optional
-	// client scope "mailbox" in the tenant's realm; a token the app obtained
-	// by asking for that scope names the mail server in its audience and is
-	// accepted for the mailbox of the person it was issued to, and no other
-	// token of the app, and no token of any other app, is.
+	// mail server accepts a token only when it carries the client scope
+	// "mailbox" of the tenant's realm, which names the mail server in the
+	// token's audience, and then for the mailbox of the person it was issued
+	// to. Who is given the scope follows from this declaration alone:
 	//
-	// It needs requires.services.identity.oidc, the client the scope is given
-	// to. Served where the cluster runs its own mail server and the tenant
-	// has mailboxes on it in a realm of its own; elsewhere it does nothing.
+	//   - an app with a sign-in of its own (requires.services.identity.oidc):
+	//     that client, as an optional scope, so a token opens a mailbox only
+	//     when the app asked for "mailbox" at that sign-in;
+	//   - a bridge, which has no client: the components that vouch for
+	//     people in the tenant, which ask for it with the token they obtain
+	//     for a call to this bridge. The bridge passes that token on.
+	//
+	// Served where the cluster runs its own mail server and the tenant has
+	// mailboxes on it in a realm of its own; elsewhere it does nothing.
 	// +optional
 	TokenSignIn bool `json:"tokenSignIn,omitempty"`
 }
