@@ -207,7 +207,7 @@ apply() {
     # there is no realm to sign in against, which is why a fresh cluster
     # starts on token login. The same render pins the desktop chart.
     local release_index spec name repo key version
-    local -A chart_version=()
+    local desktop_chart="" admin_console_chart="" concierge_chart="" homesync_chart="" porter_chart="" liaison_chart=""
     release_index="$(mktemp)"
     if ! _d03_release_index "${release_index}"; then
         rm -f "${release_index}"
@@ -216,21 +216,21 @@ apply() {
     # The three from gentian-ui, which a release's index entry lists, and the
     # three published from this repository with the operator's image.
     for spec in \
-        "desktop gentian-portal desktop" "admin-console admin-console adminConsole" "concierge concierge concierge" \
+        "desktop gentian-portal desktop" "admin_console admin-console adminConsole" "concierge concierge concierge" \
         "homesync homesync" "porter porter" "liaison liaison"; do
         read -r name repo key <<<"${spec}"
         version="$(_d03_chart_version "gentian-org/charts/${repo}" "${release_index}" "${key}")" \
             || { rm -f "${release_index}"; return 1; }
-        chart_version[${name}]="${version}"
+        printf -v "${name}_chart" '%s' "${version}"
         info "Chart ${repo}: ${version:-of the release, as the operator chart names it}"
     done
     rm -f "${release_index}"
-    DESKTOP_CHART_VERSION="${chart_version[desktop]}" \
-        ADMIN_CONSOLE_CHART_VERSION="${chart_version[admin-console]}" \
-        CONCIERGE_CHART_VERSION="${chart_version[concierge]}" \
-        HOMESYNC_CHART_VERSION="${chart_version[homesync]}" \
-        PORTER_CHART_VERSION="${chart_version[porter]}" \
-        LIAISON_CHART_VERSION="${chart_version[liaison]}" \
+    DESKTOP_CHART_VERSION="${desktop_chart}" \
+        ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart}" \
+        CONCIERGE_CHART_VERSION="${concierge_chart}" \
+        HOMESYNC_CHART_VERSION="${homesync_chart}" \
+        PORTER_CHART_VERSION="${porter_chart}" \
+        LIAISON_CHART_VERSION="${liaison_chart}" \
         V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
         _v5_render | kubectl apply -f - >/dev/null
 
@@ -293,8 +293,8 @@ apply() {
     # chart comes from the registry the profile names. Both, because waiting
     # for the desktop alone let the install finish while the console's
     # release had been refused, and the first sign was a 500 at the admin console's address.
-    _d03_wait_component desktop "${chart_version[desktop]}" "platform.${KERNEL_DOMAIN}" || return 1
-    _d03_wait_component admin-console "${chart_version[admin-console]}" "admin.platform.${KERNEL_DOMAIN}" || return 1
+    _d03_wait_component desktop "${desktop_chart}" "platform.${KERNEL_DOMAIN}" || return 1
+    _d03_wait_component admin-console "${admin_console_chart}" "admin.platform.${KERNEL_DOMAIN}" || return 1
 
     # Said, and not waited for: the App Store app is a tenant's, never the
     # platform tenant's, and only where the cluster offers a store.
