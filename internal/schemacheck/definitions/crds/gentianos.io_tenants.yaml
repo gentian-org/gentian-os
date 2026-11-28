@@ -810,6 +810,11 @@ spec:
                       asleep it says nothing.
                     format: date-time
                     type: string
+                  setBy:
+                    description: |-
+                      SetBy names who last put the tenant to sleep or woke it. It is what
+                      the tenant's usage history records beside the change.
+                    type: string
                 type: object
               homes:
                 additionalProperties:
@@ -1903,6 +1908,10 @@ spec:
                     description: |-
                       Asleep is true from when the tenant was put to sleep until it has
                       been woken.
+                    type: boolean
+                  recorded:
+                    description: Recorded is true once the tenant's usage history
+                      carries this change.
                     type: boolean
                   since:
                     description: Since is when it was put to sleep, or woken.

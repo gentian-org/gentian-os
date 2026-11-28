@@ -93,6 +93,7 @@ func (g *GitOps) SetTenantHibernation(ctx context.Context, tenant string, want H
 	default:
 		msg = fmt.Sprintf("feat(%s): put to sleep (via %s)", tenant, meta.actor())
 	}
+	leaf := hibernationLeaf{Hibernation: want, setBy: meta.actor()}
 	return g.apply(ctx, tenant, msg, meta, func(text string) (string, string, bool, error) {
 		if adoptsAnotherRealm(text, tenant) {
 			return text, "", false, ErrPlatformTenantSleeps
@@ -104,7 +105,7 @@ func (g *GitOps) SetTenantHibernation(ctx context.Context, tenant string, want H
 		if declared.same(want) {
 			return text, "unchanged", false, nil
 		}
-		out, changed, err := setKeyPath(text, "spec", []string{"hibernation"}, hibernationLeaf(want))
+		out, changed, err := setKeyPath(text, "spec", []string{"hibernation"}, leaf)
 		if err != nil {
 			return text, "", false, err
 		}
@@ -117,13 +118,23 @@ func (g *GitOps) SetTenantHibernation(ctx context.Context, tenant string, want H
 
 // hibernationLeaf writes spec.hibernation as a block, replacing the one
 // there whole, so a tenant put to sleep keeps no awakeUntil line behind.
-type hibernationLeaf Hibernation
+//
+// setBy is who asked, for the tenant's usage history, which the operator
+// writes when the change has landed. Asking again for what the manifest
+// declares already is no commit, whoever asks.
+type hibernationLeaf struct {
+	Hibernation
+	setBy string
+}
 
 func (h hibernationLeaf) render(indent int, key string) []string {
 	pad := strings.Repeat(" ", indent)
 	out := []string{pad + key + ":", fmt.Sprintf("%s  asleep: %t", pad, h.Asleep)}
 	if h.AwakeUntil != nil {
 		out = append(out, fmt.Sprintf("%s  awakeUntil: %q", pad, h.AwakeUntil.Format(time.RFC3339)))
+	}
+	if h.setBy != "" {
+		out = append(out, pad+"  setBy: "+quoteScalar(h.setBy))
 	}
 	return out
 }

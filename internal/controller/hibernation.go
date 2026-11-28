@@ -30,6 +30,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
 // A tenant that is asleep (spec.hibernation).
@@ -218,7 +219,69 @@ func (r *TenantReconciler) reconcileHibernation(ctx context.Context, tenant *gen
 			return hibernationStep{}, fmt.Errorf("put %s to sleep: %w", ns, err)
 		}
 	}
+	// Recorded last: the tenant is asleep whether its history says so yet or
+	// not, and one that could not be written is written on the next look.
+	if r.recordHibernation(ctx, tenant) {
+		if err := r.Status().Update(ctx, tenant); err != nil {
+			return hibernationStep{}, err
+		}
+	}
 	return hibernationStep{asleep: true, within: hibernationRecheck}, nil
+}
+
+// hibernationEvent is the usage history's record of what the tenant's status
+// says about its sleep: falling asleep or waking, at the time the operator
+// did it. The actor is who the spec names, except for a tenant that fell
+// asleep because the time it was kept awake until had passed: nobody asked
+// for that then.
+func hibernationEvent(tenant *gentianov1alpha1.Tenant) (usage.HibernationEvent, bool) {
+	status := tenant.Status.Hibernation
+	if status == nil || status.Recorded || status.Since == nil {
+		return usage.HibernationEvent{}, false
+	}
+	event := usage.HibernationEvent{OccurredAt: status.Since.UTC(), Asleep: status.Asleep}
+	if spec := tenant.Spec.Hibernation; spec != nil && (!status.Asleep || spec.AwakeUntil == nil) {
+		event.Actor = spec.SetBy
+	}
+	return event, true
+}
+
+// recordHibernation writes the tenant's last change of sleep into its usage
+// history and notes on the status that it has, which the caller then
+// updates; it reports whether it did.
+//
+// Like a plan change (tenant_resource_plan.go) it returns no error: a store
+// that cannot be reached leaves the status as it was, so the next reconcile
+// tries again, and the tenant sleeps or wakes whatever happens to the record.
+func (r *TenantReconciler) recordHibernation(ctx context.Context, tenant *gentianov1alpha1.Tenant) bool {
+	event, ok := hibernationEvent(tenant)
+	if !ok {
+		return false
+	}
+	logger := log.FromContext(ctx).WithName("hibernation").WithValues("tenant", tenant.Name, "asleep", event.Asleep)
+
+	open := r.PlanEventStore
+	if open == nil {
+		open = func(ctx context.Context, name string) (planEventStore, error) {
+			return usage.StoreForTenant(ctx, r.Client, layout.Tenant(name), name)
+		}
+	}
+	store, err := open(ctx, tenant.Name)
+	if err != nil {
+		logger.Info("usage store unavailable; the change of sleep is recorded on a later reconcile", "reason", err.Error())
+		return false
+	}
+	if err := store.EnsureSchema(ctx); err != nil {
+		logger.Info("usage schema unavailable; the change of sleep is recorded on a later reconcile", "reason", err.Error())
+		return false
+	}
+	if err := store.RecordHibernationEvent(ctx, event); err != nil {
+		logger.Info("change of sleep not recorded; retried on a later reconcile", "reason", err.Error())
+		return false
+	}
+	tenant.Status.Hibernation.Recorded = true
+	logger.Info("change of sleep recorded", "actor", event.Actor)
+	return true
 }
 
 // backupRunning names an export or a restore of the tenant that has not

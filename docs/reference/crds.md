@@ -1954,6 +1954,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `spec.hibernation` | object |  | `Hibernation` puts the tenant to sleep: no pod of it runs, and its namespaces, volumes, databases, buckets, realm and routes are kept, so that waking it is a… |
 | `spec.hibernation.asleep` | boolean |  | `Asleep` puts the tenant to sleep. |
 | `spec.hibernation.awakeUntil` | string (date-time) |  | `AwakeUntil` keeps a tenant that is asleep awake until this time; when it has passed the tenant sleeps again, with nothing written. |
+| `spec.hibernation.setBy` | string |  | `SetBy` names who last put the tenant to sleep or woke it. |
 | `spec.homes` | map[string]string |  | `Homes` names, per contract, the installed app that is the tenant's home for that kind of data (file-store, calendar-store, contacts-store): the provider every… |
 | `spec.isolation` | object |  | `Isolation` describes the workload isolation boundaries for this tenant. |
 | `spec.isolation.databasePrefix` | string |  | `DatabasePrefix` is the prefix for all database names belonging to this tenant. |
@@ -2081,6 +2082,7 @@ Tenant is the Schema for the tenants API. Tenant is cluster-scoped and represent
 | `status.domain` | string |  | `Domain` is the custom domain a TenantDomain binds this tenant to, copied here by the operator so every consumer of EffectiveDomain reads it from the tenant… |
 | `status.hibernation` | object |  | `Hibernation` is what the operator last did about the tenant's sleep; absent for a tenant that never slept. |
 | `status.hibernation.asleep` | boolean |  | `Asleep` is true from when the tenant was put to sleep until it has been woken. |
+| `status.hibernation.recorded` | boolean |  | `Recorded` is true once the tenant's usage history carries this change. |
 | `status.hibernation.since` | string (date-time) |  | `Since` is when it was put to sleep, or woken. |
 | `status.mail` | object |  | `Mail` holds the observed DNS record data produced by the mail reconciler. |
 | `status.mail.dkimPublicKey` | string |  | `DKIMPublicKey` is the RSA public key for DKIM signing, base64-encoded (PKIX DER). |

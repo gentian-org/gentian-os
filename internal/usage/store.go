@@ -68,6 +68,20 @@ type PlanEvent struct {
 	Actor      string    `json:"actor,omitempty"`
 }
 
+// HibernationEvent records a tenant falling asleep or waking.
+//
+// A tenant that sleeps runs nothing, and what it is charged for while it does
+// is for whoever prices the plan to say. That needs the exact time of each
+// change, so these are kept like plan events: once, and never trimmed.
+type HibernationEvent struct {
+	OccurredAt time.Time `json:"occurredAt"`
+	// Asleep is true for falling asleep, false for waking.
+	Asleep bool `json:"asleep"`
+	// Actor is who asked for it; empty for a tenant that fell asleep because
+	// the time it was kept awake until had passed.
+	Actor string `json:"actor,omitempty"`
+}
+
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS tenant_resource_samples (
     observed_at  TIMESTAMPTZ NOT NULL,
@@ -91,6 +105,13 @@ CREATE TABLE IF NOT EXISTS tenant_resource_plan_events (
 );
 CREATE INDEX IF NOT EXISTS ix_tenant_resource_plan_events_occurred_at
     ON tenant_resource_plan_events (occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS tenant_hibernation_events (
+    occurred_at  TIMESTAMPTZ NOT NULL,
+    asleep       BOOLEAN     NOT NULL,
+    actor        TEXT        NOT NULL DEFAULT '',
+    PRIMARY KEY (occurred_at)
+);
 `
 
 // Store reads and writes one tenant's usage history.
@@ -318,9 +339,90 @@ func (s *Store) LastPlanBefore(ctx context.Context, t time.Time) (PlanEvent, boo
 	return e, true, nil
 }
 
+// RecordHibernationEvent appends a tenant falling asleep or waking.
+func (s *Store) RecordHibernationEvent(ctx context.Context, event HibernationEvent) error {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	// The operator writes the event of one change again when it could not
+	// note that it had: the time of the change is the key, and the first
+	// record of it stands.
+	_, err = conn.Exec(ctx, `
+        INSERT INTO tenant_hibernation_events (occurred_at, asleep, actor)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (occurred_at) DO NOTHING`,
+		event.OccurredAt.UTC(), event.Asleep, event.Actor)
+	if err != nil {
+		return fmt.Errorf("record hibernation event: %w", err)
+	}
+	return nil
+}
+
+// HibernationEvents returns the changes of a tenant's sleep in [from, to),
+// oldest first.
+func (s *Store) HibernationEvents(ctx context.Context, from, to time.Time) ([]HibernationEvent, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	rows, err := conn.Query(ctx, `
+        SELECT occurred_at, asleep, actor
+        FROM tenant_hibernation_events
+        WHERE occurred_at >= $1 AND occurred_at < $2
+        ORDER BY occurred_at`, from.UTC(), to.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("query hibernation events: %w", err)
+	}
+	defer rows.Close()
+
+	var out []HibernationEvent
+	for rows.Next() {
+		var e HibernationEvent
+		if err := rows.Scan(&e.OccurredAt, &e.Asleep, &e.Actor); err != nil {
+			return nil, fmt.Errorf("scan hibernation event: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read hibernation events: %w", err)
+	}
+	return out, nil
+}
+
+// AsleepBefore reports whether the tenant was asleep immediately before t. A
+// tenant with no event before t was awake: sleep is something that happens
+// to a tenant, and every time it did is on record.
+func (s *Store) AsleepBefore(ctx context.Context, t time.Time) (bool, error) {
+	conn, err := s.connect(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = conn.Close(ctx) }()
+
+	var asleep bool
+	err = conn.QueryRow(ctx, `
+        SELECT asleep
+        FROM tenant_hibernation_events
+        WHERE occurred_at < $1
+        ORDER BY occurred_at DESC
+        LIMIT 1`, t.UTC()).Scan(&asleep)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("query last hibernation event: %w", err)
+	}
+	return asleep, nil
+}
+
 // Prune deletes samples older than the cutoff.
 //
-// Plan events are never pruned: they are the billing record, they accrue at the
+// Plan events and hibernation events are never pruned: they are the billing record, they accrue at the
 // rate a tenant changes plan rather than at the rate of the clock, and an
 // invoice that cannot be reconstructed is worse than a table that grows by a
 // handful of rows a year.

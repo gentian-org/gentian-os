@@ -354,6 +354,11 @@ type TenantHibernation struct {
 	// asleep it says nothing.
 	// +optional
 	AwakeUntil *metav1.Time `json:"awakeUntil,omitempty"`
+
+	// SetBy names who last put the tenant to sleep or woke it. It is what
+	// the tenant's usage history records beside the change.
+	// +optional
+	SetBy string `json:"setBy,omitempty"`
 }
 
 // Asleep reports whether the tenant sleeps at a given time: it is asleep
@@ -389,6 +394,10 @@ type TenantHibernationStatus struct {
 	// Since is when it was put to sleep, or woken.
 	// +optional
 	Since *metav1.Time `json:"since,omitempty"`
+
+	// Recorded is true once the tenant's usage history carries this change.
+	// +optional
+	Recorded bool `json:"recorded,omitempty"`
 }
 
 // TenantDeletion is what a purge (deletionPolicy: Delete) leaves behind.

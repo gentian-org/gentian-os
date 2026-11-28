@@ -592,6 +592,8 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	// A plan change that Argo CD has synced is recorded in the usage history
 	// here, before the status it is noted on is written.
 	r.recordResourcePlan(ctx, tenant)
+	// So is a tenant that has woken (hibernation.go).
+	r.recordHibernation(ctx, tenant)
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
