@@ -621,8 +621,9 @@ cluster that wants an image to roll by itself writes one. See
 
 The desktop, the administration console, the App Store app and the concierge
 are charts published by `gentian-ui`. Their `ComponentProfile`s ship in this
-repository's chart, and the installer resolves the chart version each one
-names (`PORTAL_IMAGE_TAG`, step `D-03`). They are installed per tenant by the
+repository's chart, and the chart version each one names is the release's,
+or on a cluster that follows a branch the newest build (step `D-03`, then the
+operator's release reconciler). They are installed per tenant by the
 operator, not by an Argo CD Application of their own.
 
 ### 11.2 Install-time bootstrap

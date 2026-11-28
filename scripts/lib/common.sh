@@ -2847,7 +2847,33 @@ gentian_os_ref() {
         ref="$(git -C "${SCRIPT_DIR:-.}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
         [[ "${ref}" != "HEAD" ]] || ref=""
     fi
+    gentian_release_of_ref "${ref}"
+}
+
+# gentian_release_of_ref <ref> -- <ref>, with the release branch read as the
+# newest release.
+#
+# main holds releases and nothing else, so it is no branch a cluster follows
+# build by build: a cluster installed from it runs a release, and which one
+# is what its claim then declares (spec.release.version). Whoever installs
+# says "main" and never has to look a version number up; the newest is read
+# from the release index of this checkout, which is the release these files
+# are. Where the index names none, the ref stays as it is.
+GENTIAN_OS_RELEASE_BRANCH="main"
+gentian_release_of_ref() {
+    local ref="$1" newest
+    if [[ "${ref}" == "${GENTIAN_OS_RELEASE_BRANCH}" ]]; then
+        newest="$(gentian_newest_release)"
+        [[ -z "${newest}" ]] || ref="${newest}"
+    fi
     printf '%s\n' "${ref}"
+}
+
+# gentian_newest_release -- the highest version the release index of this
+# checkout lists (docs/releases/index.yaml), or nothing.
+gentian_newest_release() {
+    sed -nE 's/^  - version: (v[0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$/\1/p' \
+        "${SCRIPT_DIR:-.}/docs/releases/index.yaml" 2>/dev/null | sort -V | tail -n 1
 }
 
 # cluster_claim_path -- this cluster's Cluster claim in the deployments
@@ -2882,36 +2908,21 @@ claim_release_ref() {
     printf '%s\n' "${out}"
 }
 
-# The gentian-ui refs a cluster follows when install.env names none, each
-# with its one default here. GENTIAN_UI_BRANCH is the branch written to the
-# gentian-ui Repository claim: main. PORTAL_IMAGE_TAG is the branch whose
-# charts are installed: develop, the branch gentian-ui publishes charts from
-# (main publishes none; a release publishes under its tag).
+# The gentian-ui branch written to the gentian-ui Repository claim when
+# install.env names none: main. Which of its charts a cluster installs is not
+# a branch's to say: a release's are the release's, and a cluster that
+# follows a branch takes the newest build (scripts/steps/D-03-portal-login.sh).
 GENTIAN_UI_DEFAULT_BRANCH="main"
-GENTIAN_UI_DEFAULT_CHART_BRANCH="develop"
 gentian_ui_branch()        { printf '%s\n' "${GENTIAN_UI_BRANCH:-${GENTIAN_UI_DEFAULT_BRANCH}}"; }
-# The UI charts follow the release: a cluster on a release tag installs the
-# charts gentian-ui published under that tag, a cluster on a branch the
-# branch's. PORTAL_IMAGE_TAG overrides, for a cluster whose UIs are
-# deliberately elsewhere.
-gentian_ui_chart_branch() {
-    if [[ -n "${PORTAL_IMAGE_TAG:-}" ]]; then
-        printf '%s\n' "${PORTAL_IMAGE_TAG}"
-        return 0
-    fi
-    local ref
-    ref="$(claim_release_ref || true)"
-    case "${ref}" in
-        v[0-9]*.[0-9]*.[0-9]*) printf '%s\n' "${ref}" ;;
-        "") printf '%s\n' "${GENTIAN_UI_DEFAULT_CHART_BRANCH}" ;;
-        *) printf '%s\n' "${ref}" ;;
-    esac
-}
 
 resolve_gentian_os_branch() {
     local branch declared
-    declared="$(claim_release_ref || true)"
-    if [[ -n "${declared}" && -n "${GENTIAN_OS_BRANCH:-}" && "${declared}" != "${GENTIAN_OS_BRANCH}" ]]; then
+    declared="$(gentian_release_of_ref "$(claim_release_ref || true)")"
+    # install.env may go on saying main beside a claim that names a version:
+    # main says "a release", and the claim says which.
+    if [[ "${GENTIAN_OS_BRANCH:-}" == "${GENTIAN_OS_RELEASE_BRANCH}" && "${declared}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+        :
+    elif [[ -n "${declared}" && -n "${GENTIAN_OS_BRANCH:-}" && "${declared}" != "${GENTIAN_OS_BRANCH}" ]]; then
         error "install.env names GENTIAN_OS_BRANCH=${GENTIAN_OS_BRANCH}, and the Cluster claim's"
         error "  spec.release names ${declared}. The claim is where the cluster's release is"
         error "  declared, and this run renders what it says. To move the cluster:"
@@ -2922,7 +2933,7 @@ resolve_gentian_os_branch() {
     if [[ -n "${declared}" ]]; then
         branch="${declared}"
     elif [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
-        branch="${GENTIAN_OS_BRANCH}"
+        branch="$(gentian_release_of_ref "${GENTIAN_OS_BRANCH}")"
     else
         branch="$(gentian_os_ref)"
         if [[ -z "${branch}" ]]; then

@@ -163,3 +163,29 @@ reloader annotation for the ConfigMap, so a new model id restarts it.
       name: authorization-store
       key: modelID
 {{- end }}
+
+{{/*
+The chart version of a component the platform publishes itself: the desktop,
+the consoles and the concierge from gentian-ui, the home sync, the porter and
+the liaison from this repository. Called with (list . <component key>).
+
+What <key>.chart.version names wins. Left empty on a release (image.tag is
+X.Y.Z), it is the release's number: every chart of a release is published
+under it. A build of a branch does not say: its image tag names a commit, and
+its charts are X.Y.Z-dev.<n>.g<commit>, the newest of which the release
+reconciler (and the installer before it) reads from the registry and names
+here. Until one has, the version is one that no chart is published under, so
+that nothing is installed from a guess and the operator itself still renders.
+*/}}
+{{- define "gentian-os.componentChartVersion" -}}
+{{- $root := index . 0 -}}
+{{- $named := dig "chart" "version" "" (index $root.Values (index . 1)) -}}
+{{- $tag := $root.Values.image.tag | default "" -}}
+{{- if $named -}}
+{{- $named -}}
+{{- else if regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+$" $tag -}}
+{{- $tag -}}
+{{- else -}}
+0.0.0-unresolved
+{{- end -}}
+{{- end }}

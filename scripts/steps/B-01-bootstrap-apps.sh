@@ -81,27 +81,38 @@ _v5_apps_deferred() { echo "kernel-postgres"; }
 _v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced) $(_v5_apps_deferred)"; }
 
 
-# _v5_keep_chart_version — do not downgrade a component chart this cluster has
-# already resolved.
+# _v5_keep_chart_version <profile> [version] -- the chart version a render
+# names for one of the platform's own components.
 #
-# D-03 resolves a branch's newest IMMUTABLE chart version and passes it in.
-# Every other caller passes nothing, and nothing used to mean "the moving
-# version" -- so running B-01 on its own quietly reverted the desktop and the
-# administration console to a version string that never changes, which
-# provider-helm never upgrades, which means the first build the cluster ever
-# saw. On this cluster that put the desktop back on an image old enough to
-# loop on sign-in, hours after D-03 had moved it off.
-#
-# So an unset version means "keep what is installed", and only an empty
-# cluster falls through to the moving one.
+# D-03 reads the version from the registry or the release index and passes
+# it in. Every other caller passes nothing, and nothing means "what this
+# cluster installed": a render that named no version would take the
+# component back to whatever the operator chart works out by itself, which
+# on a cluster that follows a branch is no chart at all until the operator's
+# release reconciler has named the build again. An empty cluster has nothing
+# to keep, and the render leaves the version out.
 _v5_keep_chart_version() {
     local profile="$1" have="${2:-}"
     if [[ -n "${have}" ]]; then
         printf '%s' "${have}"
         return 0
     fi
-    kubectl get componentprofile "${profile}" \
-        -o jsonpath='{.spec.package.chart.version}' 2>/dev/null || true
+    have="$(kubectl get componentprofile "${profile}" \
+        -o jsonpath='{.spec.package.chart.version}' 2>/dev/null || true)"
+    # What the operator chart renders while nobody has named a version.
+    [[ "${have}" != "0.0.0-unresolved" ]] || have=""
+    printf '%s' "${have}"
+}
+
+# _v5_keep_build_version <profile> [version] -- the same for a component
+# published with the operator's image (home sync, porter, liaison), whose
+# version the operator chart reads off image.tag on a release: only a build
+# of a branch is kept, so that a release's is never held at the last one.
+_v5_keep_build_version() {
+    local have
+    have="$(_v5_keep_chart_version "$@")"
+    [[ "${have}" == *-dev.* ]] || have=""
+    printf '%s' "${have}"
 }
 
 # _v5_installer_username -- the user name the API server knows this
@@ -220,12 +231,12 @@ _v5_render() {
         --set-string "operator.tag=${GENTIAN_OS_IMAGE_TAG:-}" \
         --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-$(_v5_reached headlamp-oidc)}" \
         --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
-        --set-string "desktop.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "desktop.chartVersion=$(_v5_keep_chart_version desktop "${DESKTOP_CHART_VERSION:-}")" \
-        --set-string "adminConsole.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "adminConsole.chartVersion=$(_v5_keep_chart_version admin-console "${ADMIN_CONSOLE_CHART_VERSION:-}")" \
-        --set-string "concierge.chartBranch=$(gentian_ui_chart_branch)" \
         --set-string "concierge.chartVersion=$(_v5_keep_chart_version concierge "${CONCIERGE_CHART_VERSION:-}")" \
+        --set-string "homesync.chartVersion=$(_v5_keep_build_version homesync "${HOMESYNC_CHART_VERSION:-}")" \
+        --set-string "porter.chartVersion=$(_v5_keep_build_version porter "${PORTER_CHART_VERSION:-}")" \
+        --set-string "liaison.chartVersion=$(_v5_keep_build_version liaison "${LIAISON_CHART_VERSION:-}")" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \

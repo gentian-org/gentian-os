@@ -108,6 +108,7 @@ func TestCheckReleaseHoldsTheSchemasRules(t *testing.T) {
 		{Version: "0.5.1"},
 		{Version: "v0.5"},
 		{Track: "a branch"},
+		{Track: "main"},
 		{Track: "develop", AutoUpgrade: "patch"},
 		{Version: "v0.5.1", AutoUpgrade: "major"},
 	}

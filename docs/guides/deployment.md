@@ -256,7 +256,11 @@ the platform ships no `ImageUpdater` resource for itself. The detail is in
 
 The installer writes the first value from `GENTIAN_OS_BRANCH` when it
 scaffolds the claim, and from then on renders what the claim says: a run
-whose `install.env` names another ref stops and says so.
+whose `install.env` names another ref stops and says so. `main` is written
+as the newest release (`release.version`): it holds releases only and is no
+branch to follow, so an install from it needs no version number looked up,
+and `install.env` may go on saying `main` beside the version the claim
+names.
 
 ### Which tag a cluster runs
 

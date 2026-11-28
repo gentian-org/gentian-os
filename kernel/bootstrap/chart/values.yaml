@@ -96,30 +96,28 @@ llmEnabled: "false"
 
 # The desktop -- a component every tenant gets from the profile the operator
 # chart ships (admin-console.md §1.2). What the bootstrap decides is which
-# branch's chart that profile names: a prerelease per branch on a dev cluster,
-# and only some branches publish.
+# version of its chart that profile names. Empty leaves it to the operator
+# chart, which names the release's on a release; on a cluster that follows a
+# branch the kernel realm step reads the newest build from the registry and
+# sets it here, as the operator's release reconciler does from then on.
 desktop:
-  chartBranch: develop
-  # An exact chart version, which is what a cluster runs once the realm
-  # exists: the kernel realm step resolves the branch's newest immutable
-  # version and sets it here, because a Helm release under an unchanged
-  # version string is never upgraded, so the moving version can only ever
-  # install the first build it saw.
   chartVersion: ""
 
 # The operator (and, with it, the director) — applied by D-01, once the
 # identity services its reconcilers address exist.
-# The administration console's chart, published by gentian-ui beside the
-# desktop's. D-03 resolves the moving prerelease for the branch into the
-# immutable version it names and passes that as chartVersion; empty falls back
-# to the moving one, which installs but never upgrades.
+# The administration console's and the concierge's charts, published by
+# gentian-ui beside the desktop's and named the same way.
 adminConsole:
-  chartBranch: develop
   chartVersion: ""
-# The concierge's chart, from the same repository and branch, pinned the same
-# way.
 concierge:
-  chartBranch: develop
+  chartVersion: ""
+# The charts of the components this repository publishes with the operator's
+# image, named the same way.
+homesync:
+  chartVersion: ""
+porter:
+  chartVersion: ""
+liaison:
   chartVersion: ""
 
 operator:

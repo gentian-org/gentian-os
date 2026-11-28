@@ -127,41 +127,58 @@ spec:
         # What a signed-in person's desktop asks what it may show (§3.10).
         usher:
           enabled: true
-        # The desktop every tenant gets, from the branch this cluster follows.
+        # The desktop every tenant gets. Its chart version is named here
+        # when the installer resolved one: the newest build on a cluster that
+        # follows a branch, the release's where the release index lists it.
+        # Left out, the operator chart names the release's from image.tag
+        # (gentian-os.componentChartVersion).
         desktop:
           enabled: true
+          {{- with .Values.desktop.chartVersion }}
           chart:
-            version: {{ .Values.desktop.chartVersion | default (printf "0.1.0-%s" (.Values.desktop.chartBranch | default "develop")) | quote }}
-        # The administration console every tenant gets, from the branch of
-        # gentian-ui this cluster follows -- the desktop's repository and
-        # branch, since both are the platform's own UIs. Like the desktop, it is published
-        # as a moving prerelease per branch and an immutable one per commit,
-        # and what is pinned here is the immutable one -- a Helm release under
-        # an unchanged version string is never upgraded, so following the
-        # moving version would install the first build and then never move.
+            version: {{ . | quote }}
+          {{- end }}
+        # The administration console every tenant gets, from gentian-ui like
+        # the desktop and named the same way.
         adminConsole:
           enabled: true
+          {{- with .Values.adminConsole.chartVersion }}
           chart:
-            version: {{ .Values.adminConsole.chartVersion | default (printf "0.1.1-%s" (.Values.adminConsole.chartBranch | default "develop")) | quote }}
+            version: {{ . | quote }}
+          {{- end }}
         # The concierge: the page on the cluster's bare domain, the platform
-        # tenant's component, published from its DMZ. Pinned like the consoles.
+        # tenant's component, published from its DMZ. Named like the consoles.
         concierge:
           enabled: true
+          {{- with .Values.concierge.chartVersion }}
           chart:
-            version: {{ .Values.concierge.chartVersion | default (printf "0.1.0-%s" (.Values.concierge.chartBranch | default "develop")) | quote }}
-        # The home sync: every tenant's, from this repository's own chart.
-        # The chart follows image.tag, which Image Updater moves.
+            version: {{ . | quote }}
+          {{- end }}
+        # The home sync: every tenant's, from this repository's own chart,
+        # published with the operator's image and named like the consoles.
         homesync:
           enabled: true
+          {{- with .Values.homesync.chartVersion }}
+          chart:
+            version: {{ . | quote }}
+          {{- end }}
         # The porter, the platform's file dialog: every tenant's, published
-        # and followed as the home sync is.
+        # and named as the home sync is.
         porter:
           enabled: true
+          {{- with .Values.porter.chartVersion }}
+          chart:
+            version: {{ . | quote }}
+          {{- end }}
         # The liaison, a person's sign-ins at services outside the cluster:
-        # shipped for the app that comes with it, published and followed as
-        # the home sync is.
+        # shipped for the app that comes with it, published and named as the
+        # home sync is.
         liaison:
           enabled: true
+          {{- with .Values.liaison.chartVersion }}
+          chart:
+            version: {{ . | quote }}
+          {{- end }}
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from

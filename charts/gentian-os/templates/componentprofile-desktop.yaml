@@ -24,7 +24,7 @@ spec:
   # is the launcher rather than that it has no human surface.
   launch: none
   trustTier: platform
-  version: {{ .Values.desktop.chart.version | quote }}
+  version: {{ include "gentian-os.componentChartVersion" (list . "desktop") | quote }}
   # Every tenant gets one, the platform tenant included: the platform writes
   # it into each tenant's apps. Declared here, on the profile, so that
   # nothing knows the desktop by name: the administration console declares
@@ -35,7 +35,7 @@ spec:
     chart:
       repository: {{ .Values.desktop.chart.repository | quote }}
       name: {{ .Values.desktop.chart.name | quote }}
-      version: {{ .Values.desktop.chart.version | quote }}
+      version: {{ include "gentian-os.componentChartVersion" (list . "desktop") | quote }}
     valueMapping:
       # Where the desktop chart takes the facts of the cluster it runs in.
       # These used to arrive through a special case in the operator keyed on

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,8 +57,8 @@ func (f fakeResolver) BranchHead(context.Context, string, string) (string, error
 func (f fakeResolver) ImageExists(_ context.Context, image string) (bool, error) {
 	return f.images[image], nil
 }
-func (f fakeResolver) ChartBuild(_ context.Context, repo, moving string) (string, error) {
-	if v, ok := f.charts[repo+":"+moving]; ok {
+func (f fakeResolver) NewestBuild(_ context.Context, repo string) (string, error) {
+	if v, ok := f.charts[repo]; ok {
 		return v, nil
 	}
 	return "", errors.New("not published")
@@ -246,9 +247,12 @@ func TestATrackFollowsTheBranchOnceItsBuildIsPublished(t *testing.T) {
 	c := releaseClient(objs)
 	head := "89abcdef0123456789abcdef0123456789abcdef"
 	res := fakeResolver{head: head, images: map[string]bool{}, charts: map[string]string{
-		"ghcr.io/gentian-org/charts/gentian-portal:0.1.0-develop": "0.1.0-develop.89abcde",
-		"ghcr.io/gentian-org/charts/admin-console:0.1.1-develop":  "0.1.1-develop.89abcde",
-		"ghcr.io/gentian-org/charts/concierge:0.1.0-develop":      "0.1.0-develop.89abcde",
+		"ghcr.io/gentian-org/charts/gentian-portal": "0.5.3-dev.690.g1111111",
+		"ghcr.io/gentian-org/charts/admin-console":  "0.5.3-dev.688.g2222222",
+		"ghcr.io/gentian-org/charts/concierge":      "0.5.3-dev.671.g3333333",
+		"ghcr.io/gentian-org/charts/homesync":       "0.5.3-dev.4410.g89abcde",
+		"ghcr.io/gentian-org/charts/porter":         "0.5.3-dev.4410.g89abcde",
+		"ghcr.io/gentian-org/charts/liaison":        "0.5.3-dev.4410.g89abcde",
 	}}
 	r := newReconciler(c, indexServer(t).URL, res)
 	// Not built yet: the cluster waits where it is.
@@ -274,8 +278,13 @@ func TestATrackFollowsTheBranchOnceItsBuildIsPublished(t *testing.T) {
 	if tag, _, _ := unstructured.NestedString(src, "helm", "valuesObject", "image", "tag"); tag != "develop-89abcde" {
 		t.Fatalf("operator image tag = %q", tag)
 	}
-	if v, _, _ := unstructured.NestedString(src, "helm", "valuesObject", "desktop", "chart", "version"); v != "0.1.0-develop.89abcde" {
+	if v, _, _ := unstructured.NestedString(src, "helm", "valuesObject", "desktop", "chart", "version"); v != "0.5.3-dev.690.g1111111" {
 		t.Fatalf("desktop chart = %q", v)
+	}
+	// A branch build's image tag does not say its chart's version, so the
+	// components published with the operator are named too.
+	if v, _, _ := unstructured.NestedString(src, "helm", "valuesObject", "homesync", "chart", "version"); v != "0.5.3-dev.4410.g89abcde" {
+		t.Fatalf("homesync chart = %q", v)
 	}
 	status := releaseStatus(t, c)
 	if status["state"] != releaseApplied || status["revision"] != head || status["image"] != "develop-89abcde" {
@@ -342,5 +351,55 @@ func TestTheReleaseStatusIsReplacedNotMerged(t *testing.T) {
 	_ = c.Get(context.Background(), types.NamespacedName{Name: "cluster-abc12"}, xr)
 	if ns, _, _ := unstructured.NestedStringSlice(xr.Object, "status", "kernelNamespaces"); len(ns) != 1 {
 		t.Fatalf("status.kernelNamespaces = %v", ns)
+	}
+}
+
+func TestMainIsNoTrack(t *testing.T) {
+	objs := releaseFixtures(map[string]any{"track": "main"})
+	c := releaseClient(objs)
+	head := "89abcdef0123456789abcdef0123456789abcdef"
+	res := fakeResolver{head: head, images: map[string]bool{"ghcr.io/gentian-org/gentian-os:main-89abcde": true}}
+	if err := newReconciler(c, indexServer(t).URL, res).Once(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status := releaseStatus(t, c)
+	message, _ := status["message"].(string)
+	if status["state"] != releaseRefused || !strings.Contains(message, "kubectl gentian release set") || !strings.Contains(message, "the newest is v0.6.0") {
+		t.Fatalf("status.release = %v", status)
+	}
+	if rev, _, _ := unstructured.NestedString(applicationSources(getApp(t, c, "cnpg"))[0], "targetRevision"); rev == head {
+		t.Fatal("a refused track must move nothing")
+	}
+}
+
+func TestTheNewestBuildIsTheHighestBySemver(t *testing.T) {
+	best := ""
+	for _, tag := range []string{
+		"0.1.0-develop", "0.1.0-develop.89abcde", "0.1.0-v0.5.2", "0.5.2", "0.5.3",
+		"0.5.3-dev.9.gaaaaaaa", "0.5.3-dev.812.g0123456", "0.5.3-dev.90.gbbbbbbb",
+		"0.5.4-dev.3.gccccccc", "0.5.4-dev.3", "sha256-abc.sig",
+	} {
+		if newerBuild(tag, best) {
+			best = tag
+		}
+	}
+	if best != "0.5.4-dev.3.gccccccc" {
+		t.Fatalf("newest build = %q", best)
+	}
+	if newerBuild("0.5.3", "") || newerBuild("0.1.0-develop.89abcde", "") {
+		t.Fatal("a release and a version of the old scheme are no builds of a branch")
+	}
+}
+
+func TestTheNextPageOfAListIsReadOffItsLinkHeader(t *testing.T) {
+	for link, want := range map[string]string{
+		"": "",
+		`</v2/org/charts/x/tags/list?last=0.5.3&n=1000>; rel="next"`: "https://ghcr.io/v2/org/charts/x/tags/list?last=0.5.3&n=1000",
+		`<https://r.example/v2/x/tags/list?last=a>; rel="next"`:      "https://r.example/v2/x/tags/list?last=a",
+		`</v2/x/tags/list?last=a>; rel="prev"`:                       "",
+	} {
+		if got := nextPage("ghcr.io", link); got != want {
+			t.Errorf("nextPage(%q) = %q, want %q", link, got, want)
+		}
 	}
 }

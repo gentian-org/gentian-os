@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -73,44 +74,88 @@ func (h *httpReleaseResolver) ImageExists(ctx context.Context, image string) (bo
 	return false, fmt.Errorf("%s: HTTP %d", image, status)
 }
 
-// ChartBuild reads the moving chart's config blob, whose appVersion names
-// the immutable build the moving version points at (how gentian-ui
-// publishes: 0.1.0-develop's appVersion is 0.1.0-develop.<sha>).
-func (h *httpReleaseResolver) ChartBuild(ctx context.Context, repo, moving string) (string, error) {
+// NewestBuild lists the chart's versions (tags/list, every page) and
+// returns the highest build of a branch among them.
+func (h *httpReleaseResolver) NewestBuild(ctx context.Context, repo string) (string, error) {
 	host, name, _ := strings.Cut(repo, "/")
 	token, err := h.pullToken(ctx, host, name)
 	if err != nil {
 		return "", err
 	}
-	body, status, err := h.get(ctx, fmt.Sprintf("https://%s/v2/%s/manifests/%s", host, name, moving), token)
-	if err != nil {
-		return "", err
+	best := ""
+	url := fmt.Sprintf("https://%s/v2/%s/tags/list?n=1000", host, name)
+	for page := 0; url != ""; page++ {
+		if page == maxTagPages {
+			return "", fmt.Errorf("chart %s lists more than %d pages of versions", repo, maxTagPages)
+		}
+		body, status, header, err := h.do(ctx, url, token)
+		if err != nil {
+			return "", err
+		}
+		if status != http.StatusOK {
+			return "", fmt.Errorf("chart %s: its versions answer HTTP %d", repo, status)
+		}
+		var list struct {
+			Tags []string `json:"tags"`
+		}
+		if err := json.Unmarshal(body, &list); err != nil {
+			return "", fmt.Errorf("chart %s: its versions cannot be read: %w", repo, err)
+		}
+		for _, tag := range list.Tags {
+			if newerBuild(tag, best) {
+				best = tag
+			}
+		}
+		url = nextPage(host, header.Get("Link"))
 	}
-	if status != http.StatusOK {
-		return "", fmt.Errorf("chart %s:%s is not published (HTTP %d)", repo, moving, status)
+	if best == "" {
+		return "", fmt.Errorf("chart %s has no build of a branch (X.Y.Z-dev.<n>.g<commit>)", repo)
 	}
-	var manifest struct {
-		Config struct {
-			Digest string `json:"digest"`
-		} `json:"config"`
+	return best, nil
+}
+
+// maxTagPages bounds the walk over a chart's versions: a registry that
+// keeps naming a next page is not followed forever.
+const maxTagPages = 200
+
+var (
+	branchBuild = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.([0-9]+)-dev\.([0-9]+)\.g[0-9a-f]+$`)
+	linkNext    = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="?next"?`)
+)
+
+// newerBuild says whether a is a build of a branch and sorts above b, by
+// semver: the release it leads up to first, then its number, which grows
+// with every commit. An empty or foreign b is below every build.
+func newerBuild(a, b string) bool {
+	am := branchBuild.FindStringSubmatch(a)
+	if am == nil {
+		return false
 	}
-	if err := json.Unmarshal(body, &manifest); err != nil || manifest.Config.Digest == "" {
-		return "", fmt.Errorf("chart %s:%s has no config blob", repo, moving)
+	bm := branchBuild.FindStringSubmatch(b)
+	if bm == nil {
+		return true
 	}
-	body, status, err = h.get(ctx, fmt.Sprintf("https://%s/v2/%s/blobs/%s", host, name, manifest.Config.Digest), token)
-	if err != nil {
-		return "", err
+	for i := 1; i <= 4; i++ {
+		x, _ := strconv.ParseUint(am[i], 10, 64)
+		y, _ := strconv.ParseUint(bm[i], 10, 64)
+		if x != y {
+			return x > y
+		}
 	}
-	if status != http.StatusOK {
-		return "", fmt.Errorf("chart %s:%s: its config blob answers HTTP %d", repo, moving, status)
+	return false
+}
+
+// nextPage is the address a Link header names as the next page of a list,
+// which a registry gives relative to itself; "" when there is none.
+func nextPage(host, link string) string {
+	m := linkNext.FindStringSubmatch(link)
+	if m == nil {
+		return ""
 	}
-	var config struct {
-		AppVersion string `json:"appVersion"`
+	if strings.HasPrefix(m[1], "/") {
+		return "https://" + host + m[1]
 	}
-	if err := json.Unmarshal(body, &config); err != nil || !strings.HasPrefix(config.AppVersion, moving+".") {
-		return "", fmt.Errorf("chart %s:%s names no immutable build (appVersion %q)", repo, moving, config.AppVersion)
-	}
-	return config.AppVersion, nil
+	return m[1]
 }
 
 func (h *httpReleaseResolver) pullToken(ctx context.Context, host, repo string) (string, error) {
@@ -131,9 +176,15 @@ func (h *httpReleaseResolver) pullToken(ctx context.Context, host, repo string) 
 }
 
 func (h *httpReleaseResolver) get(ctx context.Context, url, token string) ([]byte, int, error) {
+	body, status, _, err := h.do(ctx, url, token)
+	return body, status, err
+}
+
+// do is get with the answer's headers.
+func (h *httpReleaseResolver) do(ctx context.Context, url, token string) ([]byte, int, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	req.Header.Set("Accept", strings.Join([]string{
 		"application/vnd.oci.image.manifest.v1+json",
@@ -151,14 +202,14 @@ func (h *httpReleaseResolver) get(ctx context.Context, url, token string) ([]byt
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	defer func() { _ = res.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 4<<20))
 	if err != nil {
-		return nil, res.StatusCode, err
+		return nil, res.StatusCode, res.Header, err
 	}
-	return body, res.StatusCode, nil
+	return body, res.StatusCode, res.Header, nil
 }
 
 // splitImage reads "host/repo/name:tag".

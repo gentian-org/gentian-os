@@ -26,7 +26,7 @@ spec:
   # have one.
   launch: none
   trustTier: platform
-  version: {{ .Values.concierge.chart.version | quote }}
+  version: {{ include "gentian-os.componentChartVersion" (list . "concierge") | quote }}
   # The cluster has one, and it is the platform tenant's.
   placement:
     tenants: platform
@@ -34,7 +34,7 @@ spec:
     chart:
       repository: {{ .Values.concierge.chart.repository | quote }}
       name: {{ .Values.concierge.chart.name | quote }}
-      version: {{ .Values.concierge.chart.version | quote }}
+      version: {{ include "gentian-os.componentChartVersion" (list . "concierge") | quote }}
     extraValues:
       # The name the Service the exposure below routes to derives from.
       fullnameOverride: concierge

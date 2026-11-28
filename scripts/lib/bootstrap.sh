@@ -2249,6 +2249,35 @@ ensure_claim_release_section() {
     info "claims/cluster.yaml: spec.release added, naming $(gentian_os_ref); the claim declares the cluster's release from here on."
 }
 
+# ensure_claim_follows_no_release_branch <claim file>
+# A claim that follows main (spec.release.track: main) is made to name the
+# release it runs: main holds releases only, the operator refuses it as a
+# track, and no chart is published per commit of it. The version is the one
+# this run renders, the newest the release index of this checkout lists.
+ensure_claim_follows_no_release_branch() {
+    local claim="$1" version tmp
+    [[ -f "${claim}" ]] || return 0
+    grep -qE "^    track:[[:space:]]*[\"']?${GENTIAN_OS_RELEASE_BRANCH}[\"']?[[:space:]]*(#.*)?\$" "${claim}" || return 0
+    version="$(gentian_newest_release)"
+    if [[ -z "${version}" ]]; then
+        warn "claims/cluster.yaml follows ${GENTIAN_OS_RELEASE_BRANCH}, which is no track, and this checkout's release index names no release to put in its place."
+        return 0
+    fi
+    tmp="$(mktemp)"
+    sed -E "s/^    track:[[:space:]]*[\"']?${GENTIAN_OS_RELEASE_BRANCH}[\"']?[[:space:]]*(#.*)?\$/    version: ${version}/" "${claim}" > "${tmp}" && cat "${tmp}" > "${claim}"
+    rm -f "${tmp}"
+    info "claims/cluster.yaml: spec.release.track ${GENTIAN_OS_RELEASE_BRANCH} is now version ${version}; ${GENTIAN_OS_RELEASE_BRANCH} holds releases and is not followed build by build."
+}
+
+# preview_claim_follows_no_release_branch <claim file> -- what
+# ensure_claim_follows_no_release_branch would do, without doing it.
+preview_claim_follows_no_release_branch() {
+    local claim="$1"
+    [[ -f "${claim}" ]] || return 0
+    grep -qE "^    track:[[:space:]]*[\"']?${GENTIAN_OS_RELEASE_BRANCH}[\"']?[[:space:]]*(#.*)?\$" "${claim}" || return 0
+    info "would turn spec.release.track ${GENTIAN_OS_RELEASE_BRANCH} in claims/cluster.yaml into version $(gentian_newest_release)"
+}
+
 # ensure_claim_names_no_role_group <claim file>
 # A claim that still says which Keycloak group holds a cluster role
 # (spec.platformRoles) has the section taken out, with the comment the
@@ -3687,12 +3716,14 @@ require_cluster_deployment() {
     if gentian_read_only; then
         preview_claim_catalogue_section "${claim}"
         preview_claim_release_section "${claim}"
+        preview_claim_follows_no_release_branch "${claim}"
         preview_claim_names_no_role_group "${claim}"
         preview_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
         preview_default_profiles "${cluster}"
     else
         ensure_claim_catalogue_section "${claim}"
         ensure_claim_release_section "${claim}"
+        ensure_claim_follows_no_release_branch "${claim}"
         ensure_claim_names_no_role_group "${claim}"
         ensure_claim_store_catalogues "${claim}" "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants"
     fi

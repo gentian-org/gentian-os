@@ -65,7 +65,10 @@ spec:
 
 `version` names a tag the release index lists. `track` names a gentian-os
 branch; the two exclude each other, and `autoUpgrade` has no meaning with a
-track. The index (`docs/releases/index.yaml`, written by the version commit
+track. `main` is no track: it holds releases and nothing else, so a cluster
+that runs a release declares its version. An install from `main` writes the
+newest release as `version`, the operator refuses `track: main`, and so does
+the director. The index (`docs/releases/index.yaml`, written by the version commit
 of every release) lists for each release its line, the day, the notes, the
 gentian-ui charts built for it, the catalog it reads and `upgradesFrom`, the
 version lines it is applied onto in place; a release that is installed
@@ -79,6 +82,8 @@ release, and a version the index does not list is refused. For a track, the
 revision is the branch's head and the image the build CI published for that
 commit; the cluster waits (`Pending`) while the build is not published yet,
 so a branch tip never puts a cluster onto an image that does not exist. The
+charts of the platform's own components on a track are the newest builds of
+a branch the registry lists (§2.2). The
 infra charts the Cluster composition reads follow by themselves: the
 composition synced at the new revision names its own. `status.release`
 records the revision and image applied, the state, and what the index
@@ -131,6 +136,32 @@ operator's own bundle check
 (`internal/profilebundle`, `TestThePublishedCataloguesConform`), so a
 platform change that breaks a published profile fails the platform's pull
 request, not a tenant's install.
+
+### 2.2 The charts of the platform's own components
+
+The desktop, the administration console and the concierge (gentian-ui), and
+the home sync, the porter and the liaison (this repository), are installed
+per tenant from charts in `oci://ghcr.io/gentian-org/charts`. Each chart is
+published under the version of its build, the convention of charts shipped
+with their software:
+
+| Build | Chart version |
+| --- | --- |
+| release tag `vX.Y.Z` | `X.Y.Z` |
+| `develop` | `X.Y.Z-dev.<n>.g<commit>` |
+
+A build of `develop` is a prerelease of the next patch after the newest
+release tag, and `<n>` is the number of commits behind it
+(`scripts/tools/chart-version.sh`; gentian-ui carries the same script). So
+the builds sort in the order they were made, each below the release it leads
+up to, and a version never names a different build than it did.
+
+A cluster on a release installs the release's charts: the index names
+gentian-ui's, and the operator chart names the other three from the
+operator's image tag, which is the release's number. A cluster on a track
+installs the newest build of each: the release reconciler lists the chart's
+versions in the registry and takes the highest build of a branch, and the
+installer's kernel realm step does the same before the operator runs.
 
 ## 3. One build object per build
 

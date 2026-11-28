@@ -46,7 +46,9 @@ import (
 // revision is the branch's head, the image the build CI published for that
 // commit, and the cluster waits (Pending) while the build is not published
 // yet, so a branch tip never puts a cluster onto an image that does not
-// exist. The infra charts the Cluster composition reads follow by
+// exist; its component charts are the newest builds of a branch the
+// registry lists. main is no track: it holds releases only, and a cluster
+// that runs a release declares its version. The infra charts the Cluster composition reads follow by
 // themselves: the composition synced at the new revision names its own.
 //
 // What was done is written on the claim's status (status.release), with
@@ -77,15 +79,17 @@ type ReleaseReconciler struct {
 }
 
 // ReleaseResolver answers the questions a track needs: where a branch is,
-// whether a build is published, and which build a moving chart names.
+// whether a build is published, and which build of a chart is the newest.
 type ReleaseResolver interface {
 	// BranchHead is the commit a branch of a git repository points to.
 	BranchHead(ctx context.Context, repoURL, branch string) (string, error)
 	// ImageExists says whether an image, "ghcr.io/org/name:tag", is published.
 	ImageExists(ctx context.Context, image string) (bool, error)
-	// ChartBuild is the immutable version a moving chart version names:
-	// "0.1.0-develop" of "ghcr.io/org/charts/name" is "0.1.0-develop.abc1234".
-	ChartBuild(ctx context.Context, repo, moving string) (string, error)
+	// NewestBuild is the highest version among a chart's builds of a
+	// branch: of "ghcr.io/org/charts/name", "0.5.3-dev.812.gabc1234". A
+	// build is a prerelease of the release it leads up to, numbered by its
+	// commit count, so the highest is the newest.
+	NewestBuild(ctx context.Context, repo string) (string, error)
 }
 
 const (
@@ -100,6 +104,9 @@ const (
 	releaseRefused   = "Refused"
 	releaseUnmanaged = "Unmanaged"
 
+	// releaseBranch is the branch that holds the releases and nothing else.
+	releaseBranch = "main"
+
 	// The Applications the bootstrap chart renders with values of their
 	// own, beyond a source's targetRevision.
 	appsetsApplication  = "gentian-appsets"
@@ -107,22 +114,22 @@ const (
 )
 
 // uiComponents maps the operator chart's UI value keys to the gentian-ui
-// chart each installs, and the base version the bootstrap chart pins them
-// at when the Application names none.
-var uiComponents = []struct{ key, chart, base string }{
-	{"desktop", "gentian-portal", "0.1.0"},
-	{"adminConsole", "admin-console", "0.1.1"},
-	{"concierge", "concierge", "0.1.0"},
+// chart each installs. A release's index entry lists their versions.
+var uiComponents = []struct{ key, chart string }{
+	{"desktop", "gentian-portal"},
+	{"adminConsole", "admin-console"},
+	{"concierge", "concierge"},
 }
 
-// derivedFromImage are the operator chart's values it works out from
-// image.tag when they are left empty. A value an earlier install wrote there
-// would hold its component at that build through every release, so it is
-// taken out whenever the image moves.
-var derivedFromImage = [][]string{
-	{"homesync", "chart", "version"},
-	{"porter", "chart", "version"},
-	{"liaison", "chart", "version"},
+// ownComponents are the components published from this repository with the
+// operator's image. The operator chart works their chart version out from
+// image.tag on a release, so a version's plan names none and what an
+// earlier plan wrote is taken out; a track names the build of each, since a
+// branch build's image tag does not say its chart's version.
+var ownComponents = []struct{ key, chart string }{
+	{"homesync", "homesync"},
+	{"porter", "porter"},
+	{"liaison", "liaison"},
 }
 
 // NeedLeaderElection keeps one replica applying.
@@ -155,9 +162,12 @@ type releaseSpec struct {
 // releasePlan is what a spec resolves to.
 type releasePlan struct {
 	Revision, Image string
-	// UI is the chart version per component key; absent keys are left as
-	// they are.
+	// UI is the chart version per gentian-ui component key; absent keys are
+	// left as they are.
 	UI map[string]string
+	// Own is the chart version per component key of ownComponents; an
+	// absent key is taken out of the Application, for the chart to work out.
+	Own map[string]string
 }
 
 // Once applies every Cluster claim's spec.release.
@@ -266,7 +276,14 @@ func (r *ReleaseReconciler) resolve(ctx context.Context, spec releaseSpec, idx r
 		}
 		return plan, releaseApplied, fmt.Sprintf("release %s", entry.Version)
 	}
-	repo, image, bases, err := r.currentPins(ctx)
+	if spec.Track == releaseBranch {
+		message := releaseBranch + " holds releases only and is not a branch a cluster follows: declare the version to run (kubectl gentian release set vX.Y.Z)"
+		if newest, ok := idx.Newest(); idxErr == nil && ok {
+			message += "; the newest is " + newest.Version
+		}
+		return nil, releaseRefused, message
+	}
+	repo, image, err := r.currentPins(ctx)
 	if err != nil {
 		return nil, releasePending, err.Error()
 	}
@@ -283,14 +300,20 @@ func (r *ReleaseReconciler) resolve(ctx context.Context, spec releaseSpec, idx r
 	if !ok {
 		return nil, releasePending, fmt.Sprintf("branch %s is at %s, whose build %s:%s is not published yet", spec.Track, head[:7], image, tag)
 	}
-	plan := &releasePlan{Revision: head, Image: tag, UI: map[string]string{}}
+	plan := &releasePlan{Revision: head, Image: tag, UI: map[string]string{}, Own: map[string]string{}}
 	for _, c := range uiComponents {
-		moving := bases[c.key] + "-" + spec.Track
-		build, err := res.ChartBuild(ctx, defaultChartRegistry+"/"+c.chart, moving)
+		build, err := res.NewestBuild(ctx, defaultChartRegistry+"/"+c.chart)
 		if err != nil {
-			return nil, releasePending, fmt.Sprintf("chart %s:%s names no build: %v", c.chart, moving, err)
+			return nil, releasePending, fmt.Sprintf("the newest build of chart %s could not be read: %v", c.chart, err)
 		}
 		plan.UI[c.key] = build
+	}
+	for _, c := range ownComponents {
+		build, err := res.NewestBuild(ctx, defaultChartRegistry+"/"+c.chart)
+		if err != nil {
+			return nil, releasePending, fmt.Sprintf("the newest build of chart %s could not be read: %v", c.chart, err)
+		}
+		plan.Own[c.key] = build
 	}
 	return plan, releaseApplied, fmt.Sprintf("branch %s at %s", spec.Track, head[:7])
 }
@@ -306,18 +329,14 @@ func branchImageTag(branch, sha string) string {
 }
 
 // currentPins reads the gentian-os Application for the repository it
-// follows, the operator image it runs and the base of each UI chart's
-// version, so a track resolves against what the cluster was installed with
-// rather than against constants alone.
-func (r *ReleaseReconciler) currentPins(ctx context.Context) (repo, image string, bases map[string]string, err error) {
-	repo, image, bases = defaultGentianOSRepo, defaultOperatorImage, map[string]string{}
-	for _, c := range uiComponents {
-		bases[c.key] = c.base
-	}
+// follows and the operator image it runs, so a track resolves against what
+// the cluster was installed with rather than against constants alone.
+func (r *ReleaseReconciler) currentPins(ctx context.Context) (repo, image string, err error) {
+	repo, image = defaultGentianOSRepo, defaultOperatorImage
 	app := &unstructured.Unstructured{}
 	app.SetGroupVersionKind(argoApplicationGVK)
 	if err := r.Reader.Get(ctx, types.NamespacedName{Namespace: argocdNamespace, Name: operatorApplication}, app); err != nil {
-		return "", "", nil, fmt.Errorf("the %s Application could not be read: %w", operatorApplication, err)
+		return "", "", fmt.Errorf("the %s Application could not be read: %w", operatorApplication, err)
 	}
 	for _, src := range applicationSources(app) {
 		if path, _, _ := unstructured.NestedString(src, "path"); path == "charts/gentian-os" {
@@ -327,16 +346,9 @@ func (r *ReleaseReconciler) currentPins(ctx context.Context) (repo, image string
 			if v, _, _ := unstructured.NestedString(src, "helm", "valuesObject", "image", "repository"); v != "" {
 				image = v
 			}
-			for _, c := range uiComponents {
-				if v, _, _ := unstructured.NestedString(src, "helm", "valuesObject", c.key, "chart", "version"); v != "" {
-					if base, _, ok := strings.Cut(v, "-"); ok && base != "" {
-						bases[c.key] = base
-					}
-				}
-			}
 		}
 	}
-	return repo, image, bases, nil
+	return repo, image, nil
 }
 
 var (
@@ -389,7 +401,7 @@ func sameRepo(a, b string) bool {
 // set, which follows gentian-appsets). Returns how many changed.
 func (r *ReleaseReconciler) apply(ctx context.Context, plan *releasePlan) (int, error) {
 	repo := defaultGentianOSRepo
-	if cur, _, _, err := r.currentPins(ctx); err == nil {
+	if cur, _, err := r.currentPins(ctx); err == nil {
 		repo = cur
 	}
 	list := &unstructured.UnstructuredList{}
@@ -424,8 +436,12 @@ func (r *ReleaseReconciler) apply(ctx context.Context, plan *releasePlan) (int, 
 				for key, version := range plan.UI {
 					touched = setIfDiffers(src, version, "helm", "valuesObject", key, "chart", "version") || touched
 				}
-				for _, fields := range derivedFromImage {
-					touched = removeIfSet(src, append([]string{"helm", "valuesObject"}, fields...)...) || touched
+				for _, c := range ownComponents {
+					if version := plan.Own[c.key]; version != "" {
+						touched = setIfDiffers(src, version, "helm", "valuesObject", c.key, "chart", "version") || touched
+					} else {
+						touched = removeIfSet(src, "helm", "valuesObject", c.key, "chart", "version") || touched
+					}
 				}
 			}
 		}
