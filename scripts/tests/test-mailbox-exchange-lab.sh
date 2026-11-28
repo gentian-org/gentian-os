@@ -2,25 +2,26 @@
 # =============================================================================
 # scripts/tests/test-mailbox-exchange-lab.sh
 # =============================================================================
-# An agent bridge opens a person's mailbox with a token it obtains by
-# exchange, and nothing else does (docs/security/design.md §2.16).
+# An agent bridge opens a person's mailbox with the token it is handed for a
+# call, and nothing else does (docs/security/design.md §2.16).
 #
 # The realm is built the way the platform builds it, by hand through the
-# Admin API: a sign-in client that names the chaperone's exchange client in
-# its tokens' audience, the exchange scope app-<bridge> whose one mapper puts
-# the bridge's profile name in the audience, the scope "mailbox" whose one
-# mapper puts gentian-dovecot there, and the bridge's own client as apprender
-# renders it for a bridge that declares requires.services.mail.imap.tokenSignIn
-# (identity_client.go): confidential, no flow but the standard token exchange,
-# "mailbox" among its optional scopes. Beside it a second bridge that does not
-# declare it.
+# Admin API: a sign-in client that names the vouching component's client in
+# its tokens' audience, the scope app-<bridge> per bridge whose one mapper
+# puts the bridge's profile name in the audience, and the scope "mailbox"
+# whose one mapper puts gentian-dovecot there. The vouching component's
+# client has the app scopes and, because the tenant has a bridge that declares
+# requires.services.mail.imap.tokenSignIn, "mailbox" among its optional
+# scopes (tenant-default.yaml). A second vouching client, of a component
+# below the platform's trust, has neither. No bridge has a client.
 #
-# Then the chain a call takes: the person's token, exchanged by the chaperone
-# for the bridge, exchanged by the bridge for "mailbox" -- and every shortcut
+# Then the chain a call takes: the person's token, exchanged by the vouching
+# component for the bridge and "mailbox" in one step -- and every shortcut
 # refused. Last, Dovecot itself, with the oauth2 block and the realm's keys the
 # mail reconciler writes (dovecotOAuth2Conf, dovecotRealmKeys), checks the
-# token locally, signs the person in over IMAP with it, and refuses the token
-# one step before it and another person's mailbox.
+# token locally, signs the person in over IMAP with it, and refuses a token
+# for another bridge, a token of a client it does not know, and another
+# person's mailbox.
 #
 # Needs docker, curl, jq, openssl and python3. Not part of CI: it pulls and
 # boots Keycloak and Dovecot.
@@ -56,8 +57,8 @@ OTHER="other-agent-bridge-ee"
 ADMIN_PW="$(openssl rand -hex 12)"
 PERSON_PW="$(openssl rand -hex 12)"
 EXCHANGER_SECRET="$(openssl rand -hex 16)"
-BRIDGE_SECRET="$(openssl rand -hex 16)"
-OTHER_SECRET="$(openssl rand -hex 16)"
+NARROW_SECRET="$(openssl rand -hex 16)"
+WEBMAIL_SECRET="$(openssl rand -hex 16)"
 DOVECOT_SECRET="$(openssl rand -hex 16)"
 WORK="$(mktemp -d)"
 
@@ -116,8 +117,12 @@ admin POST "/${REALM}/clients" '{"clientId": "zone", "publicClient": true, "dire
     "standardFlowEnabled": false}' >/dev/null
 admin POST "/${REALM}/clients/$(client_uuid zone)/protocol-mappers/models" "$(audience_mapper exchange-audience exchanger)" >/dev/null
 
-# The chaperone's exchange: one client allowed to exchange, one scope per bridge.
+# The vouching component's exchange: one client allowed to exchange, one scope
+# per bridge. And the client of a component below the platform's trust, which
+# exchanges too and is given no scope.
 admin POST "/${REALM}/clients" "$(confidential exchanger "${EXCHANGER_SECRET}" "$(jq -nc --argjson e "${exchange_enabled}" '$e + {fullScopeAllowed: false}')")" >/dev/null
+admin POST "/${REALM}/clients" "$(confidential narrow "${NARROW_SECRET}" "$(jq -nc --argjson e "${exchange_enabled}" '$e + {fullScopeAllowed: false}')")" >/dev/null
+admin POST "/${REALM}/clients/$(client_uuid zone)/protocol-mappers/models" "$(audience_mapper narrow-audience narrow)" >/dev/null
 for b in "${BRIDGE}" "${OTHER}"; do
     admin POST "/${REALM}/client-scopes" "$(jq -nc --arg n "app-${b}" '{name: $n, protocol: "openid-connect",
         attributes: {"include.in.token.scope": "true"}}')" >/dev/null
@@ -130,11 +135,11 @@ admin POST "/${REALM}/client-scopes" '{"name": "mailbox", "protocol": "openid-co
     "attributes": {"include.in.token.scope": "true"}}' >/dev/null
 admin POST "/${REALM}/client-scopes/$(scope_uuid mailbox)/protocol-mappers/models" "$(audience_mapper mailbox-audience "" gentian-dovecot)" >/dev/null
 
-# The bridges' own clients, as apprender renders a bridge's: the one that
-# declares tokenSignIn has "mailbox" among its optional scopes, the other not.
-admin POST "/${REALM}/clients" "$(confidential "${BRIDGE}" "${BRIDGE_SECRET}" "${exchange_enabled}")" >/dev/null
-admin POST "/${REALM}/clients" "$(confidential "${OTHER}" "${OTHER_SECRET}" "${exchange_enabled}")" >/dev/null
-admin PUT "/${REALM}/clients/$(client_uuid "${BRIDGE}")/optional-client-scopes/$(scope_uuid mailbox)" >/dev/null
+# Who has the scope: the vouching component's client, and an app's own
+# sign-in client that declares tokenSignIn (webmail). A bridge has no client.
+admin PUT "/${REALM}/clients/$(client_uuid exchanger)/optional-client-scopes/$(scope_uuid mailbox)" >/dev/null
+admin POST "/${REALM}/clients" "$(confidential webmail "${WEBMAIL_SECRET}" '{"directAccessGrantsEnabled": true}')" >/dev/null
+admin PUT "/${REALM}/clients/$(client_uuid webmail)/optional-client-scopes/$(scope_uuid mailbox)" >/dev/null
 
 TOKEN_URL="${KC}/realms/${REALM}/protocol/openid-connect/token"
 exchange() { # <client> <secret> <subject token> <scope> — the whole answer
@@ -164,14 +169,12 @@ SIGNIN="$(curl -sf -X POST "${TOKEN_URL}" -d client_id=zone -d username=ada \
     --data-urlencode "password=${PERSON_PW}" -d grant_type=password -d scope=openid | jq -r .access_token)"
 check "the person signs in" '[[ -n "${SIGNIN}" && "${SIGNIN}" != null ]]'
 
-APP="$(exchange exchanger "${EXCHANGER_SECRET}" "${SIGNIN}" "app-${BRIDGE}" | jq -r '.access_token // empty')"
-check "the chaperone exchanges it for the bridge" '[[ -n "${APP}" ]] && aud_has "${APP}" "${BRIDGE}"' \
-    "  $(claims "${APP}")"
-
-ANSWER="$(exchange "${BRIDGE}" "${BRIDGE_SECRET}" "${APP}" mailbox)"
+ANSWER="$(exchange exchanger "${EXCHANGER_SECRET}" "${SIGNIN}" "app-${BRIDGE} mailbox")"
 MAILBOX="$(jq -r '.access_token // empty' <<<"${ANSWER}")"
-check "the bridge exchanges that for mailbox" '[[ -n "${MAILBOX}" ]]' "  ${ANSWER}"
+check "the vouching component exchanges it for the bridge and mailbox" '[[ -n "${MAILBOX}" ]]' "  ${ANSWER}"
+check "  its audience names the bridge" 'aud_has "${MAILBOX}" "${BRIDGE}"' "  $(claims "${MAILBOX}")"
 check "  its audience names the mail server" 'aud_has "${MAILBOX}" gentian-dovecot' "  $(claims "${MAILBOX}")"
+check "  and no other bridge" '! aud_has "${MAILBOX}" "${OTHER}"' "  $(claims "${MAILBOX}")"
 check "  its scope says mailbox" 'claims "${MAILBOX}" | jq -e ".scope | split(\" \") | index(\"mailbox\")" >/dev/null'
 check "  it is the person's, by address" '[[ "$(claims "${MAILBOX}" | jq -r .email)" == ada@example.org ]]' \
     "  $(claims "${MAILBOX}")"
@@ -181,19 +184,21 @@ echo ""
 echo "Keycloak ${PINNED}: every shortcut refused"
 echo ""
 
-check "the token the bridge is handed opens no mailbox" \
-    '[[ "$(introspect "${APP}" | jq -r .active)" != true ]]'
+OTHER_APP="$(exchange exchanger "${EXCHANGER_SECRET}" "${SIGNIN}" "app-${OTHER}" | jq -r '.access_token // empty')"
+check "a token for a bridge that does not declare it opens no mailbox" \
+    '[[ -n "${OTHER_APP}" ]] && ! aud_has "${OTHER_APP}" gentian-dovecot && [[ "$(introspect "${OTHER_APP}" | jq -r .active)" != true ]]' \
+    "  $(claims "${OTHER_APP}")"
 check "the person's sign-in opens no mailbox" \
     '[[ "$(introspect "${SIGNIN}" | jq -r .active)" != true ]]'
-check "the bridge cannot exchange a token not made out to it" \
-    '[[ -z "$(exchange "${BRIDGE}" "${BRIDGE_SECRET}" "${SIGNIN}" mailbox | jq -r ".access_token // empty")" ]]'
-check "another bridge cannot exchange the mail bridge's token" \
-    '[[ -z "$(exchange "${OTHER}" "${OTHER_SECRET}" "${APP}" mailbox | jq -r ".access_token // empty")" ]]'
-OTHER_APP="$(exchange exchanger "${EXCHANGER_SECRET}" "${SIGNIN}" "app-${OTHER}" | jq -r '.access_token // empty')"
-check "a bridge that does not declare it gets no mailbox token" \
-    '[[ -n "${OTHER_APP}" && -z "$(exchange "${OTHER}" "${OTHER_SECRET}" "${OTHER_APP}" mailbox | jq -r ".access_token // empty")" ]]'
-check "the chaperone's client gets no mailbox token" \
-    '[[ -z "$(exchange exchanger "${EXCHANGER_SECRET}" "${SIGNIN}" mailbox | jq -r ".access_token // empty")" ]]'
+check "a component below the platform's trust gets no mailbox token" \
+    '[[ -z "$(exchange narrow "${NARROW_SECRET}" "${SIGNIN}" mailbox | jq -r ".access_token // empty")" ]]'
+check "nor a token for the bridge" \
+    '[[ -z "$(exchange narrow "${NARROW_SECRET}" "${SIGNIN}" "app-${BRIDGE}" | jq -r ".access_token // empty")" ]]'
+# An app's own sign-in with the scope: a real mailbox token, of a client the
+# mail server is not told of in this lab.
+WEBMAIL="$(curl -s -X POST "${TOKEN_URL}" -u "webmail:${WEBMAIL_SECRET}" -d username=ada \
+    --data-urlencode "password=${PERSON_PW}" -d grant_type=password -d "scope=openid mailbox" | jq -r '.access_token // empty')"
+check "an app that declares it signs the person in with mailbox" '[[ -n "${WEBMAIL}" ]] && aud_has "${WEBMAIL}" gentian-dovecot'
 
 echo ""
 echo "${DOVECOT}: IMAP with the token"
@@ -259,10 +264,11 @@ oauth2 {
   }
 }
 CONF
-# The realm's signing keys, once for each app that may be given "mailbox":
-# the key Dovecot looks up is shared/<the token's azp>/<alg>/<kid>.
+# The realm's signing keys, once for each client that may be given "mailbox"
+# (mailboxTokenClients): the key Dovecot looks up is
+# shared/<the token's azp>/<alg>/<kid>. Here the vouching component's alone.
 curl -sf "${KC}/realms/${REALM}/protocol/openid-connect/certs" \
-    | jq -r --arg azp "${BRIDGE}" '.keys[] | select(.use == "sig") | "shared/\($azp)/\(.alg)/\(.kid)", (. | tojson)' \
+    | jq -r --arg azp exchanger '.keys[] | select(.use == "sig") | "shared/\($azp)/\(.alg)/\(.kid)", (. | tojson)' \
     >"${WORK}/realms/validation-keys"
 chmod -R a+rX "${WORK}"
 docker run -d --name mbx-dovecot --network "${NET}" -p "127.0.0.1:${IMAP_PORT}:143" \
@@ -294,12 +300,14 @@ PY
 }
 
 GOT="$(imap_login ada@example.org "${MAILBOX}")"
-check "the mail server signs the person in with the bridge's mailbox token" '[[ "${GOT}" == ok ]]' \
+check "the mail server signs the person in with the token the bridge is handed" '[[ "${GOT}" == ok ]]' \
     "  ${GOT}
 $(docker logs --tail 20 mbx-dovecot 2>&1)"
 GOT="$(imap_login bob@example.org "${MAILBOX}")"
 check "and not into another person's mailbox" '[[ "${GOT}" == refused:* ]]' "  ${GOT}"
-GOT="$(imap_login ada@example.org "${APP}")"
-check "the token the bridge is handed is refused" '[[ "${GOT}" == refused:* ]]' "  ${GOT}"
+GOT="$(imap_login ada@example.org "${OTHER_APP}")"
+check "the token another bridge is handed is refused" '[[ "${GOT}" == refused:* ]]' "  ${GOT}"
+GOT="$(imap_login ada@example.org "${WEBMAIL}")"
+check "a mailbox token of a client the mail server is not told of is refused" '[[ "${GOT}" == refused:* ]]' "  ${GOT}"
 
 finish

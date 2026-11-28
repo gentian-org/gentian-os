@@ -306,7 +306,7 @@ Component is an installed instance of a ComponentProfile.
 | Plural | `componentprofiles` |
 | Short names | `cprof` |
 
-ComponentProfile is a catalog entry for a system service, an app or an agent. The cluster holds only the profiles something installed refers to. A bridge's own client signs nobody in: it only exchanges the token the chaperone hands the bridge, whose audience is the profile's name, so the client has to be called that, confidential and without a redirect.
+ComponentProfile is a catalog entry for a system service, an app or an agent. The cluster holds only the profiles something installed refers to. A bridge signs nobody in and asks the realm for nothing: the token a call to it carries is obtained by the component that vouches for the person, so a bridge has no client of its own.
 
 | Field | Type | Required | Description |
 |---|---|---|---|

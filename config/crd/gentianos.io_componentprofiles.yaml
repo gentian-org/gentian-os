@@ -36,9 +36,9 @@ spec:
           ComponentProfile is a catalog entry for a system service, an app or an
           agent. The cluster holds only the profiles something installed refers to.
 
-          A bridge's own client signs nobody in: it only exchanges the token the
-          chaperone hands the bridge, whose audience is the profile's name, so the
-          client has to be called that, confidential and without a redirect.
+          A bridge signs nobody in and asks the realm for nothing: the token a call
+          to it carries is obtained by the component that vouches for the person, so
+          a bridge has no client of its own.
         properties:
           apiVersion:
             description: |-
@@ -2157,16 +2157,20 @@ spec:
                                     person's sign-in token (SASL XOAUTH2) instead of an app password.
 
                                     It is a grant, which is why it is said and never implied by imap: the
-                                    mail server accepts a token only from the sign-in client of an app
-                                    whose profile declares this. The app's client is given the optional
-                                    client scope "mailbox" in the tenant's realm; a token the app obtained
-                                    by asking for that scope names the mail server in its audience and is
-                                    accepted for the mailbox of the person it was issued to, and no other
-                                    token of the app, and no token of any other app, is.
+                                    mail server accepts a token only when it carries the client scope
+                                    "mailbox" of the tenant's realm, which names the mail server in the
+                                    token's audience, and then for the mailbox of the person it was issued
+                                    to. Who is given the scope follows from this declaration alone:
 
-                                    It needs requires.services.identity.oidc, the client the scope is given
-                                    to. Served where the cluster runs its own mail server and the tenant
-                                    has mailboxes on it in a realm of its own; elsewhere it does nothing.
+                                      - an app with a sign-in of its own (requires.services.identity.oidc):
+                                        that client, as an optional scope, so a token opens a mailbox only
+                                        when the app asked for "mailbox" at that sign-in;
+                                      - a bridge, which has no client: the components that vouch for
+                                        people in the tenant, which ask for it with the token they obtain
+                                        for a call to this bridge. The bridge passes that token on.
+
+                                    Served where the cluster runs its own mail server and the tenant has
+                                    mailboxes on it in a realm of its own; elsewhere it does nothing.
                                   type: boolean
                               type: object
                             smtp:
@@ -4863,16 +4867,20 @@ spec:
                                   person's sign-in token (SASL XOAUTH2) instead of an app password.
 
                                   It is a grant, which is why it is said and never implied by imap: the
-                                  mail server accepts a token only from the sign-in client of an app
-                                  whose profile declares this. The app's client is given the optional
-                                  client scope "mailbox" in the tenant's realm; a token the app obtained
-                                  by asking for that scope names the mail server in its audience and is
-                                  accepted for the mailbox of the person it was issued to, and no other
-                                  token of the app, and no token of any other app, is.
+                                  mail server accepts a token only when it carries the client scope
+                                  "mailbox" of the tenant's realm, which names the mail server in the
+                                  token's audience, and then for the mailbox of the person it was issued
+                                  to. Who is given the scope follows from this declaration alone:
 
-                                  It needs requires.services.identity.oidc, the client the scope is given
-                                  to. Served where the cluster runs its own mail server and the tenant
-                                  has mailboxes on it in a realm of its own; elsewhere it does nothing.
+                                    - an app with a sign-in of its own (requires.services.identity.oidc):
+                                      that client, as an optional scope, so a token opens a mailbox only
+                                      when the app asked for "mailbox" at that sign-in;
+                                    - a bridge, which has no client: the components that vouch for
+                                      people in the tenant, which ask for it with the token they obtain
+                                      for a call to this bridge. The bridge passes that token on.
+
+                                  Served where the cluster runs its own mail server and the tenant has
+                                  mailboxes on it in a realm of its own; elsewhere it does nothing.
                                 type: boolean
                             type: object
                           smtp:
@@ -5661,11 +5669,12 @@ spec:
                 || !has(self.requires.services.identity.sidecar) || !has(self.requires.services.identity.sidecar.database)
                 || !self.requires.services.identity.sidecar.database || has(self.requires.services.database)'
             - message: 'requires.services.mail.imap.tokenSignIn needs requires.services.identity.oidc:
-                the sign-in client whose tokens the mail server is to accept'
+                the sign-in client whose tokens the mail server is to accept (a bridge
+                has none, and is handed the token)'
               rule: '!has(self.requires) || !has(self.requires.services) || !has(self.requires.services.mail)
                 || !has(self.requires.services.mail.imap) || !has(self.requires.services.mail.imap.tokenSignIn)
-                || !self.requires.services.mail.imap.tokenSignIn || (has(self.requires.services.identity)
-                && has(self.requires.services.identity.oidc))'
+                || !self.requires.services.mail.imap.tokenSignIn || has(self.bridge)
+                || (has(self.requires.services.identity) && has(self.requires.services.identity.oidc))'
             - message: 'a component the platform places on tenants declares requires.services.llm
                 only at trustTier platform: it is given a key at the model gateway
                 without a tenant having installed it'
@@ -5890,15 +5899,10 @@ spec:
             || !has(self.spec.requires.services.identity.oidc.audiences) || self.spec.requires.services.identity.oidc.audiences.all(a,
             a.startsWith(self.metadata.name + ''-'') && size(a) > size(self.metadata.name)
             + 1)'
-        - message: 'a bridge''s requires.services.identity.oidc is a client that only
-            exchanges the chaperone''s token: clientId is the profile''s name, accessType
-            CONFIDENTIAL, no redirectUris'
+        - message: 'a bridge has no client of its own (requires.services.identity.oidc):
+            the token a call to it carries is obtained for it'
           rule: '!has(self.spec.bridge) || !has(self.spec.requires) || !has(self.spec.requires.services)
-            || !has(self.spec.requires.services.identity) || !has(self.spec.requires.services.identity.oidc)
-            || (self.spec.requires.services.identity.oidc.clientId == self.metadata.name
-            && has(self.spec.requires.services.identity.oidc.accessType) && self.spec.requires.services.identity.oidc.accessType
-            == ''CONFIDENTIAL'' && (!has(self.spec.requires.services.identity.oidc.redirectUris)
-            || size(self.spec.requires.services.identity.oidc.redirectUris) == 0))'
+            || !has(self.spec.requires.services.identity) || !has(self.spec.requires.services.identity.oidc)'
     served: true
     storage: true
     subresources:

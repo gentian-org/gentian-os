@@ -178,7 +178,7 @@ func TestABridgeToAnOutsideToolServerIsListedWithWhatItsEntrySays(t *testing.T) 
 	raw, err := agentBridgeList("tenant-acme", []string{"recorder", "plain"}, map[string]*gentianov1alpha1.ComponentProfile{
 		"recorder": outside("https://tools.example/mcp"),
 		"plain":    outside("http://tools.example/mcp"),
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

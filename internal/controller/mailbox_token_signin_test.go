@@ -25,6 +25,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -303,7 +304,6 @@ func TestTheMailboxScopeIsGivenToDeclaringAppsOnly(t *testing.T) {
 		want    []interface{}
 	}{
 		{"app-mailbox-token", append(append([]interface{}{}, keycloaksOwn...), mailboxScopeName)},
-		{"app-mailbox-token-bridge", append(append([]interface{}{}, keycloaksOwn...), mailboxScopeName)},
 		{"app-mailbox-token-withdrawn", keycloaksOwn},
 		{"app-mailbox-token-not-served", nil},
 		{"app-mailbox-token-undeclared", nil},
@@ -344,43 +344,106 @@ func TestTheMailboxScopeIsGivenToDeclaringAppsOnly(t *testing.T) {
 	}
 }
 
-// An agent bridge reaches a mailbox only by exchange: its client turns the
-// token the chaperone hands it into one with "mailbox", and signs nobody in.
-// An app's client never exchanges.
-func TestABridgesClientOnlyExchanges(t *testing.T) {
-	for _, c := range []struct {
-		fixture  string
-		exchange bool
-	}{
-		{"app-mailbox-token-bridge", true},
-		{"app-mailbox-token", false},
-		{"app-default", false},
-	} {
-		clients := ofKind(renderedObjects(t, c.fixture), "Client")
-		if len(clients) != 1 {
-			t.Fatalf("%s: %d clients rendered, want 1", c.fixture, len(clients))
+// A bridge has no client of its own, whatever its entry declares: the token
+// that opens a mailbox is obtained by the component that vouches for the
+// person, and the bridge passes it on.
+func TestABridgeIsRenderedNoClient(t *testing.T) {
+	in := apprenderFixtureInput(t, "app-mailbox-token")
+	if len(renderedOfKind(renderApp(t, in), "Client")) != 1 {
+		t.Fatal("the app's own client is not rendered: the fixture no longer declares one")
+	}
+	in = apprenderFixtureInput(t, "app-mailbox-token")
+	in.Profile.Bridge = &gentianov1alpha1.BridgeSpec{}
+	objs := renderApp(t, in)
+	for _, kind := range []string{"Client", "ClientOptionalScopes"} {
+		if got := renderedOfKind(objs, kind); len(got) != 0 {
+			t.Errorf("a bridge is rendered %d %s", len(got), kind)
 		}
-		fp, _, _ := unstructured.NestedMap(clients[0], "spec", "forProvider")
-		exchange, _ := fp["standardTokenExchangeEnabled"].(bool)
-		if exchange != c.exchange {
-			t.Errorf("%s: standardTokenExchangeEnabled %v, want %v", c.fixture, exchange, c.exchange)
+	}
+}
+
+// Who may ask for "mailbox" while a tenant has a bridge that opens
+// mailboxes: its components that vouch with the platform's trust, and
+// nobody while it has no such bridge.
+func TestTheMailboxScopeIsForVouchersWhileABridgeOpensMailboxes(t *testing.T) {
+	profile := func(name string, change func(*gentianov1alpha1.ComponentProfile)) *gentianov1alpha1.ComponentProfile {
+		p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
+		p.Spec.Requires = &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{}}
+		change(p)
+		return p
+	}
+	vouches := func(p *gentianov1alpha1.ComponentProfile) {
+		p.Spec.Requires.Services.Vouching = &gentianov1alpha1.VouchingRequirement{Exchange: true}
+	}
+	chaperone := profile("chaperone", vouches)
+	certified := profile("helper", func(p *gentianov1alpha1.ComponentProfile) {
+		vouches(p)
+		p.Spec.TrustTier = gentianov1alpha1.TrustTierCertified
+	})
+	mail := profile("mail-bridge", func(p *gentianov1alpha1.ComponentProfile) {
+		p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{}
+		p.Spec.Requires.Services.Mail = &gentianov1alpha1.MailRequirement{IMAP: &gentianov1alpha1.IMAPRequirement{TokenSignIn: true}}
+	})
+	other := profile("odoo-bridge", func(p *gentianov1alpha1.ComponentProfile) { p.Spec.Bridge = &gentianov1alpha1.BridgeSpec{} })
+
+	if got := mailboxVouchers([]*gentianov1alpha1.ComponentProfile{chaperone, certified, other}); got != nil {
+		t.Errorf("without a bridge that opens mailboxes, %v may ask for the scope", got)
+	}
+	got := mailboxVouchers([]*gentianov1alpha1.ComponentProfile{mail, chaperone, certified, other})
+	if !reflect.DeepEqual(got, []string{"chaperone"}) {
+		t.Errorf("mailboxVouchers = %v, want the one component of the platform's trust", got)
+	}
+	if declaresMailboxTokenSignIn(mail) {
+		t.Error("a bridge counts as an app with a sign-in client")
+	}
+
+	line := vouchingLine(chaperone, "demo", nil)
+	if got := withVouchingWord(line, vouchingMailboxWord); got != "chaperone - 0 - exchange,mailbox" {
+		t.Errorf("line = %q", got)
+	}
+	if got := withVouchingWord("scribe keys 0 abc", vouchingMailboxWord); got != "scribe keys 0 abc mailbox" {
+		t.Errorf("line = %q", got)
+	}
+
+	// The bridge's entry on its callers' list names the scope, where the
+	// tenant's realm has it.
+	mail.Spec.Bridge.Ways = []gentianov1alpha1.BridgeWay{{
+		Name: "tools", Caller: gentianov1alpha1.BridgeCallerAgents, Callee: gentianov1alpha1.BridgeCalleePlatform,
+		Protocol: "mcp", SpeaksAs: "person",
+		Endpoint: &gentianov1alpha1.ContractEndpoint{Service: "mail-bridge", Port: 8765, Path: "/mcp"},
+	}}
+	mail.Spec.Classes = []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassBridge}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{"mail-bridge": mail}
+	for _, served := range []bool{true, false} {
+		raw, err := agentBridgeList("tenant-demo", []string{"mail-bridge"}, profiles, served)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !c.exchange {
+		if strings.Contains(raw, `"scopes":["mailbox"]`) != served {
+			t.Errorf("served %v: list %s", served, raw)
+		}
+	}
+}
+
+// In the realm, the scope is an optional scope of the vouching client whose
+// line says "mailbox", and of no other vouching client.
+func TestTheRealmGivesTheMailboxScopeToTheVouchersNamed(t *testing.T) {
+	seen := map[string]bool{}
+	for _, o := range ofKind(renderedObjects(t, "tenant-mailbox-bridge"), "ClientOptionalScopes") {
+		name, _, _ := unstructured.NestedString(o, "metadata", "name")
+		if !strings.Contains(name, "-vouching-") {
 			continue
 		}
-		for _, flow := range []string{"standardFlowEnabled", "directAccessGrantsEnabled", "serviceAccountsEnabled", "fullScopeAllowed"} {
-			if on, _ := fp[flow].(bool); on || fp[flow] == nil {
-				t.Errorf("%s: %s is %v, want false", c.fixture, flow, fp[flow])
-			}
-		}
-		for _, field := range []string{"validRedirectUris", "validPostLogoutRedirectUris", "webOrigins"} {
-			if _, ok := fp[field]; ok {
-				t.Errorf("%s: a bridge's client has %s", c.fixture, field)
-			}
-		}
-		if fp["clientId"] != "demo-app" || fp["accessType"] != "CONFIDENTIAL" {
-			t.Errorf("%s: client %v (%v), want the profile's name, confidential", c.fixture, fp["clientId"], fp["accessType"])
-		}
+		scopes, _, _ := unstructured.NestedStringSlice(o, "spec", "forProvider", "optionalScopes")
+		seen[name] = slices.Contains(scopes, mailboxScopeName)
+	}
+	want := map[string]bool{
+		"render-fixture-vouching-scribe-optional-scopes":  false,
+		"render-fixture-vouching-steward-optional-scopes": true,
+		"render-fixture-vouching-warden-optional-scopes":  false,
+	}
+	if !reflect.DeepEqual(seen, want) {
+		t.Errorf("vouching clients with the mailbox scope: %v, want %v", seen, want)
 	}
 }
 
