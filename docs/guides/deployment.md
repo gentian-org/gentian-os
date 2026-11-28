@@ -478,8 +478,7 @@ and the next change to a bundle bumps its profile to `X.Y.(Z+1)-dev.1`.
 Merge `develop` into `main` by pull request and tag `vX.Y.Z` on `main`.
 The tag runs the three workflows, which publish the desktop, the
 administration console and the concierge images and their charts under the
-tag: `<chart base>-vX.Y.Z`, the chart's own version in its `Chart.yaml`
-followed by the tag. A cluster that pins the tag reads nothing from
+release's number, `X.Y.Z`. A cluster that pins the tag reads nothing from
 `develop`. Wait for the three runs before rolling a cluster, and merge
 `main` into `develop` by pull request.
 
@@ -511,7 +510,8 @@ followed by the tag. A cluster that pins the tag reads nothing from
 
    The tag run checks that the tag names the chart's version, publishes
    `ghcr.io/gentian-org/gentian-os:X.Y.Z` and `:X.Y` with the event
-   listener and storage-tools images, and creates the GitHub Release from
+   listener and storage-tools images and the home sync, porter and liaison
+   charts as `X.Y.Z`, and creates the GitHub Release from
    `docs/releases/vX.Y.md`. Nothing downstream can adopt the release until
    that run is green.
 4. On the same branch merge `main` (`git merge origin/main`: the release
@@ -538,10 +538,8 @@ kubectl gentian release set vX.Y.Z --auto-upgrade patch # ... and every later pa
 The director writes `spec.release` and points the `gentian` catalog source
 at the released catalog, in one signed commit. The operator reads the claim,
 looks the release up in the index, moves every Application on the gentian-os
-repository to the tag, its own image to `X.Y.Z` and the gentian-ui charts to
-the ones the index names for the release, takes out a home sync chart
-version an earlier install pinned (the chart follows the image), and writes
-`status.release`.
+repository to the tag, its own image to `X.Y.Z` and the charts of the
+platform's own components to `X.Y.Z`, and writes `status.release`.
 `kubectl gentian release show` follows it; the move is done when the state
 is `Applied` and the operator's build is the release:
 
